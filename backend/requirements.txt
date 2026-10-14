@@ -1,0 +1,21 @@
+# Web 框架（注意：用纯 uvicorn，不带 [standard]，避免 httptools/watchfiles 在 Python 3.13 上缺轮子）
+fastapi>=0.115,<1.0
+uvicorn>=0.32
+pydantic>=2.9
+python-multipart
+
+# AI 推理栈
+# ⚠️ torch 请单独安装（见 README）：
+#    无独显: pip install torch --index-url https://download.pytorch.org/whl/cpu/
+#    N 卡:   pip install torch --index-url https://download.pytorch.org/whl/cu124
+diffusers>=0.36
+transformers>=4.46
+accelerate>=1.1
+safetensors>=0.4
+torchao>=0.9          # Wan 引擎权重量化（fp8/int8），缺失时引擎自动跳过量化
+
+# 工具库
+pillow>=10.0
+imageio-ffmpeg>=0.5
+huggingface-hub>=0.27
+numpy>=1.26

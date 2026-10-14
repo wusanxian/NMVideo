@@ -1,0 +1,31 @@
+# 虚拟环境与依赖
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 数据库与产物
+backend/aivideo.db
+backend/outputs/
+backend/models/
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+
+# 打包产物与运行时
+packaging/dist/
+packaging/build/
+packaging/payload/
+runtime/
+dist/
+build/
+
+# 系统
+.DS_Store
+Thumbs.db
+*.log
+
+# 本地 agent 工作数据（含记忆，勿入库）
+.workbuddy/
