@@ -29,3 +29,37 @@ Thumbs.db
 
 # 本地 agent 工作数据（含记忆，勿入库）
 .workbuddy/
+
+# 编辑器 / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python 缓存与构建残留
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+.cache/
+pip-log.txt
+
+# 环境变量 / 密钥（切勿入库）
+.env
+.env.*
+*.local
+
+# 前端缓存与日志
+.vite/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 操作系统垃圾文件
+desktop.ini
+ehthumbs.db
+~$*
