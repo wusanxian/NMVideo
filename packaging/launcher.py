@@ -432,7 +432,7 @@ def pip_install(py: Path, args: list, desc: str):
 # ---------------- 模型下载 ----------------
 def ensure_models(rt: Path, py: Path, plan: Plan, hw: HWInfo):
     if plan.model == "anime":
-        repo_args = ["anime"]
+        repo_args = []  # AnimeDiff 是 download_models.py 的默认行为（不带参数）
     elif plan.model == "wan-ti2v":
         repo_args = ["--wan-ti2v-5b"]
     elif plan.model == "wan-a14b":
@@ -462,7 +462,30 @@ def wait_health(port: int, timeout: float = 90.0) -> bool:
     return False
 
 
+def port_free(port: int) -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def pick_port(preferred: int) -> int:
+    """端口被占用时自动顺延（用户机器上可能有别的服务占 8000）"""
+    if port_free(preferred):
+        return preferred
+    for p in range(preferred + 1, preferred + 20):
+        if port_free(p):
+            ui.warn(f"端口 {preferred} 被占用，改用 {p}")
+            return p
+    ui.fatal(f"端口 {preferred}-{preferred + 19} 全部被占用，请用 --port 指定其他端口")
+
+
 def launch(rt: Path, py: Path, port: int):
+    port = pick_port(port)
     ui.step("启动服务…")
     env = dict(os.environ, AIVIDEO_PORT=str(port))
     proc = subprocess.Popen(
