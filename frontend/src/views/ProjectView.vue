@@ -463,7 +463,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { useJobsStore } from '../store/jobs'
@@ -520,6 +520,9 @@ const history = ref([])
 let pollTimer = null
 
 const VALID_TABS = ['shots', 'assets', 'script', 'timeline', 'history']
+watch(() => route.query.tab, value => {
+  if (VALID_TABS.includes(value)) tab.value = value
+})
 
 onMounted(async () => {
   await store.openProject(route.params.id)
@@ -539,8 +542,8 @@ onMounted(async () => {
     if (t === 'assets' && project.value) await loadCharacters()
     if (t === 'history' && project.value) await loadHistory()
     const q = { ...route.query, tab: t }
-    router.replace({ query: q })
-  })
+    if (route.query.tab !== t) router.replace({ query: q })
+  }, { immediate: true })
 })
 
 onUnmounted(() => {

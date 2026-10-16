@@ -33,7 +33,7 @@ EXCLUDES = [
 
 # backend 中不打进 payload 的目录/文件
 BACKEND_SKIP_DIRS = {"models", "outputs", ".venv", "__pycache__", ".pytest_cache", ".workbuddy"}
-BACKEND_SKIP_FILES = {"aivideo.db"}
+BACKEND_SKIP_FILES = {"aivideo.db", "aivideo.db-wal", "aivideo.db-shm", "settings.json"}
 
 
 def run(cmd: list, cwd: Path = PROJECT, desc: str = ""):

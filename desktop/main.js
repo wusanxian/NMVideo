@@ -10,15 +10,16 @@
  *  - 退出时 taskkill /T 杀 launcher 进程树（uvicorn 是它的子进程，直接 kill 会留孤儿）
  *  - 单实例锁
  */
-const { app, BrowserWindow, ipcMain, shell, dialog, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { spawn, execFile } = require('child_process')
 const { autoUpdater } = require('electron-updater')
+const { isAppURL, isShellURL, isTrustedSender, isExternalURL } = require('./security')
+const { BackendService } = require('./backend-service')
+const SHELL_FILE = path.join(__dirname, 'renderer', 'index.html')
 
-// 本机（部分 Windows 环境/安全软件）Chromium 沙箱初始化失败会导致 GPU 进程
-// 0xC0000005 连环崩溃直至 FATAL；禁用进程沙箱即可正常渲染（VS Code/WorkBuddy 同做法）
-app.commandLine.appendSwitch('no-sandbox')
+// Keep Chromium's sandbox enabled; compatibility failures must be diagnosed explicitly.
 
 const IS_DEV = !app.isPackaged
 const LAUNCHER_EXE = 'AI视频工坊-v1.0.0.exe'
@@ -54,6 +55,40 @@ let readyNotified = false
 let healthTimer = null
 let bootSeconds = 0
 let bootTimer = null
+let backend = null
+
+async function openExternal(url) {
+  if (!isExternalURL(url)) return
+  const { response } = await dialog.showMessageBox(mainWin, {
+    type: 'question', title: '打开外部链接', message: '使用系统浏览器打开此链接？',
+    detail: url, buttons: ['取消', '打开'], defaultId: 0, cancelId: 0,
+  })
+  if (response === 1) await shell.openExternal(url)
+}
+
+function guardContents(contents, allowed) {
+  const navigate = (event, url) => {
+    if (allowed(url)) return
+    event.preventDefault()
+    // Redirects are blocked without opening a browser automatically.
+  }
+  contents.on('will-navigate', navigate)
+  contents.on('will-redirect', navigate)
+  contents.on('will-frame-navigate', (event) => {
+    if (!allowed(event.url)) event.preventDefault()
+  })
+  contents.setWindowOpenHandler(({ url }) => {
+    openExternal(url).catch(() => {})
+    return { action: 'deny' }
+  })
+  // Preserve plain-text copy buttons without granting clipboard read or device access.
+  const canWriteClipboard = (permission, details) => permission === 'clipboard-sanitized-write' &&
+    details.isMainFrame && allowed(details.requestingUrl)
+  contents.session.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    callback(canWriteClipboard(permission, details))
+  })
+  contents.session.setPermissionCheckHandler((_wc, permission, _origin, details) => canWriteClipboard(permission, details))
+}
 
 // 阶段 → 进度权重（模型下载是大头，按阶段推进度条）
 const STAGE_PROGRESS = {
@@ -90,10 +125,27 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       webviewTag: true,
     },
   })
-  mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+  guardContents(mainWin.webContents, url => isShellURL(url, SHELL_FILE))
+  mainWin.webContents.on('will-attach-webview', (event, prefs, params) => {
+    if (!isAppURL(params.src, launcherPort) || params.partition !== 'persist:aivideo') {
+      event.preventDefault()
+      return
+    }
+    delete prefs.preload
+    Object.assign(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false, contextIsolation: true, sandbox: true,
+      webSecurity: true, allowRunningInsecureContent: false, webviewTag: false })
+    params.allowpopups = false
+  })
+  mainWin.webContents.on('did-attach-webview', (_event, contents) => {
+    guardContents(contents, url => isAppURL(url, launcherPort))
+    contents.on('will-attach-webview', event => event.preventDefault())
+  })
+  mainWin.loadFile(SHELL_FILE)
   mainWin.once('ready-to-show', () => mainWin.show())
   mainWin.on('maximize', () => send('win:maximized', true))
   mainWin.on('unmaximize', () => send('win:maximized', false))
@@ -110,13 +162,16 @@ function logLine(line, stream = 'stdout') {
   if (m) {
     const state = m[1]
     send('backend:state', { state, progress: STAGE_PROGRESS[state] ?? 0 })
-    if (state === 'ready') finishBoot()
+    if (state === 'ready') pollHealth().catch(() => {})
     if (state === 'error') send('backend:error', { text })
     return
   }
   const p = text.match(/^\[AIVIDEO\]\s+PORT=(\d+)/)
   if (p) {
-    launcherPort = parseInt(p[1], 10) || APP_PORT_DEFAULT
+    const port = Number(p[1])
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return
+    launcherPort = port
+    if (backend) backend.port = port
     send('backend:port', { port: launcherPort })
   }
 }
@@ -126,7 +181,7 @@ function spawnLauncher() {
   console.log(`[desktop] spawn launcher: ${exe}`)
   if (!fs.existsSync(exe)) {
     send('backend:error', { text: `找不到启动器：${exe}\n请先运行 packaging/build.py 生成 exe，或用 npm run dist 打出完整安装包。` })
-    return
+    return null
   }
   const portFile = path.join(app.getPath('temp'), `aivideo-port-${process.pid}.txt`)
   try { fs.unlinkSync(portFile) } catch { /* 首次不存在 */ }
@@ -140,23 +195,21 @@ function spawnLauncher() {
     // launcher 及其子进程（pip/uvicorn/下载脚本）输出统一 UTF-8，终端面板按 UTF-8 解码
     env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
   })
+  try {
+    fs.writeFileSync(path.join(app.getPath('userData'), 'owned-service.json'), JSON.stringify({
+      ownerPid: process.pid, launcherPid: launcherProc.pid, executable: exe, startedAt: new Date().toISOString(),
+    }))
+  } catch (error) { logLine(`进程记录写入失败：${error.message}`, 'stderr') }
 
-  let buf = ''
-  const onData = (stream) => (chunk) => {
-    buf += chunk.toString('utf8')
-    let idx
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, idx).replace(/\r$/, '')
-      buf = buf.slice(idx + 1)
-      if (line.trim()) logLine(line, stream)
-    }
+  for (const stream of ['stdout', 'stderr']) {
+    require('readline').createInterface({ input: launcherProc[stream] })
+      .on('line', line => logLine(line, stream))
   }
-  launcherProc.stdout.on('data', onData('stdout'))
-  launcherProc.stderr.on('data', onData('stderr'))
   launcherProc.on('error', (e) => send('backend:error', { text: `启动器进程错误: ${e.message}` }))
   launcherProc.on('exit', (code) => {
     send('backend:log', { text: `启动器退出（code=${code}）`, stream: 'meta', ts: Date.now() })
     launcherProc = null
+    try { fs.unlinkSync(path.join(app.getPath('userData'), 'owned-service.json')) } catch {}
     // 用户手动关窗口导致的退出不报错；异常退出提示
     if (code !== 0 && code !== null && !quitting) {
       send('backend:error', { text: `后端进程异常退出（code=${code}），请把终端日志反馈给开发者` })
@@ -164,11 +217,7 @@ function spawnLauncher() {
   })
 
   // health 轮询兜底（不等 launcher 的 ready 行，端口文件/双保险）
-  healthTimer = setInterval(pollHealth, 2000)
-  bootTimer = setInterval(() => {
-    bootSeconds += 1
-    send('backend:tick', { seconds: bootSeconds })
-  }, 1000)
+  return launcherProc
 }
 
 async function pollHealth() {
@@ -177,32 +226,45 @@ async function pollHealth() {
     const pf = path.join(app.getPath('temp'), `aivideo-port-${process.pid}.txt`)
     if (fs.existsSync(pf)) {
       const v = parseInt(fs.readFileSync(pf, 'utf8').trim(), 10)
-      if (v > 0) launcherPort = v
+      if (Number.isInteger(v) && v > 0 && v <= 65535) {
+        launcherPort = v
+        backend.port = v
+      }
     }
   } catch { /* ignore */ }
-  const http = require('http')
-  const req = http.get(`http://127.0.0.1:${launcherPort}/api/health`, { timeout: 3000 }, (res) => {
-    if (res.statusCode === 200) finishBoot()
-    res.resume()
-  })
-  req.on('error', () => { /* 未就绪，继续等 */ })
-  req.on('timeout', () => req.destroy())
+  await backend.check()
 }
 
 function finishBoot() {
   if (readyNotified) return
   readyNotified = true
-  clearInterval(healthTimer)
-  clearInterval(bootTimer)
   console.log(`[desktop] backend ready at http://127.0.0.1:${launcherPort}`)
   send('backend:ready', { port: launcherPort, url: `http://127.0.0.1:${launcherPort}` })
 }
 
 /** 杀 launcher 进程树（uvicorn 子进程一起杀，否则留孤儿占端口） */
 function killLauncherTree() {
-  if (!launcherProc || launcherProc.exitCode !== null) return
-  const pid = launcherProc.pid
-  execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {})
+  if (backend) backend.close()
+}
+
+function startBackend() {
+  if (backend) return
+  backend = new BackendService({
+    launch: spawnLauncher,
+    changed: (online) => {
+      if (online) finishBoot()
+      else {
+        readyNotified = false
+        send('backend:offline', { text: '本地服务已断开，正在等待重连；可在系统管理中重试。' })
+      }
+    },
+    stop: pid => execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {}),
+  })
+  backend.check(true).catch(e => send('backend:error', { text: e.message }))
+  healthTimer = setInterval(() => pollHealth().catch(() => {}), 2000)
+  bootTimer = setInterval(() => {
+    if (!backend.online) send('backend:tick', { seconds: ++bootSeconds })
+  }, 1000)
 }
 
 // ---------- 自动更新 ----------
@@ -222,35 +284,50 @@ function setupAutoUpdater() {
 }
 
 // ---------- IPC ----------
-ipcMain.handle('win:minimize', () => mainWin && mainWin.minimize())
-ipcMain.handle('win:toggleMaximize', () => {
+function handle(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedSender(event, mainWin && mainWin.webContents, SHELL_FILE)) throw new Error('Untrusted IPC sender')
+    return handler(event, ...args)
+  })
+}
+handle('backend:status', () => ({ online: backend?.online || false, port: launcherPort }))
+handle('backend:retry', () => backend?.check(true))
+handle('backend:hardware', async () => {
+  if (!backend?.online) throw new Error('本地服务尚未连接，请重试连接后检测。')
+  const response = await fetch(`http://127.0.0.1:${launcherPort}/api/hardware`, { signal: AbortSignal.timeout(20000), redirect: 'error' })
+  if (!response.ok) throw new Error(`硬件检测失败：HTTP ${response.status}`)
+  return response.json()
+})
+handle('win:minimize', () => mainWin && mainWin.minimize())
+handle('win:toggleMaximize', () => {
   if (!mainWin) return false
   if (mainWin.isMaximized()) { mainWin.unmaximize(); return false }
   mainWin.maximize(); return true
 })
-ipcMain.handle('win:close', () => { quitting = true; killLauncherTree(); app.quit() })
-ipcMain.handle('win:isMaximized', () => mainWin && mainWin.isMaximized())
+handle('win:close', () => { quitting = true; killLauncherTree(); app.quit() })
+handle('win:isMaximized', () => mainWin && mainWin.isMaximized())
 
-ipcMain.handle('app:version', () => app.getVersion())
-ipcMain.handle('app:paths', () => ({
+handle('app:version', () => app.getVersion())
+handle('app:paths', () => ({
   runtime: runtimeDir(),
   launcher: launcherPath(),
   userData: app.getPath('userData'),
   logs: app.getPath('logs'),
 }))
 
-ipcMain.handle('app:openPath', async (_e, p) => {
-  if (!p) return { ok: false }
+handle('app:openPath', async (_e, p) => {
+  const allowed = [runtimeDir(), path.dirname(launcherPath()), app.getPath('userData'), app.getPath('logs')]
+  if (typeof p !== 'string' || !allowed.some(dir => path.resolve(dir) === path.resolve(p))) return { ok: false, error: 'Unsupported path' }
   try {
-    await shell.openPath(p)
-    return { ok: true }
+    const error = await shell.openPath(p)
+    return { ok: !error, error }
   } catch (e) {
     return { ok: false, error: String(e.message || e) }
   }
 })
 
 /** 打开 ComfyUI（本地 8188，浏览器打开） */
-ipcMain.handle('app:openComfyUI', async () => {
+handle('app:openComfyUI', async () => {
   const http = require('http')
   await new Promise((resolve) => {
     const req = http.get('http://127.0.0.1:8188', { timeout: 2000 }, (res) => { res.resume(); resolve(true) })
@@ -267,7 +344,7 @@ ipcMain.handle('app:openComfyUI', async () => {
 })
 
 /** 创建桌面快捷方式（Windows: 写 .lnk 到桌面） */
-ipcMain.handle('app:createShortcut', async () => {
+handle('app:createShortcut', async () => {
   if (process.platform !== 'win32') return { ok: false, error: 'only windows' }
   try {
     const desktop = app.getPath('desktop')
@@ -277,18 +354,18 @@ ipcMain.handle('app:createShortcut', async () => {
     const workDir = app.isPackaged ? path.dirname(process.execPath) : __dirname
     const icon = path.join(__dirname, 'build', 'icon.png')
     // 用 PowerShell WScript.Shell 写快捷方式（零依赖）
+    const quote = value => value.replace(/'/g, "''")
     const ps = [
-      '-NoProfile', '-Command',
-      `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}');`,
-      `$s.TargetPath='${target}';`,
-      `$s.Arguments='${args}';`,
-      `$s.WorkingDirectory='${workDir}';`,
-      `$s.IconLocation='${icon}';`,
+      `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${quote(lnk)}');`,
+      `$s.TargetPath='${quote(target)}';`,
+      `$s.Arguments='${quote(args)}';`,
+      `$s.WorkingDirectory='${quote(workDir)}';`,
+      `$s.IconLocation='${quote(icon)}';`,
       `$s.Description='AI 动画导演工作台';`,
       `$s.Save()`,
     ].join(' ')
     await new Promise((resolve, reject) => {
-      execFile('powershell', ps, (err) => (err ? reject(err) : resolve()))
+      execFile('powershell', ['-NoProfile', '-Command', ps], (err) => (err ? reject(err) : resolve()))
     })
     return { ok: true, path: lnk }
   } catch (e) {
@@ -296,7 +373,8 @@ ipcMain.handle('app:createShortcut', async () => {
   }
 })
 
-ipcMain.handle('app:saveLog', async (_e, content) => {
+handle('app:saveLog', async (_e, content) => {
+  if (typeof content !== 'string' || content.length > 5_000_000) return { ok: false, error: 'Invalid log' }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const defaultName = `aivideo-log-${stamp}.txt`
   const { canceled, filePath } = await dialog.showSaveDialog(mainWin, {
@@ -308,7 +386,7 @@ ipcMain.handle('app:saveLog', async (_e, content) => {
   return { ok: true, path: filePath }
 })
 
-ipcMain.handle('app:relaunch', () => {
+handle('app:relaunch', () => {
   quitting = true
   killLauncherTree()
   app.relaunch()
@@ -316,14 +394,14 @@ ipcMain.handle('app:relaunch', () => {
 })
 
 // ---------- 更新 IPC ----------
-ipcMain.handle('update:check', async () => {
+handle('update:check', async () => {
   if (IS_DEV) { send('update:none'); return }
   try { await autoUpdater.checkForUpdates() } catch { /* error 事件已发 */ }
 })
-ipcMain.handle('update:download', async () => {
+handle('update:download', async () => {
   try { await autoUpdater.downloadUpdate() } catch { /* error 事件已发 */ }
 })
-ipcMain.handle('update:install', () => {
+handle('update:install', () => {
   quitting = true
   killLauncherTree()
   autoUpdater.quitAndInstall(false, true)
@@ -344,7 +422,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     createWindow()
     setupAutoUpdater()
-    spawnLauncher()
+    mainWin.webContents.once('did-finish-load', startBackend)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

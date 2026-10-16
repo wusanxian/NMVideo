@@ -2,6 +2,12 @@
  * preload：渲染进程安全桥（contextIsolation 下暴露受控 API）
  */
 const { contextBridge, ipcRenderer } = require('electron')
+const EVENTS = new Set([
+  'win:maximized', 'backend:log', 'backend:state', 'backend:ready',
+  'backend:error', 'backend:offline', 'backend:port', 'backend:tick',
+  'update:checking', 'update:available', 'update:none', 'update:progress',
+  'update:downloaded', 'update:error',
+])
 
 contextBridge.exposeInMainWorld('desk', {
   // 窗口控制
@@ -18,6 +24,9 @@ contextBridge.exposeInMainWorld('desk', {
   createShortcut: () => ipcRenderer.invoke('app:createShortcut'),
   saveLog: (content) => ipcRenderer.invoke('app:saveLog', content),
   relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  backendStatus: () => ipcRenderer.invoke('backend:status'),
+  retryBackend: () => ipcRenderer.invoke('backend:retry'),
+  hardware: () => ipcRenderer.invoke('backend:hardware'),
 
   // 更新
   checkUpdate: () => ipcRenderer.invoke('update:check'),
@@ -26,6 +35,7 @@ contextBridge.exposeInMainWorld('desk', {
 
   // 事件订阅（返回清理函数）
   on: (channel, cb) => {
+    if (!EVENTS.has(channel) || typeof cb !== 'function') throw new Error('Unsupported event subscription')
     const listener = (_e, payload) => cb(payload)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)

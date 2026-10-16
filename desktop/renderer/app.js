@@ -38,6 +38,9 @@
       updateDownload: '下载更新', updateError: '检查更新失败',
       lang: '中文', version: '版本',
       retry: '重试', stop: '停止',
+      system: '系统管理', checkUpdate: '检查更新', waitingBackend: '正在等待本地服务…',
+      disconnected: '连接暂不可用，正在自动重连。可重试或打开系统管理查看终端日志。',
+      hardware: '检测 GPU', detecting: '检测中…',
     },
     en: {
       appName: 'AI Anime Director Studio',
@@ -66,6 +69,9 @@
       updateDownload: 'Download Update', updateError: 'Update check failed',
       lang: 'EN', version: 'Version',
       retry: 'Retry', stop: 'Stop',
+      system: 'System', checkUpdate: 'Check Updates', waitingBackend: 'Waiting for local service…',
+      disconnected: 'Connection unavailable. Reconnecting automatically. Retry or open System to inspect logs.',
+      hardware: 'Detect GPU', detecting: 'Detecting…',
     },
   }
   let lang = localStorage.getItem('aivideo.lang') || 'zh'
@@ -83,6 +89,10 @@
     maximized: false,
     paths: null,
     appUrl: 'http://127.0.0.1:8000',
+    loadedOrigin: '',
+    loadFailed: false,
+    online: false,
+    route: localStorage.getItem('aivideo.desktopRoute') || '/',
   }
 
   const MAX_LOGS = 500
@@ -104,6 +114,7 @@
     enginePath: $('#engine-path'), comfyPath: $('#comfy-path'), runtimePath: $('#runtime-path'),
     shortcutBtn: $('#shortcut-btn'),
     terminal: $('#terminal'),
+    terminalHint: $('#terminal-hint'),
     logBox: $('#log-box'),
     logCopy: $('#log-copy'), logExport: $('#log-export'), logClear: $('#log-clear'),
     actionBtn: $('#action-btn'),
@@ -116,6 +127,9 @@
     webview: $('#app-webview'),
     backBtn: $('#back-btn'),
     bootView: $('#boot-view'),
+    systemBtn: $('#system-btn'),
+    connectionCard: $('#connection-card'),
+    connectionMessage: $('#connection-message'),
   }
 
   // ---------------- 渲染 ----------------
@@ -139,6 +153,7 @@
     })
     renderProgress()
     renderUpdate()
+    el.connectionMessage.textContent = t('disconnected')
   }
 
   const STATE_TEXT = {
@@ -149,14 +164,16 @@
 
   function renderProgress() {
     const s = state.bootState
-    el.progressText.textContent = s === 'ready' ? t('starting') : t('installing')
+    el.progressText.textContent = t(STATE_TEXT[s] || 'statusPreparing')
+    el.progressDesc.textContent = state.online ? t('workspaceSubReady') : t('disconnected')
+    el.openAppBtn.disabled = !state.online
     el.progressIcon.textContent = s === 'ready' ? '✓' : (s === 'error' ? '⚠' : 'F')
     el.progressCard.classList.toggle('done', s === 'ready')
     el.progressCard.classList.toggle('error', s === 'error')
     el.progressBar.style.width = Math.round(state.progress * 100) + '%'
     const stateText = t(STATE_TEXT[s] || 'statusPreparing')
-    el.actionBtn.textContent = s === 'ready' ? t('processingBtn') : stateText
-    el.actionBtn.classList.toggle('busy', s !== 'ready')
+    el.actionBtn.textContent = s === 'error' ? t('retry') : stateText
+    el.actionBtn.classList.toggle('busy', s !== 'ready' && s !== 'error')
     el.workspaceSub.textContent = s === 'ready' ? t('workspaceSubReady') : t('workspaceSub')
     if (s === 'ready') {
       el.openAppBtn.classList.add('pulse')
@@ -202,10 +219,84 @@
     state.view = v
     el.bootView.style.display = v === 'boot' ? '' : 'none'
     el.webviewWrap.style.display = v === 'app' ? '' : 'none'
-    if (v === 'app') {
-      el.webview.src = state.appUrl
+    document.body.classList.toggle('workspace-open', v === 'app')
+    el.systemBtn.setAttribute('aria-expanded', String(v === 'boot'))
+    if (v === 'app' && state.online && (state.loadedOrigin !== state.appUrl || state.loadFailed)) {
+      // Keep the guest alive while system management is open; never reset a healthy guest.
+      const route = /^\/(?!\/)[^\\]*$/.test(state.route) ? state.route : '/'
+      el.webview.src = state.appUrl + route
+      state.loadedOrigin = state.appUrl
+      state.loadFailed = false
     }
   }
+
+  function showConnection(show) {
+    el.connectionCard.hidden = !show
+    el.connectionMessage.textContent = t('disconnected')
+  }
+
+  function backendReady(url) {
+    const wasOnline = state.online
+    state.online = true
+    state.appUrl = url
+    state.bootState = 'ready'
+    state.progress = 1
+    renderProgress()
+    showConnection(false)
+    if (!state.loadedOrigin || (!wasOnline && state.view === 'app')) setView('app')
+  }
+
+  async function retryBackend() {
+    try {
+      await window.desk.retryBackend()
+      const status = await window.desk.backendStatus()
+      if (status.online) {
+        backendReady(`http://127.0.0.1:${status.port}`)
+        if (state.loadFailed) setView('app')
+      }
+    } catch (error) {
+      state.logs.push({ text: String(error), ts: Date.now() })
+      renderTerminal()
+    }
+  }
+
+  el.systemBtn.addEventListener('click', () => setView(state.view === 'app' ? 'boot' : (state.loadedOrigin ? 'app' : 'boot')))
+  $('#retry-backend-btn').addEventListener('click', retryBackend)
+  $('#reconnect-btn').addEventListener('click', retryBackend)
+  $('#check-update-btn').addEventListener('click', () => window.desk.checkUpdate())
+  $('#hardware-btn').addEventListener('click', async () => {
+    const button = $('#hardware-btn')
+    button.disabled = true
+    $('#hardware-info').textContent = t('detecting')
+    try {
+      const h = await window.desk.hardware()
+      $('#hardware-info').textContent = `${h.gpu_name} · VRAM ${h.vram_gb} GB · RAM ${h.ram_gb} GB · ${h.device}`
+    } catch (error) {
+      $('#hardware-info').textContent = String(error.message || error)
+    } finally { button.disabled = false }
+  })
+  const rememberRoute = ({ url }) => {
+    try {
+      const u = new URL(url)
+      if (u.origin !== state.appUrl) return
+      state.route = u.pathname + u.search + u.hash
+      localStorage.setItem('aivideo.desktopRoute', state.route)
+    } catch {}
+  }
+  el.webview.addEventListener('did-navigate', rememberRoute)
+  el.webview.addEventListener('did-navigate-in-page', rememberRoute)
+  el.webview.addEventListener('did-fail-load', event => {
+    if (event.isMainFrame === false || event.errorCode === -3) return
+    state.loadFailed = true
+    showConnection(true)
+    state.logs.push({ text: `工作台加载失败：${event.errorDescription}`, ts: Date.now() })
+    renderTerminal()
+  })
+  el.webview.addEventListener('render-process-gone', () => {
+    state.loadFailed = true
+    showConnection(true)
+  })
+  el.webview.addEventListener('did-finish-load', () => showConnection(!state.online))
 
   // ---------------- 事件：窗口 ----------------
   el.langBtn.addEventListener('click', () => {
@@ -247,7 +338,7 @@
     if (state.bootState === 'ready') setView('app')
   })
   el.actionBtn.addEventListener('click', () => {
-    if (state.bootState === 'error') window.desk.relaunch()
+    if (state.bootState === 'error') retryBackend()
   })
   el.backBtn.addEventListener('click', () => setView('boot'))
   el.logCopy.addEventListener('click', () => {
@@ -285,12 +376,13 @@
     renderProgress()
   })
   window.desk.on('backend:ready', ({ url }) => {
-    state.appUrl = url
-    state.bootState = 'ready'
-    state.progress = 1
+    backendReady(url)
+  })
+  window.desk.on('backend:offline', () => {
+    state.online = false
+    state.bootState = 'starting'
     renderProgress()
-    // 自动进入应用视图（如图：后台就绪后直接可操作）
-    setTimeout(() => { if (state.bootState === 'ready') setView('app') }, 600)
+    showConnection(true)
   })
   window.desk.on('backend:error', ({ text }) => {
     state.bootState = 'error'
@@ -330,6 +422,8 @@
         el.comfyPath.textContent = 'http://127.0.0.1:8188'
       }
       el.versionTag.textContent = 'v' + (await window.desk.version())
+      const status = await window.desk.backendStatus()
+      if (status.online) backendReady(`http://127.0.0.1:${status.port}`)
     } catch { /* ignore */ }
     // 手动检查一次更新（设置页可见反馈）
     setTimeout(() => window.desk.checkUpdate(), 1500)

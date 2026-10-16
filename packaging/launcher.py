@@ -376,7 +376,8 @@ def sync_payload(dest: Path):
 
 def _copy_tree(src: Path, dst: Path):
     dst.mkdir(parents=True, exist_ok=True)
-    skip_names = {"models", "outputs", ".venv", "__pycache__", "aivideo.db", ".cache"}
+    skip_names = {"models", "outputs", ".venv", "__pycache__", "aivideo.db",
+                  "aivideo.db-wal", "aivideo.db-shm", "settings.json", ".cache"}
     for item in src.iterdir():
         if item.name in skip_names:
             continue

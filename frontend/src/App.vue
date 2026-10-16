@@ -43,13 +43,11 @@
             大模型下载可能需要几分钟到几十分钟，请耐心等待窗口中的进度。
           </p>
           <p v-else>
-            等待时间较长。请检查名为「AI视频工坊」的黑色命令行窗口是否还在运行：<br>
-            · 窗口还在 → 它可能正在下载模型，继续等待即可<br>
-            · 窗口已关闭 → 重新双击运行 <b>AI视频工坊.exe</b><br>
-            · 想看详细进度 → 看那个窗口里滚动的输出
+            等待时间较长。桌面端请打开标题栏「系统管理」查看启动状态与终端日志，或重试连接。<br>
+            浏览器用户请检查本地后端是否仍在运行。
           </p>
           <div class="offline-meta">
-            已等待 {{ waitingSec }} 秒 · 地址 http://127.0.0.1:8000
+            已等待 {{ waitingSec }} 秒 · 地址 {{ backendOrigin }}
           </div>
           <button class="offline-retry" @click="checkNow">立即重试</button>
         </div>
@@ -74,6 +72,7 @@ const engines = ref([])
 const activeCount = computed(() => store.active.length)
 const backendOnline = ref(true)
 const waitingSec = ref(0)
+const backendOrigin = window.location.origin
 const navToast = ref('')
 let toastTimer = null
 let healthTimer = null

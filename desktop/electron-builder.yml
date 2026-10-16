@@ -13,6 +13,8 @@ directories:
 files:
   - main.js
   - preload.js
+  - security.js
+  - backend-service.js
   - renderer/**
   - package.json
 

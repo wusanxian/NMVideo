@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-src http://127.0.0.1:*; base-uri 'none'" />
   <title>AI 动画导演工作台</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -14,6 +15,7 @@
       <span class="brand-name">AI 动画导演工作台</span>
     </div>
     <div class="titlebar-right">
+      <button id="system-btn" class="lang-btn" data-i18n="system">系统管理</button>
       <button id="lang-btn" class="lang-btn" title="Language">中文</button>
       <div class="win-buttons">
         <button id="win-min" class="win-btn" title="Minimize">─</button>
@@ -77,7 +79,11 @@
         <div class="info-row"><span class="info-label" data-i18n="runtimePath">运行目录</span><span class="info-value" id="runtime-path"></span></div>
         <div class="info-actions">
           <button id="shortcut-btn" class="btn">创建桌面快捷方式</button>
+          <button id="retry-backend-btn" class="btn" data-i18n="retry">重试</button>
+          <button id="check-update-btn" class="btn" data-i18n="checkUpdate">检查更新</button>
+          <button id="hardware-btn" class="btn" data-i18n="hardware">检测 GPU</button>
         </div>
+        <p id="hardware-info" role="status"></p>
       </section>
 
       <!-- 终端 -->
@@ -111,7 +117,12 @@
       <div class="app-bar">
         <button id="back-btn" class="btn ghost">返回启动台</button>
       </div>
-      <webview id="app-webview" src="" allowpopups partition="persist:aivideo"
+      <div id="connection-card" class="connection-card" hidden>
+        <h2 data-i18n="waitingBackend">正在等待本地服务…</h2>
+        <p id="connection-message" role="status"></p>
+        <button id="reconnect-btn" class="btn" data-i18n="retry">重试</button>
+      </div>
+      <webview id="app-webview" partition="persist:aivideo"
                style="flex:1; border:none"></webview>
     </main>
   </div>
