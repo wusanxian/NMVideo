@@ -94,6 +94,12 @@ async function act(action) {
     emit('done', action)
   } catch (e) {
     errMsg.value = e.message
+    // 被后端质检拦截（422）时刷新检查结果，保证弹窗显示与后端一致
+    try {
+      const q = await api.shotQuality(props.shot.id)
+      issues.value = q.issues
+      score.value = q.score
+    } catch { /* ignore */ }
   } finally {
     busy.value = false
   }

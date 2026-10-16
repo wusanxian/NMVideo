@@ -398,24 +398,35 @@ def get_version(version_id: str) -> Optional[dict]:
 
 
 def adopt_version(shot_id: str, version_id: str) -> None:
-    """采用某版本：current_version_id 指向它，镜头回到待审核/已通过态由调用方定"""
+    """采用某版本：current_version_id 指向它，镜头回到待审核/已通过态由调用方定。
+
+    后端强制校验版本归属：跨镜头采用直接拒绝（不能把 A 镜头的视频采到 B 镜头）。
+    """
+    v = get_version(version_id)
+    if not v:
+        raise ValueError(f"版本不存在: {version_id}")
+    if v["shot_id"] != shot_id:
+        raise ValueError("版本不属于该镜头，拒绝采用")
     _write(
         "UPDATE shots SET current_version_id = ? WHERE id = ?", (version_id, shot_id)
     )
 
 
-def delete_version(version_id: str) -> None:
+def delete_version(shot_id: str, version_id: str) -> None:
+    """删除版本（带归属校验）；若删的是当前采用版本，回退到最新候选。"""
     v = get_version(version_id)
+    if not v:
+        raise ValueError(f"版本不存在: {version_id}")
+    if v["shot_id"] != shot_id:
+        raise ValueError("版本不属于该镜头，拒绝删除")
     _write("DELETE FROM shot_versions WHERE id = ?", (version_id,))
-    if v and v["shot_id"]:
-        shot = get_shot(v["shot_id"])
-        if shot and shot["current_version_id"] == version_id:
-            # 当前版本被删 → 回退到最新候选
-            rest = list_versions(v["shot_id"])
-            _write(
-                "UPDATE shots SET current_version_id = ? WHERE id = ?",
-                (rest[0]["id"] if rest else "", v["shot_id"]),
-            )
+    shot = get_shot(shot_id)
+    if shot and shot["current_version_id"] == version_id:
+        rest = list_versions(shot_id)
+        _write(
+            "UPDATE shots SET current_version_id = ? WHERE id = ?",
+            (rest[0]["id"] if rest else "", shot_id),
+        )
 
 
 # =====================================================================
@@ -521,24 +532,114 @@ def parse_script(text: str) -> list:
     return scenes
 
 
-def import_script(project_id: str, text: str) -> dict:
-    """解析剧本并写入场景/分镜（覆盖式重建该项目的场景与分镜）"""
+def script_preview(project_id: str, text: str) -> dict:
+    """解析剧本并与现有分镜做差异对比，**不写库**——供导入前确认。"""
     parsed = parse_script(text)
-    # 清空旧场景（级联删分镜）
-    for sc in list_scenes(project_id):
-        _write("DELETE FROM scenes WHERE id = ?", (sc["id"],))
-    _write("DELETE FROM timeline_items WHERE project_id = ?", (project_id,))
+    existing_scenes = list_scenes(project_id)
+    existing_titles = {sc["title"].strip() for sc in existing_scenes}
+    new_titles = [ps["title"].strip() for ps in parsed]
+    return {
+        "mode": "preview",
+        "existing": {
+            "scene_count": len(existing_scenes),
+            "shot_count": sum(len(sc["shots"]) for sc in existing_scenes),
+        },
+        "incoming": {
+            "scene_count": len(parsed),
+            "shot_count": sum(len(s["shots"]) for s in parsed),
+            "scene_titles": new_titles,
+        },
+        # 标题撞车：重建模式下这些场景会被替换；追加模式下会跳过
+        "overlap_titles": [t for t in new_titles if t in existing_titles],
+    }
 
+
+def import_script(project_id: str, text: str, mode: str = "rebuild") -> dict:
+    """解析剧本并写入场景/分镜。
+
+    - rebuild（默认）：清空该项目场景与分镜后重建。整个重建在**单个事务**
+      里执行，中途任何一步失败都整体回滚，不会再出现「删了旧的、新的没建成」
+      的半破坏现场。
+    - append：保留已有场景与分镜，把解析结果追加进去；标题与现有场景相同的
+      场景跳过（不覆盖已有制作成果）。
+    """
+    if mode not in ("rebuild", "append"):
+        raise ValueError(f"未知导入模式: {mode}")
+    parsed = parse_script(text)
+    if not parsed:
+        raise ValueError("剧本中没有解析出任何场景（请检查「场景一：xxx」格式标记）")
+
+    removed = {"scenes": 0, "shots": 0}
+    if mode == "rebuild":
+        existing = list_scenes(project_id)
+        removed["scenes"] = len(existing)
+        removed["shots"] = sum(len(sc["shots"]) for sc in existing)
+
+    now = _utcnow()
     created_scenes = []
-    for i, ps in enumerate(parsed):
-        sc = create_scene(project_id, ps["title"], ps["description"])
-        update_scene(sc["id"], order_index=i)
-        for j, ps_shot in enumerate(ps["shots"]):
-            create_shot(sc["id"], order_index=j, **ps_shot)
-        created_scenes.append(get_scene(sc["id"]))
+    with db._lock:
+        conn = db._conn
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if mode == "rebuild":
+                conn.execute(
+                    "DELETE FROM timeline_items WHERE project_id = ?", (project_id,)
+                )
+                conn.execute("DELETE FROM scenes WHERE project_id = ?", (project_id,))
+            elif mode == "append":
+                # 追加模式：标题相同的场景跳过，保留其镜头的制作成果
+                existing_titles = {
+                    r["title"].strip()
+                    for r in conn.execute(
+                        "SELECT title FROM scenes WHERE project_id = ?", (project_id,)
+                    ).fetchall()
+                }
+                parsed = [ps for ps in parsed if ps["title"].strip() not in existing_titles]
+
+            scene_base = _row(
+                "SELECT COALESCE(MAX(order_index), -1) AS m"
+                " FROM scenes WHERE project_id = ?", (project_id,),
+            )["m"]
+            for i, ps in enumerate(parsed):
+                sid = _new_id("scn")
+                conn.execute(
+                    "INSERT INTO scenes (id, project_id, title, description,"
+                    " environment, lighting, order_index, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
+                    (sid, project_id, ps["title"].strip() or "新场景", ps["description"],
+                     "", "", scene_base + 1 + i, now, now),
+                )
+                for j, ps_shot in enumerate(ps["shots"]):
+                    conn.execute(
+                        "INSERT INTO shots (id, scene_id, title, dialogue, shot_size,"
+                        " camera_movement, duration_s, prompt, negative_prompt,"
+                        " reference_image, character_ids, mode, continue_from,"
+                        " order_index, created_at, updated_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (_new_id("sht"), sid, ps_shot["title"], ps_shot["dialogue"],
+                         ps_shot["shot_size"], ps_shot["camera_movement"],
+                         ps_shot["duration_s"], ps_shot["prompt"], "", "",
+                         "[]", "t2v", "", j, now, now),
+                    )
+                created_scenes.append(sid)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
     update_project(project_id, script=text)
-    return {"scenes": created_scenes, "scene_count": len(created_scenes),
-            "shot_count": sum(len(s["shots"]) for s in parsed)}
+    scenes = [get_scene(sid) for sid in created_scenes]
+    n_shots = sum(
+        _row("SELECT COUNT(*) AS c FROM shots WHERE scene_id = ?", (sid,))["c"]
+        for sid in created_scenes
+    )
+    return {
+        "mode": mode,
+        "scenes": scenes,
+        "scene_count": len(scenes),
+        "shot_count": n_shots,
+        "removed": removed,
+    }
 
 
 # =====================================================================

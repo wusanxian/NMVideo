@@ -13,11 +13,27 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# 声明了 REFERENCES ... ON DELETE CASCADE 的表（子表 → 父表列）
+_FK_TABLES = [
+    ("shot_versions", "shots", "shot_id"),
+    ("shot_voices", "shots", "shot_id"),
+    ("timeline_items", "shots", "shot_id"),
+    ("timeline_items", "projects", "project_id"),
+    ("scenes", "projects", "project_id"),
+    ("shots", "scenes", "scene_id"),
+    ("characters", "projects", "project_id"),
+    ("audio_tracks", "projects", "project_id"),
+    ("subtitle_tracks", "projects", "project_id"),
+    ("exports", "projects", "project_id"),
+]
+
+
 class Database:
     def __init__(self, path: Path = DB_PATH):
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        self._enable_foreign_keys()
         with self._lock:
             self._conn.execute(
                 """
@@ -243,6 +259,24 @@ class Database:
                     self._conn.execute(f"ALTER TABLE scenes ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
+    def _enable_foreign_keys(self):
+        """启用 SQLite 外键约束（PRAGMA foreign_keys 默认关闭，级联删除不生效）。
+
+        旧库可能存在孤儿行（父表已删、子表残留）。先审计清理孤儿，
+        否则外键开启后这些行会让 JOIN 统计出错、且永远无法被级联清理。
+        """
+        with self._lock:
+            for table, parent, col in _FK_TABLES:
+                try:
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE {col} != '' AND {col} IS NOT NULL"
+                        f" AND NOT EXISTS (SELECT 1 FROM {parent} WHERE {parent}.id = {table}.{col})"
+                    )
+                except sqlite3.OperationalError:
+                    pass  # 表还没建（首次启动），建表后再无需清理
+            self._conn.commit()
+            self._conn.execute("PRAGMA foreign_keys = ON")
+
     def create_job(self, params: dict) -> dict:
         job_id = uuid.uuid4().hex[:8]
         row = {
@@ -274,13 +308,14 @@ class Database:
             row = cur.fetchone()
         return dict(row) if row else None
 
-    def list_jobs(self, limit: int = 100, status: Optional[str] = None) -> list:
+    def list_jobs(self, limit: int = 100, status: Optional[str] = None,
+                  order: str = "desc") -> list:
         sql = "SELECT * FROM jobs"
         args: list = []
         if status:
             sql += " WHERE status = ?"
             args.append(status)
-        sql += " ORDER BY created_at DESC LIMIT ?"
+        sql += f" ORDER BY created_at {'ASC' if order == 'asc' else 'DESC'} LIMIT ?"
         args.append(limit)
         with self._lock:
             cur = self._conn.execute(sql, tuple(args))

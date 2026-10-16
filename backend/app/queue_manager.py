@@ -32,25 +32,40 @@ class JobQueue:
             self._task = asyncio.create_task(self._worker())
 
     def _recover_stale_jobs(self):
-        """崩溃恢复：上次服务中断时处于 running/pending 的任务标记为失败，
-        避免前端看到永远卡住的僵尸任务。"""
-        stale = db_module.db.list_jobs(limit=1000, status="running")
-        stale += db_module.db.list_jobs(limit=1000, status="pending")
-        for job in stale:
+        """崩溃恢复（重启后重启队列，而不是一刀切标失败）：
+
+        - pending：还没开始跑的任务**重新入队**（按提交顺序 FIFO），
+          批量生成的排队任务不丢。
+        - running：worker 线程已随上次进程死亡，本地引擎没有断点续算；
+          ComfyUI 任务也无法从我们的 job_id 反查其内部 prompt 历史，
+          因此统一标记中断并**明确告知用户需重新生成**，对应镜头打回需重做。
+        """
+        # ---- running：无法续算，标记中断 ----
+        running = db_module.db.list_jobs(limit=1000, status="running")
+        for job in running:
             db_module.db.update_job(
                 job["id"],
                 status="failed",
-                error="服务重启前中断（自动恢复）",
-                stage="失败",
+                error="生成在服务重启时中断（不支持断点续算），请重新生成",
+                stage="已中断",
                 finished_at=_utcnow(),
             )
-            # 分镜联动：对应镜头打回「需重做」，否则会永远卡在生成中
             shot_id = job.get("shot_id") or ""
             if shot_id and sb.get_shot(shot_id):
-                sb.update_shot(shot_id, job_id="", note="服务重启前中断")
+                sb.update_shot(shot_id, job_id="", note="服务重启时生成中断，请重新生成")
                 sb.set_shot_status(shot_id, "rework")
-        if stale:
-            print(f"[queue] 清理了 {len(stale)} 个中断任务")
+        if running:
+            print(f"[queue] 标记了 {len(running)} 个中断任务（服务重启前正在生成）")
+
+        # ---- pending：重新入队（保持提交顺序） ----
+        pending = db_module.db.list_jobs(limit=1000, status="pending", order="asc")
+        for job in pending:
+            self._queue.put_nowait(job["id"])
+            shot_id = job.get("shot_id") or ""
+            if shot_id and sb.get_shot(shot_id):
+                sb.set_shot_status(shot_id, "queued")
+        if pending:
+            print(f"[queue] 重新入队 {len(pending)} 个未执行任务")
 
     def stop(self):
         if self._task is not None:

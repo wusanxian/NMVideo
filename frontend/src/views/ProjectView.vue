@@ -152,8 +152,11 @@
         <div class="script-actions">
           <button class="btn" :disabled="savingScript" @click="saveScript">💾 保存剧本</button>
           <button class="btn" @click="aiWriterOpen = true">🧠 AI 编剧</button>
-          <button class="btn btn-primary" :disabled="importing" @click="importScript">
-            ✨ AI 拆分场景与分镜（覆盖重建）
+          <button class="btn btn-primary" :disabled="importing" @click="doImport('rebuild')">
+            ✨ AI 拆分（覆盖重建）
+          </button>
+          <button class="btn" :disabled="importing" @click="doImport('append')">
+            ➕ 追加导入（保留已有）
           </button>
         </div>
       </div>
@@ -757,13 +760,29 @@ async function runAiWriter() {
   }
 }
 
-async function importScript() {
-  if (!confirm('AI 拆分会按剧本重建该项目的场景与分镜（现有分镜将被清空），确定继续？')) return
+async function doImport(mode) {
   importing.value = true
   try {
-    const r = await store.importScript(scriptText.value)
-    message.value = `拆分完成：${r.scene_count} 个场景 / ${r.shot_count} 个分镜`
-    setTimeout(() => (message.value = ''), 3000)
+    // 先做差异预览（不写库），让用户确认后再真正导入
+    const pv = await api.importScript(project.value.id, scriptText.value, 'preview')
+    const inc = pv.incoming, ex = pv.existing
+    let tip = `解析出 ${inc.scene_count} 个场景 / ${inc.shot_count} 个分镜。`
+    if (mode === 'rebuild') {
+      tip += `\n\n覆盖重建将清空现有 ${ex.scene_count} 个场景 / ${ex.shot_count} 个分镜` +
+        '（已生成视频文件保留在 outputs，但版本记录会一并删除）。'
+      if (pv.overlap_titles.length) tip += `\n同名场景将被替换：${pv.overlap_titles.join('、')}`
+    } else {
+      tip += `\n\n追加导入保留现有 ${ex.scene_count} 个场景 / ${ex.shot_count} 个分镜。`
+      tip += pv.overlap_titles.length
+        ? `\n同名场景将跳过（不覆盖制作成果）：${pv.overlap_titles.join('、')}`
+        : '\n没有同名场景。'
+    }
+    if (!confirm(tip + '\n\n确定继续？')) return
+    const r = await store.importScript(scriptText.value, mode)
+    message.value = `导入完成（${mode === 'rebuild' ? '覆盖重建' : '追加'}）：` +
+      `${r.scene_count} 个场景 / ${r.shot_count} 个分镜` +
+      (mode === 'rebuild' && r.removed?.shots ? `，已移除旧分镜 ${r.removed.shots} 个` : '')
+    setTimeout(() => (message.value = ''), 4000)
     tab.value = 'shots'
   } catch (e) {
     message.value = e.message

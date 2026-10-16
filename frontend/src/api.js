@@ -9,7 +9,11 @@ async function request(path, options = {}) {
     let detail = `${resp.status} ${resp.statusText}`
     try {
       const body = await resp.json()
-      if (body.detail) detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
+      if (body.detail) {
+        detail = typeof body.detail === 'string'
+          ? body.detail
+          : (body.detail.message || JSON.stringify(body.detail))
+      }
     } catch {
       /* ignore */
     }
@@ -39,7 +43,7 @@ export const api = {
 
   getScript: (id) => request(`/projects/${id}/script`),
   saveScript: (id, text) => request(`/projects/${id}/script`, { method: 'PUT', body: JSON.stringify({ text }) }),
-  importScript: (id, text) => request(`/projects/${id}/script/import`, { method: 'POST', body: JSON.stringify({ text }) }),
+  importScript: (id, text, mode = 'rebuild') => request(`/projects/${id}/script/import`, { method: 'POST', body: JSON.stringify({ text, mode }) }),
 
   createScene: (pid, data) => request(`/projects/${pid}/scenes`, { method: 'POST', body: JSON.stringify(data) }),
   updateScene: (id, data) => request(`/scenes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),

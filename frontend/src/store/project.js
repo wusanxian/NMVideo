@@ -126,8 +126,8 @@ export const useProjectStore = defineStore('project', {
       await api.saveScript(this.current.id, text)
       await this.refresh()
     },
-    async importScript(text) {
-      const r = await api.importScript(this.current.id, text)
+    async importScript(text, mode = 'rebuild') {
+      const r = await api.importScript(this.current.id, text, mode)
       await this.refresh()
       return r
     },

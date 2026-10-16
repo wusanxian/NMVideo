@@ -66,6 +66,19 @@ def check_shot(shot: dict, characters: list = None, voices: list = None) -> list
     elif not shot.get("current_version"):
         issues.append({"level": "error", "code": "no_current",
                        "message": "未选择采用版本"})
+    else:
+        # 当前版本的视频文件必须真实存在（文件被清理/移动过就拦截）
+        current = shot["current_version"]
+        url = (current.get("video_url") or "").strip()
+        if not url:
+            issues.append({"level": "error", "code": "no_video",
+                           "message": "当前版本没有视频文件"})
+        elif url.startswith("/outputs/"):
+            from .config import OUTPUTS_DIR
+            p = OUTPUTS_DIR / url[len("/outputs/"):]
+            if not p.exists():
+                issues.append({"level": "error", "code": "video_missing",
+                               "message": f"当前版本视频文件缺失: {url}"})
 
     # 参考图模式提示
     mode = shot.get("mode") or "t2v"
