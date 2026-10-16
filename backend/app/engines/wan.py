@@ -158,7 +158,9 @@ class WanEngine(BaseEngine):
 
     # ---------- 生成 ----------
     def generate(self, *, prompt, negative_prompt, width, height, num_frames,
-                 fps, steps, guidance, seed, frames_dir, on_progress, is_cancelled) -> List[Path]:
+                 fps, steps, guidance, seed, frames_dir, on_progress, is_cancelled,
+                 reference_image: str = "") -> List[Path]:
+        # Wan2.2-TI2V v1 仅文生视频；reference_image 忽略（首尾帧走 ComfyUI 工作流）
         import random
 
         import torch

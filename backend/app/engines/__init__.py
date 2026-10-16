@@ -1,11 +1,13 @@
 """引擎注册表"""
 from .anime import AnimeEngine
 from .base import BaseEngine, EngineMeta, EngineUnavailable, GenerationCancelled
+from .comfy import ComfyEngine
 from .wan import WanEngine
 
 ENGINES: dict = {
     AnimeEngine.meta.id: AnimeEngine,
     WanEngine.meta.id: WanEngine,
+    ComfyEngine.meta.id: ComfyEngine,
 }
 
 

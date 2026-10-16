@@ -1,14 +1,25 @@
 <template>
   <aside class="sidebar">
-    <div class="logo">🎬 AI 视频工坊</div>
+    <div class="logo">🎬 AI 动画导演工作台</div>
     <nav>
-      <router-link to="/generate">✨ 生成视频</router-link>
+      <a v-for="item in navItems" :key="item.label" class="nav-item"
+         :class="{ active: isActive(item) }"
+         :href="itemHref(item)" @click.prevent="onNav(item)">
+        <span class="nav-ico">{{ item.icon }}</span>
+        <span class="nav-text">{{ item.label }}</span>
+        <span v-if="item.label === '视频生成' && activeCount" class="nav-badge">{{ activeCount }}</span>
+      </a>
+    </nav>
+    <div class="nav-extra">
       <router-link to="/queue">
         📋 任务队列
         <span v-if="activeCount" class="nav-badge">{{ activeCount }}</span>
       </router-link>
       <router-link to="/gallery">🖼 作品画廊</router-link>
-    </nav>
+    </div>
+    <transition name="fade">
+      <div v-if="navToast" class="nav-toast">{{ navToast }}</div>
+    </transition>
     <div class="sidebar-footer">
       <div class="engine-status" v-for="e in engines" :key="e.id">
         <span class="dot" :class="e.status"></span>
@@ -50,18 +61,64 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from './api'
 import { useJobsStore } from './store/jobs'
+import { useProjectStore } from './store/project'
 
 const store = useJobsStore()
+const projectStore = useProjectStore()
+const route = useRoute()
+const router = useRouter()
 const engines = ref([])
 const activeCount = computed(() => store.active.length)
 const backendOnline = ref(true)
 const waitingSec = ref(0)
+const navToast = ref('')
+let toastTimer = null
 let healthTimer = null
 let waitTimer = null
 
 const showOfflineCard = computed(() => !backendOnline.value)
+
+// ---------- 侧栏导航（按创作流：作品 → 剧本 → 资产 → 生成 → 剪辑 → 声音 → 设置） ----------
+const pid = computed(() => projectStore.currentProjectId)
+const navItems = computed(() => [
+  { icon: '🗂', label: '我的作品', to: '/projects', route: '/projects' },
+  { icon: '📖', label: '剧本与分镜', tab: 'shots', needsProject: true },
+  { icon: '🎭', label: '角色与场景', tab: 'assets', needsProject: true },
+  { icon: '🎬', label: '视频生成', to: '/generate', route: '/generate' },
+  { icon: '✂️', label: '剪辑工作台', tab: 'timeline', needsProject: true },
+  { icon: '🎧', label: '声音制作', tab: 'timeline', needsProject: true },
+  { icon: '⚙️', label: '模型与设置', to: '/services', route: '/services' },
+])
+
+function itemHref(item) {
+  if (item.needsProject && !pid.value) return '/projects'
+  if (item.needsProject) return `/projects/${pid.value}?tab=${item.tab}`
+  return item.to
+}
+
+function isActive(item) {
+  if (item.needsProject) {
+    return route.path.startsWith('/projects/') && route.query.tab === item.tab
+  }
+  return route.path === item.route
+}
+
+function toast(msg) {
+  navToast.value = msg
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => (navToast.value = ''), 2500)
+}
+
+function onNav(item) {
+  const href = itemHref(item)
+  if (item.needsProject && !pid.value) {
+    toast('请先进入一个作品，再使用「' + item.label + '」')
+  }
+  router.push(href)
+}
 
 async function checkNow() {
   try {
@@ -91,12 +148,29 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(healthTimer)
   clearInterval(waitTimer)
+  clearTimeout(toastTimer)
 })
 </script>
 
 <style scoped>
 .engine-status.warn {
   color: var(--red);
+}
+
+/* 导航提示 toast（无当前作品时点击项目内菜单） */
+.nav-toast {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  padding: 9px 18px;
+  font-size: 13px;
+  color: var(--text, #e8ecf3);
+  background: var(--bg-card, #1a1f2b);
+  border: 1px solid var(--accent, #8b5cf6);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 
 /* 离线引导卡 */

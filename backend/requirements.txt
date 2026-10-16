@@ -19,3 +19,7 @@ pillow>=10.0
 imageio-ffmpeg>=0.5
 huggingface-hub>=0.27
 numpy>=1.26
+websockets>=12.0       # ComfyUI 工作流进度推送（WS）
+requests>=2.31         # ComfyUI HTTP API 客户端
+edge-tts>=7.0          # TTS 配音主引擎（神经网络中文音色，需联网）
+pyttsx3>=2.90          # TTS 离线兜底（Windows SAPI5 系统语音）

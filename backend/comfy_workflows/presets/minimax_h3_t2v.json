@@ -1,0 +1,24 @@
+{
+  "_comment": "MiniMax H3 文生视频工作流（需要 ComfyUI 安装 MiniMax API 自定义节点，如 ComfyUI-MiniMax-Nodes）。",
+  "_meta": {
+    "name": "MiniMax H3 · 文生视频",
+    "description": "调用 MiniMax H3 视频模型生成（API 计费）。需要安装 MiniMax 自定义节点并填 API Key。",
+    "requires": "ComfyUI-MiniMax 自定义节点",
+    "mode": "t2v"
+  },
+  "prompt": {
+    "1": {"class_type": "MiniMaxAPIConfig",
+          "inputs": {"api_key": "", "model": "MiniMax-H3"}},
+    "2": {"class_type": "MiniMaxTextToVideo",
+          "inputs": {"prompt": " cinematic shot, anime style",
+                     "duration": 6,
+                     "resolution": "720P",
+                     "config": ["1", 0]}},
+    "3": {"class_type": "SaveVideo",
+          "inputs": {"filename_prefix": "aivideo_minimax",
+                     "fps": 24, "video": ["2", 0]}}
+  },
+  "_aivideo_map": {
+    "prompt": {"node": "2", "input": "prompt"}
+  }
+}

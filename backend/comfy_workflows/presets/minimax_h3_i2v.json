@@ -1,0 +1,28 @@
+{
+  "_comment": "MiniMax H3 图生视频工作流（首帧图 → 视频，需要 ComfyUI 安装 MiniMax API 自定义节点）。",
+  "_meta": {
+    "name": "MiniMax H3 · 图生视频",
+    "description": "以参考图/首帧为条件生成视频（API 计费）。需要安装 MiniMax 自定义节点并填 API Key。",
+    "requires": "ComfyUI-MiniMax 自定义节点",
+    "mode": "i2v"
+  },
+  "prompt": {
+    "1": {"class_type": "MiniMaxAPIConfig",
+          "inputs": {"api_key": "", "model": "MiniMax-H3"}},
+    "2": {"class_type": "LoadImage",
+          "inputs": {"image": "example.png"}},
+    "3": {"class_type": "MiniMaxImageToVideo",
+          "inputs": {"prompt": " cinematic shot, anime style",
+                     "image": ["2", 0],
+                     "duration": 6,
+                     "resolution": "720P",
+                     "config": ["1", 0]}},
+    "4": {"class_type": "SaveVideo",
+          "inputs": {"filename_prefix": "aivideo_minimax_i2v",
+                     "fps": 24, "video": ["3", 0]}}
+  },
+  "_aivideo_map": {
+    "prompt": {"node": "3", "input": "prompt"},
+    "reference_image": {"node": "2", "input": "image"}
+  }
+}

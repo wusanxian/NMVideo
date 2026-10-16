@@ -18,6 +18,13 @@ AI 视频工坊 Windows 启动器（打包进 exe 的入口）
   --yes                                 跳过倒计时确认直接执行
   --no-download                         跳过模型下载（只准备环境+启动）
   --reinstall                           重建 venv 重装所有依赖
+  --no-browser                          不起系统浏览器（Electron 桌面端模式）
+  --plain                               无 ANSI 颜色输出（管道/日志模式）
+  --port-file PATH                      就绪后把最终端口写入文件（桌面端读取）
+
+结构化输出（桌面端解析，--plain 时同样生效）：
+  [AIVIDEO] STATE=<preparing|python|torch|deps|models|starting|ready|error>
+  [AIVIDEO] PORT=<n>
 """
 import ctypes
 import ctypes.wintypes as wt
@@ -32,6 +39,31 @@ import webbrowser
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _setup_output_encoding():
+    """输出编码统一：
+
+    - 管道模式（Electron 桌面端 / 重定向日志）：stdout 强制 UTF-8。
+      桌面壳 main.js 与日志文件都按 UTF-8 解码，Python 管道默认却用本地
+      编码（中文 Windows = GBK），会导致中文全部变成乱码符号。
+    - 真实控制台（用户双击 exe）：不动，Python 对控制台走 WriteConsoleW
+      天然按 Unicode 输出，cmd 里中文正常。
+    - 同时给子进程（pip / download_models.py / uvicorn）设 UTF-8 环境，
+      它们的输出会被透传到同一个管道。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is None or stream.isatty():
+                continue
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+
+_setup_output_encoding()
 
 # ---------------- 常量 ----------------
 APP_NAME = "AI视频工坊"
@@ -54,6 +86,18 @@ DISK_NEED = {
     "wan-ti2v": 42.0,
     "anime": 14.0,
 }
+
+# 全局运行选项（argparse 后填充）
+OPTS = {"plain": False}
+
+
+def emit_state(state: str):
+    """结构化状态行：桌面端壳解析它驱动进度/状态机"""
+    print(f"[AIVIDEO] STATE={state}", flush=True)
+
+
+def emit_port(port: int):
+    print(f"[AIVIDEO] PORT={port}", flush=True)
 
 
 # ---------------- 控制台 UI ----------------
@@ -101,6 +145,8 @@ class UI:
 
     @staticmethod
     def _c(code, text):
+        if OPTS["plain"]:
+            return text
         return f"\033[{code}m{text}\033[0m"
 
     def banner(self):
@@ -484,8 +530,9 @@ def pick_port(preferred: int) -> int:
     ui.fatal(f"端口 {preferred}-{preferred + 19} 全部被占用，请用 --port 指定其他端口")
 
 
-def launch(rt: Path, py: Path, port: int):
+def launch(rt: Path, py: Path, port: int, no_browser: bool = False, port_file: str = ""):
     port = pick_port(port)
+    emit_state("starting")
     ui.step("启动服务…")
     env = dict(os.environ, AIVIDEO_PORT=str(port))
     proc = subprocess.Popen(
@@ -493,10 +540,21 @@ def launch(rt: Path, py: Path, port: int):
         cwd=str(rt / "backend"), env=env,
     )
     if not wait_health(port):
+        emit_state("error")
         ui.fatal("服务启动超时，请把上方错误信息反馈给开发者")
     url = f"http://127.0.0.1:{port}"
     ui.ok(f"服务已启动: {url}")
-    webbrowser.open(url)
+    if port_file:
+        try:
+            Path(port_file).write_text(str(port), encoding="utf-8")
+        except Exception:
+            pass
+    emit_state("ready")
+    emit_port(port)
+    if not no_browser:
+        webbrowser.open(url)
+    else:
+        ui.info("桌面端模式：不打开系统浏览器，由 Electron 壳展示界面。")
     ui.info("关闭此窗口即停止服务。生成视频请访问左侧「生成」页。")
     try:
         proc.wait()
@@ -514,7 +572,16 @@ def main():
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--no-download", action="store_true")
     parser.add_argument("--reinstall", action="store_true")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="不起系统浏览器（Electron 桌面端模式）")
+    parser.add_argument("--plain", action="store_true",
+                        help="无 ANSI 颜色输出（管道/日志模式）")
+    parser.add_argument("--port-file", default="",
+                        help="就绪后把最终端口写入该文件（桌面端读取）")
     args = parser.parse_args()
+
+    OPTS["plain"] = args.plain
+    emit_state("preparing")
 
     ui.banner()
     rt = runtime_dir()
@@ -533,12 +600,14 @@ def main():
     if args.torch != "auto":
         plan.torch = args.torch
     if not plan.model:
+        emit_state("error")
         ui.fatal(f"硬件不满足最低要求：{plan.reason}")
     show_plan(plan, hw)
 
     if not args.yes:
         ui.ask_continue()
 
+    emit_state("python")
     py, kind = ensure_python_env(rt, reinstall=args.reinstall)
     ui.ok(f"Python 环境就绪（{kind}）")
 
@@ -547,20 +616,23 @@ def main():
     torch_args = ["torch", "--index-url", TORCH_INDEX[torch_ver]]
     if torch_ver == "cpu":
         torch_args += ["--extra-index-url", PIP_INDEX]
+    emit_state("torch")
     pip_install(py, torch_args,
                 f"安装 PyTorch（{torch_ver.upper()} 版，约 {'2.5GB' if torch_ver == 'cuda' else '200MB'}）")
     ui.ok("PyTorch 安装完成")
 
+    emit_state("deps")
     pip_install(py, ["-r", str(rt / "backend" / "requirements.txt")],
                 "安装其余依赖（FastAPI / diffusers 等，约 500MB）")
     ui.ok("依赖安装完成")
 
     if not args.no_download:
+        emit_state("models")
         ensure_models(rt, py, plan, hw)
     else:
         ui.warn("已跳过模型下载（--no-download）")
 
-    launch(rt, py, args.port)
+    launch(rt, py, args.port, no_browser=args.no_browser, port_file=args.port_file)
 
 
 if __name__ == "__main__":

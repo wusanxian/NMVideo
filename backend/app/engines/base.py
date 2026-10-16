@@ -45,6 +45,11 @@ class BaseEngine(ABC):
         frames_dir: Path,
         on_progress: ProgressCallback,
         is_cancelled: CancelCheck,
+        reference_image: str = "",
     ) -> List[Path]:
-        """生成帧序列，逐帧保存到 frames_dir，返回帧文件路径列表"""
+        """生成帧序列，逐帧保存到 frames_dir，返回帧文件路径列表。
+
+        reference_image: 参考图/首帧 URL（图生视频/首尾帧/续接模式）；
+        不支持的引擎可忽略该参数（保持纯文生视频行为）。
+        """
         raise NotImplementedError

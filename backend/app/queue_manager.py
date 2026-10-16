@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from . import db as db_module
 from . import hw_probe
+from . import storyboard as sb
 from .config import OUTPUTS_DIR
 from .engines import get_engine
 from .engines.base import GenerationCancelled
@@ -43,6 +44,11 @@ class JobQueue:
                 stage="失败",
                 finished_at=_utcnow(),
             )
+            # 分镜联动：对应镜头打回「需重做」，否则会永远卡在生成中
+            shot_id = job.get("shot_id") or ""
+            if shot_id and sb.get_shot(shot_id):
+                sb.update_shot(shot_id, job_id="", note="服务重启前中断")
+                sb.set_shot_status(shot_id, "rework")
         if stale:
             print(f"[queue] 清理了 {len(stale)} 个中断任务")
 
@@ -92,6 +98,9 @@ class JobQueue:
         if not job:
             return
 
+        # 分镜工作台联动：该 job 若由分镜发起，全程同步镜头状态
+        shot_id = job.get("shot_id") or ""
+
         # 引擎实例缓存（模型常驻内存，切任务不重载）
         engine_id = job["engine"]
         try:
@@ -103,10 +112,16 @@ class JobQueue:
                 job_id, status="failed", error=f"引擎加载失败: {e}",
                 stage="失败", finished_at=_utcnow(),
             )
+            if shot_id and sb.get_shot(shot_id):
+                sb.update_shot(shot_id, job_id="", note=f"引擎加载失败: {e}"[:200])
+                sb.set_shot_status(shot_id, "rework")
             return
 
         db_module.db.update_job(job_id, status="running", stage="准备中", progress=0.0)
         started = time.time()
+
+        if shot_id and sb.get_shot(shot_id):
+            sb.set_shot_status(shot_id, "generating")
 
         frames_dir = OUTPUTS_DIR / job_id / "frames"
         frames_dir.mkdir(parents=True, exist_ok=True)
@@ -136,6 +151,7 @@ class JobQueue:
                     frames_dir=frames_dir,
                     on_progress=on_progress,
                     is_cancelled=is_cancelled,
+                    reference_image=job.get("reference_image") or "",
                 ),
             )
         except GenerationCancelled:
@@ -143,11 +159,17 @@ class JobQueue:
                 job_id, status="cancelled", stage="已取消", finished_at=_utcnow()
             )
             self._cancelled.discard(job_id)
+            if shot_id and sb.get_shot(shot_id):
+                sb.update_shot(shot_id, job_id="", note="已取消")
+                sb.set_shot_status(shot_id, "draft")
             return
         except Exception as e:
             db_module.db.update_job(
                 job_id, status="failed", error=str(e), stage="失败", finished_at=_utcnow()
             )
+            if shot_id and sb.get_shot(shot_id):
+                sb.update_shot(shot_id, job_id="", note=str(e)[:200])
+                sb.set_shot_status(shot_id, "rework")
             return
 
         # 合成 MP4（参数写入元数据，画廊可读回复用）
@@ -167,19 +189,32 @@ class JobQueue:
                 job_id, status="failed", error=f"视频合成失败: {e}",
                 stage="失败", finished_at=_utcnow(),
             )
+            if shot_id and sb.get_shot(shot_id):
+                sb.update_shot(shot_id, job_id="", note=f"视频合成失败: {e}"[:200])
+                sb.set_shot_status(shot_id, "rework")
             return
 
         poster = frames_dir / "frame_0000.png"
+        video_url = f"/outputs/{job_id}.mp4"
+        poster_url = f"/outputs/{job_id}/frames/frame_0000.png" if poster.exists() else None
         db_module.db.update_job(
             job_id,
             status="done",
             progress=1.0,
             stage="预览完成" if job.get("preview") else "已完成",
-            video_url=f"/outputs/{job_id}.mp4",
-            poster_url=f"/outputs/{job_id}/frames/frame_0000.png" if poster.exists() else None,
+            video_url=video_url,
+            poster_url=poster_url,
             elapsed_s=round(time.time() - started, 1),
             finished_at=_utcnow(),
         )
+        # 分镜工作台联动：落一个候选版本，镜头进入待审核
+        if shot_id and sb.get_shot(shot_id):
+            done_job = db_module.db.get_job(job_id)
+            version = sb.create_version(shot_id, done_job, video_url, poster_url or "")
+            sb.update_shot(
+                shot_id, current_version_id=version["id"], job_id="", note=""
+            )
+            sb.set_shot_status(shot_id, "review")
         self._cancelled.discard(job_id)
 
     @staticmethod

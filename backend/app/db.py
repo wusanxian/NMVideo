@@ -53,9 +53,194 @@ class Database:
                 ("preview", "INTEGER DEFAULT 0"),
                 ("hardware", "TEXT DEFAULT ''"),
                 ("elapsed_s", "REAL DEFAULT 0"),
+                ("shot_id", "TEXT DEFAULT ''"),   # 关联分镜（分镜工作台提交的生成任务）
+                ("reference_image", "TEXT DEFAULT ''"),  # 参考图/首帧（i2v/首尾帧/续接）
+                ("mode", "TEXT DEFAULT 't2v'"),          # t2v/i2v/first_last/continuation
+                ("continue_from", "TEXT DEFAULT ''"),    # 续接来源镜头
             ):
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
+            self._conn.commit()
+
+        # ---------- 分镜工作台：Project / Scene / Shot 三层 ----------
+        with self._lock:
+            self._conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    script TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS scenes (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    environment TEXT DEFAULT '',
+                    lighting TEXT DEFAULT '',
+                    order_index INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS shots (
+                    id TEXT PRIMARY KEY,
+                    scene_id TEXT NOT NULL REFERENCES scenes(id) ON DELETE CASCADE,
+                    title TEXT DEFAULT '',
+                    dialogue TEXT DEFAULT '',
+                    shot_size TEXT DEFAULT '中景',
+                    camera_movement TEXT DEFAULT '固定',
+                    duration_s REAL NOT NULL DEFAULT 3,
+                    prompt TEXT DEFAULT '',
+                    negative_prompt TEXT DEFAULT '',
+                    reference_image TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    order_index INTEGER NOT NULL DEFAULT 0,
+                    job_id TEXT DEFAULT '',
+                    current_version_id TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS shot_versions (
+                    id TEXT PRIMARY KEY,
+                    shot_id TEXT NOT NULL REFERENCES shots(id) ON DELETE CASCADE,
+                    job_id TEXT DEFAULT '',
+                    version_no INTEGER NOT NULL DEFAULT 1,
+                    prompt TEXT DEFAULT '',
+                    negative_prompt TEXT DEFAULT '',
+                    engine TEXT DEFAULT '',
+                    params TEXT DEFAULT '{}',
+                    video_url TEXT DEFAULT '',
+                    poster_url TEXT DEFAULT '',
+                    seed INTEGER DEFAULT -1,
+                    status TEXT NOT NULL DEFAULT 'candidate',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS timeline_items (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    shot_id TEXT NOT NULL REFERENCES shots(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    trim_in_s REAL NOT NULL DEFAULT 0,
+                    trim_out_s REAL NOT NULL DEFAULT 0,
+                    transition TEXT NOT NULL DEFAULT 'none',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS exports (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    progress REAL NOT NULL DEFAULT 0,
+                    stage TEXT DEFAULT '',
+                    error TEXT DEFAULT '',
+                    file_url TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    finished_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS characters (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    role TEXT DEFAULT '配角',
+                    appearance TEXT DEFAULT '',
+                    outfit TEXT DEFAULT '',
+                    voice_id TEXT DEFAULT '',
+                    voice_name TEXT DEFAULT '',
+                    lora TEXT DEFAULT '',
+                    expressions TEXT DEFAULT '[]',
+                    reference_images TEXT DEFAULT '[]',
+                    notes TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS shot_voices (
+                    id TEXT PRIMARY KEY,
+                    shot_id TEXT NOT NULL REFERENCES shots(id) ON DELETE CASCADE,
+                    character_id TEXT DEFAULT '',
+                    character_name TEXT DEFAULT '',
+                    voice TEXT DEFAULT '',
+                    text TEXT DEFAULT '',
+                    audio_url TEXT DEFAULT '',
+                    duration_s REAL DEFAULT 0,
+                    engine TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'done',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS audio_tracks (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL DEFAULT 'music',
+                    title TEXT DEFAULT '',
+                    audio_url TEXT DEFAULT '',
+                    start_s REAL NOT NULL DEFAULT 0,
+                    trim_in_s REAL NOT NULL DEFAULT 0,
+                    trim_out_s REAL NOT NULL DEFAULT 0,
+                    volume REAL NOT NULL DEFAULT 0.8,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS subtitle_tracks (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    shot_id TEXT DEFAULT '',
+                    text TEXT DEFAULT '',
+                    start_s REAL NOT NULL DEFAULT 0,
+                    end_s REAL NOT NULL DEFAULT 0,
+                    position INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS review_history (
+                    id TEXT PRIMARY KEY,
+                    shot_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    from_status TEXT DEFAULT '',
+                    to_status TEXT DEFAULT '',
+                    version_id TEXT DEFAULT '',
+                    comment TEXT DEFAULT '',
+                    checks TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                );
+                """
+            )
+            self._conn.commit()
+
+        # ---------- 第二批轻量迁移：角色资产 / 续接 / 场景资产 / 多轨 ----------
+        with self._lock:
+            shot_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(shots)").fetchall()
+            }
+            for col, ddl in (
+                ("character_ids", "TEXT DEFAULT '[]'"),   # 关联角色（JSON id 列表）
+                ("mode", "TEXT DEFAULT 't2v'"),           # t2v / i2v / first_last / continuation
+                ("continue_from", "TEXT DEFAULT ''"),     # 续接来源镜头 id
+            ):
+                if col not in shot_cols:
+                    self._conn.execute(f"ALTER TABLE shots ADD COLUMN {col} {ddl}")
+            scene_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(scenes)").fetchall()
+            }
+            for col, ddl in (
+                ("layout", "TEXT DEFAULT ''"),
+                ("style", "TEXT DEFAULT ''"),
+                ("reference_image", "TEXT DEFAULT ''"),
+            ):
+                if col not in scene_cols:
+                    self._conn.execute(f"ALTER TABLE scenes ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
     def create_job(self, params: dict) -> dict:
