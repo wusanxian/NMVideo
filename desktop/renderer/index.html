@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 动画导演工作台</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 自定义标题栏 -->
+  <header class="titlebar">
+    <div class="brand">
+      <span class="brand-logo">F</span>
+      <span class="brand-name">AI 动画导演工作台</span>
+    </div>
+    <div class="titlebar-right">
+      <button id="lang-btn" class="lang-btn" title="Language">中文</button>
+      <div class="win-buttons">
+        <button id="win-min" class="win-btn" title="Minimize">─</button>
+        <button id="win-max" class="win-btn" title="Maximize">□</button>
+        <button id="win-close" class="win-btn close" title="Close">✕</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <nav>
+        <button class="nav-item" data-action="start">
+          <span class="nav-ico">▶</span><span data-i18n="start">启动</span>
+        </button>
+        <button class="nav-item" data-action="install">
+          <span class="nav-ico">⤓</span><span data-i18n="install">安装</span>
+        </button>
+        <button class="nav-item" data-action="processing">
+          <span class="nav-ico">◴</span><span data-i18n="processing">正在处理</span>
+          <span class="nav-badge" style="display:none">00:00</span>
+        </button>
+        <button class="nav-item" data-action="comfy">
+          <span class="nav-ico">⬡</span><span data-i18n="openComfyUI">打开 ComfyUI</span>
+        </button>
+        <button class="nav-item" data-action="terminal">
+          <span class="nav-ico">▸</span><span data-i18n="terminal">终端</span>
+        </button>
+        <button class="nav-item" data-action="settings">
+          <span class="nav-ico">⚙</span><span data-i18n="settings">设置</span>
+        </button>
+      </nav>
+      <div class="sidebar-foot">
+        <span id="version-tag" class="version-tag">v0.1.0</span>
+      </div>
+    </aside>
+
+    <!-- 主区：启动台 -->
+    <main id="boot-view" class="main">
+      <div class="workspace-head">
+        <h1 id="workspace-title">你的工作空间</h1>
+        <p id="workspace-sub" class="workspace-sub">后台正在忙，完成后可以操作</p>
+      </div>
+
+      <!-- 进度卡 -->
+      <section id="progress-card" class="progress-card">
+        <div class="progress-icon" id="progress-icon">F</div>
+        <div class="progress-body">
+          <div class="progress-text" id="progress-text">正在安装环境与模型</div>
+          <div class="progress-desc" id="progress-desc">已连接你的模型与运行环境。</div>
+          <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+        </div>
+      </section>
+
+      <!-- 安装信息 -->
+      <section id="install-info" class="install-info">
+        <h2 data-i18n="installInfo">安装信息</h2>
+        <div class="info-row"><span class="info-label" data-i18n="comfyPath">ComfyUI</span><span class="info-value" id="comfy-path">http://127.0.0.1:8188</span></div>
+        <div class="info-row"><span class="info-label" data-i18n="enginePath">引擎</span><span class="info-value" id="engine-path"></span></div>
+        <div class="info-row"><span class="info-label" data-i18n="runtimePath">运行目录</span><span class="info-value" id="runtime-path"></span></div>
+        <div class="info-actions">
+          <button id="shortcut-btn" class="btn">创建桌面快捷方式</button>
+        </div>
+      </section>
+
+      <!-- 终端 -->
+      <section id="terminal" class="terminal">
+        <div class="terminal-head">
+          <span class="terminal-title" data-i18n="terminal">终端</span>
+          <div class="terminal-actions">
+            <button id="log-copy" class="term-btn">复制</button>
+            <button id="log-export" class="term-btn">导出报告</button>
+            <button id="log-clear" class="term-btn">清空</button>
+          </div>
+        </div>
+        <p class="terminal-hint" id="terminal-hint">这里显示最近的输出；复制或导出可获取完整日志。</p>
+        <pre id="log-box" class="log-box"></pre>
+      </section>
+
+      <div class="main-foot">
+        <div id="update-bar" class="update-bar" style="display:none">
+          <span id="update-text" class="update-text"></span>
+          <button id="update-btn" class="btn primary"></button>
+        </div>
+        <div class="foot-right">
+          <button id="open-app-btn" class="btn primary">打开应用</button>
+          <button id="action-btn" class="btn ghost">正在处理...</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- 主区：应用视图 -->
+    <main id="webview-wrap" class="main app-view" style="display:none">
+      <div class="app-bar">
+        <button id="back-btn" class="btn ghost">返回启动台</button>
+      </div>
+      <webview id="app-webview" src="" allowpopups partition="persist:aivideo"
+               style="flex:1; border:none"></webview>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

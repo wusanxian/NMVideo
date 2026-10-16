@@ -1,0 +1,21 @@
+{
+  "name": "aivideo-desktop",
+  "version": "0.1.0",
+  "description": "AI 动画导演工作台 - Windows desktop shell",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "node start-electron.js",
+    "dist": "electron-builder --win --publish never",
+    "dist:publish": "electron-builder --win --publish always"
+  },
+  "author": "aivideo",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^37.10.3",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  }
+}

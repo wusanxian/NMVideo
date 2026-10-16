@@ -14,13 +14,15 @@ backend/models/
 frontend/node_modules/
 frontend/dist/
 
-# 打包产物与运行时
+# 打包产物与运行时（注意：desktop/build/icon.png 是源资源，需入库）
 packaging/dist/
 packaging/build/
 packaging/payload/
+frontend/dist/
+desktop/dist/
+desktop/node_modules/
+desktop/electron-dist/
 runtime/
-dist/
-build/
 
 # 系统
 .DS_Store
@@ -50,6 +52,7 @@ pip-log.txt
 .env
 .env.*
 *.local
+backend/settings.json
 
 # 前端缓存与日志
 .vite/
