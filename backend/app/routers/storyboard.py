@@ -41,6 +41,11 @@ class ScriptImport(BaseModel):
     # rebuild=覆盖重建（事务化，失败整体回滚）；append=保留已有场景追加；
     # preview=只做差异预览不写库
     mode: str = Field("rebuild", pattern="^(rebuild|append|preview)$")
+    # 第三批（S3）：预览绑定——预览返回的 project_revision / content_hash 回传校验
+    expected_revision: Optional[int] = None
+    content_hash: Optional[str] = None
+    # 破坏性重建（将删除已生成版本/时间线）必须显式确认；确认前服务端已自动备份
+    confirm: bool = False
 
 
 class SceneCreate(BaseModel):
@@ -98,6 +103,10 @@ class ShotReview(BaseModel):
     action: str = Field(..., pattern="^(approve|rework)$")
     version_id: str = ""
     comment: str = ""
+    # 第三批：审核门分离——design=设计审核（生成前）/ video=视频审核（默认，兼容旧行为）
+    stage: str = Field("video", pattern="^(design|video)$")
+    # 提交时复核：客户端基于的采用版本，不一致 → 409（过期提交）
+    expected_version_id: str = ""
 
 
 class ReorderBody(BaseModel):
@@ -150,7 +159,10 @@ def update_project(project_id: str, data: ProjectUpdate):
 def delete_project(project_id: str):
     if not sb.get_project(project_id):
         raise HTTPException(404, "项目不存在")
-    sb.delete_project(project_id)
+    try:
+        sb.delete_project(project_id)
+    except sb.ReferenceConflictError as e:
+        raise HTTPException(409, detail={"message": str(e), "references": e.details})
     return {"ok": True}
 
 
@@ -177,16 +189,26 @@ def put_script(project_id: str, data: ScriptImport):
 def import_script(project_id: str, data: ScriptImport):
     """AI 拆分：解析剧本文本 → 重建/追加场景与分镜。
 
-    - mode=preview：返回差异预览（现有数量 vs 新解析数量、标题撞车列表），不写库
+    - mode=preview：返回差异预览 + content_hash + project_revision，不写库
     - mode=append：标题相同的已有场景跳过，保留其镜头制作成果
-    - mode=rebuild：覆盖重建（单个事务，失败整体回滚）
+    - mode=rebuild：覆盖重建（单事务，失败整体回滚）；有已生成版本/时间线时
+      必须 confirm=true（服务端自动先备份），否则 409 返回将损失的明细；
+      传入 expected_revision/content_hash 时校验过期提交（409/400）
     """
     if not sb.get_project(project_id):
         raise HTTPException(404, "项目不存在")
     if data.mode == "preview":
         return sb.script_preview(project_id, data.text)
     try:
-        return sb.import_script(project_id, data.text, mode=data.mode)
+        return sb.import_script(
+            project_id, data.text, mode=data.mode,
+            expected_revision=data.expected_revision,
+            content_hash=data.content_hash, confirm=data.confirm,
+        )
+    except sb.StalePreviewError as e:
+        raise HTTPException(409, str(e))
+    except sb.DestructiveImportError as e:
+        raise HTTPException(409, detail={"message": str(e), "loss": e.details})
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -224,7 +246,10 @@ def update_scene(scene_id: str, data: SceneUpdate):
 def delete_scene(scene_id: str):
     if not sb.get_scene(scene_id):
         raise HTTPException(404, "场景不存在")
-    sb.delete_scene(scene_id)
+    try:
+        sb.delete_scene(scene_id)
+    except sb.ReferenceConflictError as e:
+        raise HTTPException(409, detail={"message": str(e), "references": e.details})
     return {"ok": True}
 
 
@@ -269,7 +294,10 @@ def update_shot(shot_id: str, data: ShotUpdate):
 def delete_shot(shot_id: str):
     if not sb.get_shot(shot_id):
         raise HTTPException(404, "分镜不存在")
-    sb.delete_shot(shot_id)
+    try:
+        sb.delete_shot(shot_id)
+    except sb.ReferenceConflictError as e:
+        raise HTTPException(409, detail={"message": str(e), "references": e.details})
     return {"ok": True}
 
 
@@ -364,7 +392,7 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["continue_from"] = continue_from
 
     job_id = await job_queue.submit(params)
-    sb.set_shot_status(shot_id, "queued", job_id=job_id)
+    sb.set_shot_status(shot_id, "queued", job_id=job_id, review_stage="generation")
     from .. import db as db_module
 
     return db_module.db.get_job(job_id)
@@ -372,67 +400,32 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
 
 @router.post("/shots/{shot_id}/review")
 def review_shot(shot_id: str, data: ShotReview):
-    """审核：approve=通过 / rework=打回重做（带质量检查结果与意见留痕）
+    """审核（三态分离 + 质检前置 + 原子写入）。
 
-    质检前置：先跑 check_shot，存在 error 级阻断性问题时**拒绝通过**
-    （HTTP 422 带完整检查结果），镜头状态保持不变、阻断记录写入审核历史。
+    - stage=video（默认）：approve 先对候选版本做只读质检，error 级阻断时
+      HTTP 422 带完整检查结果，且镜头状态与 current_version_id 均保持原值；
+      通过后在同一事务原子写「采用指针 + 状态 + 审核记录」。
+      expected_version_id 与当前采用版本不一致 → 409（过期提交）。
+    - stage=design：设计审核（生成前），只检查创作参数；
+      approve → review_stage=design_ok；rework → review_stage=design。
+    - rework：打回重做，检查结果留痕不阻断。
     """
-    from ..shotcheck import check_shot, quality_score
-
-    shot = sb.get_shot(shot_id)
-    if not shot:
+    if not sb.get_shot(shot_id):
         raise HTTPException(404, "分镜不存在")
-    scene = sb.get_scene(shot["scene_id"])
-    project_id = scene["project_id"] if scene else ""
-    from_status = shot["status"]
-
-    if data.action == "approve":
-        # 版本归属校验：不能拿别的镜头的版本来通过审核
-        if data.version_id:
-            version = sb.get_version(data.version_id)
-            if not version:
-                raise HTTPException(404, "版本不存在")
-            if version["shot_id"] != shot_id:
-                raise HTTPException(400, "版本不属于该镜头，无法采用")
-            sb.adopt_version(shot_id, data.version_id)
-        elif not shot["current_version_id"]:
-            raise HTTPException(400, "还没有生成任何版本，无法审核通过")
-
-        # ---- 质检前置：基于采用后的最新镜头状态做检查 ----
-        fresh = sb.get_shot(shot_id)
-        issues = check_shot(fresh)
-        blocking = [i for i in issues if i["level"] == "error"]
-        if blocking:
-            sb.log_review(
-                shot_id, project_id, action="approve_blocked",
-                from_status=from_status, to_status=from_status,
-                version_id=data.version_id or shot.get("current_version_id") or "",
-                comment=data.comment or "存在阻断性问题，审核未通过",
-                checks=issues,
-            )
-            raise HTTPException(422, detail={
-                "message": "存在阻断性问题，不能通过审核；请先解决后再试",
-                "issues": issues,
-                "score": quality_score(issues),
-            })
-
-        to_status = "approved"
-        sb.set_shot_status(shot_id, "approved")
-    else:
-        # 打回重做：也做一次检查（结果仅作留痕，不阻断）
-        issues = check_shot(shot)
-        to_status = "rework"
-        sb.set_shot_status(shot_id, "rework")
-
-    sb.log_review(
-        shot_id, project_id, action=data.action,
-        from_status=from_status, to_status=to_status,
-        version_id=data.version_id or shot.get("current_version_id") or "",
-        comment=data.comment, checks=issues,
-    )
-    result = sb.get_shot(shot_id)
-    result["quality"] = {"issues": issues, "score": quality_score(issues)}
-    return result
+    try:
+        return sb.review_shot(
+            shot_id, data.action, version_id=data.version_id,
+            comment=data.comment, stage=data.stage,
+            expected_version_id=data.expected_version_id,
+        )
+    except sb.ReviewBlockedError as e:
+        raise HTTPException(422, detail={
+            "message": str(e), "issues": e.issues, "score": e.score,
+        })
+    except (sb.StaleSubmissionError, sb.ReferenceConflictError) as e:
+        raise HTTPException(409, detail={"message": str(e), "references": getattr(e, "details", {})})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/shots/{shot_id}/versions")
@@ -444,23 +437,37 @@ def list_versions(shot_id: str):
 
 @router.post("/shots/{shot_id}/versions/{version_id}/adopt")
 def adopt_version(shot_id: str, version_id: str):
+    if not sb.get_shot(shot_id):
+        raise HTTPException(404, "分镜不存在")
     version = sb.get_version(version_id)
     if not version:
         raise HTTPException(404, "版本不存在")
     if version["shot_id"] != shot_id:
         raise HTTPException(400, "版本不属于该镜头，无法采用")
-    sb.adopt_version(shot_id, version_id)
+    try:
+        sb.adopt_version(shot_id, version_id)
+    except sb.ReferenceConflictError as e:
+        raise HTTPException(409, detail={"message": str(e), "references": e.details})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return sb.get_shot(shot_id)
 
 
 @router.delete("/shots/{shot_id}/versions/{version_id}")
 def delete_version(shot_id: str, version_id: str):
+    if not sb.get_shot(shot_id):
+        raise HTTPException(404, "分镜不存在")
     version = sb.get_version(version_id)
     if not version:
         raise HTTPException(404, "版本不存在")
     if version["shot_id"] != shot_id:
         raise HTTPException(400, "版本不属于该镜头，无法删除")
-    sb.delete_version(shot_id, version_id)
+    try:
+        sb.delete_version(shot_id, version_id)
+    except sb.ReferenceConflictError as e:
+        raise HTTPException(409, detail={"message": str(e), "references": e.details})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 

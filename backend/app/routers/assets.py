@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from .. import assets, storyboard as sb, tracks
 from ..config import OUTPUTS_DIR
-from ..shotcheck import check_shot, quality_score
+from ..shotcheck import check_design, check_shot, quality_score
 from ..tts import list_voices, synthesize, tts_available
 
 router = APIRouter(prefix="/api", tags=["assets"])
@@ -336,11 +336,15 @@ def export_srt(project_id: str):
 # 质量检查 / 审核历史 / 返工
 # =====================================================================
 @router.get("/shots/{shot_id}/quality")
-def shot_quality(shot_id: str):
+def shot_quality(shot_id: str, stage: str = "video"):
+    """质量检查预取。stage=video（默认，兼容旧行为）：成片质检；
+    stage=design：设计审核（生成前，只看创作参数）。"""
     shot = sb.get_shot(shot_id)
     if not shot:
         raise HTTPException(404, "分镜不存在")
-    issues = check_shot(shot)
+    if stage not in ("video", "design"):
+        raise HTTPException(400, f"未知审核阶段: {stage}")
+    issues = check_design(shot) if stage == "design" else check_shot(shot)
     return {"issues": issues, "score": quality_score(issues)}
 
 

@@ -108,8 +108,8 @@ export const useProjectStore = defineStore('project', {
         this.submitting = false
       }
     },
-    async review(shotId, action, versionId = '') {
-      await api.reviewShot(shotId, action, versionId)
+    async review(shotId, action, versionId = '', stage = 'video') {
+      await api.reviewShot(shotId, action, versionId, '', stage)
       await this.refresh()
     },
     async adoptVersion(shotId, versionId) {
@@ -126,8 +126,9 @@ export const useProjectStore = defineStore('project', {
       await api.saveScript(this.current.id, text)
       await this.refresh()
     },
-    async importScript(text, mode = 'rebuild') {
-      const r = await api.importScript(this.current.id, text, mode)
+    async importScript(text, mode = 'rebuild', extra = {}) {
+      // extra：3A 预览绑定（expected_revision / content_hash / confirm）
+      const r = await api.importScript(this.current.id, text, mode, extra)
       await this.refresh()
       return r
     },

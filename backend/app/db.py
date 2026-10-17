@@ -278,6 +278,28 @@ class Database:
                     self._conn.execute(f"ALTER TABLE scenes ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
+        # ---------- 第三批轻量迁移：审核三态 / 剧本导入 revision ----------
+        with self._lock:
+            proj_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(projects)").fetchall()
+            }
+            if "revision" not in proj_cols:
+                # 剧本导入 revision：预览绑定 + 过期提交拒绝（审查项 S3）
+                self._conn.execute("ALTER TABLE projects ADD COLUMN revision INTEGER DEFAULT 0")
+            shot_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(shots)").fetchall()
+            }
+            if "review_stage" not in shot_cols:
+                # 审核三态：design（设计审核）/ generation（生成审核）/ video（视频审核）/ ''（无待审）
+                self._conn.execute("ALTER TABLE shots ADD COLUMN review_stage TEXT DEFAULT ''")
+            rvh_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(review_history)").fetchall()
+            }
+            if "stage" not in rvh_cols:
+                # 审核记录所属审核门（design/generation/video）
+                self._conn.execute("ALTER TABLE review_history ADD COLUMN stage TEXT DEFAULT ''")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()
@@ -409,6 +431,15 @@ class Database:
             finally:
                 dst.close()
         return dest
+
+    def auto_backup(self, prefix: str = "aivideo-backup") -> Path:
+        """按默认约定做一致性备份：库同级 backups/ 目录 + UTC 时间戳命名。
+
+        供破坏性操作前的自动备份使用（调用方无需自己拼路径）。
+        """
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        dest = self._path.parent / "backups" / f"{prefix}-{stamp}.db"
+        return self.backup(dest)
 
     def audit_orphans(self) -> list:
         """只读审计：返回孤儿记录清单（不写库）。

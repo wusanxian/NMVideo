@@ -53,7 +53,8 @@ class JobQueue:
             shot_id = job.get("shot_id") or ""
             if shot_id and sb.get_shot(shot_id):
                 sb.update_shot(shot_id, job_id="", note="服务重启时生成中断，请重新生成")
-                sb.set_shot_status(shot_id, "rework")
+                # 3A：回到需重做时清除视频审核标记（版本未变，无待审成片）
+                sb.set_shot_status(shot_id, "rework", review_stage="")
         if running:
             print(f"[queue] 标记了 {len(running)} 个中断任务（服务重启前正在生成）")
 
@@ -129,7 +130,7 @@ class JobQueue:
             )
             if shot_id and sb.get_shot(shot_id):
                 sb.update_shot(shot_id, job_id="", note=f"引擎加载失败: {e}"[:200])
-                sb.set_shot_status(shot_id, "rework")
+                sb.set_shot_status(shot_id, "rework", review_stage="")
             return
 
         db_module.db.update_job(job_id, status="running", stage="准备中", progress=0.0)
@@ -176,7 +177,7 @@ class JobQueue:
             self._cancelled.discard(job_id)
             if shot_id and sb.get_shot(shot_id):
                 sb.update_shot(shot_id, job_id="", note="已取消")
-                sb.set_shot_status(shot_id, "draft")
+                sb.set_shot_status(shot_id, "draft", review_stage="")
             return
         except Exception as e:
             db_module.db.update_job(
@@ -184,7 +185,7 @@ class JobQueue:
             )
             if shot_id and sb.get_shot(shot_id):
                 sb.update_shot(shot_id, job_id="", note=str(e)[:200])
-                sb.set_shot_status(shot_id, "rework")
+                sb.set_shot_status(shot_id, "rework", review_stage="")
             return
 
         # 合成 MP4（参数写入元数据，画廊可读回复用）
@@ -206,7 +207,7 @@ class JobQueue:
             )
             if shot_id and sb.get_shot(shot_id):
                 sb.update_shot(shot_id, job_id="", note=f"视频合成失败: {e}"[:200])
-                sb.set_shot_status(shot_id, "rework")
+                sb.set_shot_status(shot_id, "rework", review_stage="")
             return
 
         poster = frames_dir / "frame_0000.png"
@@ -222,14 +223,21 @@ class JobQueue:
             elapsed_s=round(time.time() - started, 1),
             finished_at=_utcnow(),
         )
-        # 分镜工作台联动：落一个候选版本，镜头进入待审核
+        # 分镜工作台联动：落一个候选版本，镜头进入待审核（3A）
         if shot_id and sb.get_shot(shot_id):
             done_job = db_module.db.get_job(job_id)
             version = sb.create_version(shot_id, done_job, video_url, poster_url or "")
-            sb.update_shot(
-                shot_id, current_version_id=version["id"], job_id="", note=""
-            )
-            sb.set_shot_status(shot_id, "review")
+            fields = {"job_id": "", "note": ""}
+            if sb.shot_references(shot_id)["timeline_items"]:
+                # 已入时间线的镜头：只追加候选版本，不静默更换采用指针，
+                # 避免已排期片段对应的成片在用户不知情时被替换；是否采用
+                # 由用户在审核中显式决定（adopt_version / review_shot 均有
+                # 同样的引用守卫，409 + 片段明细）
+                pass
+            else:
+                fields["current_version_id"] = version["id"]
+            sb.update_shot(shot_id, **fields)
+            sb.set_shot_status(shot_id, "review", review_stage="video")
         self._cancelled.discard(job_id)
 
     @staticmethod

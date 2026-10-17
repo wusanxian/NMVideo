@@ -7,17 +7,23 @@ async function request(path, options = {}) {
   })
   if (!resp.ok) {
     let detail = `${resp.status} ${resp.statusText}`
+    let data = null
     try {
-      const body = await resp.json()
-      if (body.detail) {
-        detail = typeof body.detail === 'string'
-          ? body.detail
-          : (body.detail.message || JSON.stringify(body.detail))
+      data = await resp.json()
+      if (data.detail) {
+        detail = typeof data.detail === 'string'
+          ? data.detail
+          : (data.detail.message || JSON.stringify(data.detail))
       }
     } catch {
       /* ignore */
     }
-    throw new Error(detail)
+    // 3A：把状态码与结构化 detail 挂到错误上——
+    // 409 的 references / loss、422 的 issues / score 都靠它展示
+    const err = new Error(detail)
+    err.status = resp.status
+    err.data = data
+    throw err
   }
   if (resp.status === 204) return null
   return resp.json()
@@ -43,7 +49,8 @@ export const api = {
 
   getScript: (id) => request(`/projects/${id}/script`),
   saveScript: (id, text) => request(`/projects/${id}/script`, { method: 'PUT', body: JSON.stringify({ text }) }),
-  importScript: (id, text, mode = 'rebuild') => request(`/projects/${id}/script/import`, { method: 'POST', body: JSON.stringify({ text, mode }) }),
+  importScript: (id, text, mode = 'rebuild', extra = {}) =>
+    request(`/projects/${id}/script/import`, { method: 'POST', body: JSON.stringify({ text, mode, ...extra }) }),
 
   createScene: (pid, data) => request(`/projects/${pid}/scenes`, { method: 'POST', body: JSON.stringify(data) }),
   updateScene: (id, data) => request(`/scenes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -55,8 +62,8 @@ export const api = {
   deleteShot: (id) => request(`/shots/${id}`, { method: 'DELETE' }),
 
   generateShot: (id, data) => request(`/shots/${id}/generate`, { method: 'POST', body: JSON.stringify(data) }),
-  reviewShot: (id, action, versionId = '', comment = '') =>
-    request(`/shots/${id}/review`, { method: 'POST', body: JSON.stringify({ action, version_id: versionId, comment }) }),
+  reviewShot: (id, action, versionId = '', comment = '', stage = 'video', expectedVersionId = '') =>
+    request(`/shots/${id}/review`, { method: 'POST', body: JSON.stringify({ action, version_id: versionId, comment, stage, expected_version_id: expectedVersionId }) }),
   shotVersions: (id) => request(`/shots/${id}/versions`),
   adoptVersion: (shotId, versionId) => request(`/shots/${shotId}/versions/${versionId}/adopt`, { method: 'POST' }),
   deleteVersion: (shotId, versionId) => request(`/shots/${shotId}/versions/${versionId}`, { method: 'DELETE' }),
@@ -94,7 +101,7 @@ export const api = {
   exportSrt: (pid) => request(`/projects/${pid}/subtitles/srt`),
 
   // ---------- 质量审核 / 历史 / 返工 ----------
-  shotQuality: (id) => request(`/shots/${id}/quality`),
+  shotQuality: (id, stage = 'video') => request(`/shots/${id}/quality?stage=${stage}`),
   reworkShot: (id, cascade = false, comment = '') =>
     request(`/shots/${id}/rework`, { method: 'POST', body: JSON.stringify({ cascade, comment }) }),
   projectHistory: (pid) => request(`/projects/${pid}/history`),

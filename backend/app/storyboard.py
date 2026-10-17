@@ -33,6 +33,60 @@ def _write(sql: str, args: tuple = ()):
 
 
 # =====================================================================
+# 3A 数据保护异常（携带引用/差异明细，由路由层映射 409/400）
+# =====================================================================
+class StalePreviewError(ValueError):
+    """预览后项目已被修改，提交过期（S3）"""
+
+
+class DestructiveImportError(ValueError):
+    """破坏性重建未确认：携带将损失的成果明细"""
+
+    def __init__(self, message: str, details: dict = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+class ReferenceConflictError(ValueError):
+    """删除/改指针会破坏被引用成果：携带引用明细"""
+
+    def __init__(self, message: str, details: dict = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+class StaleSubmissionError(ValueError):
+    """审核提交时版本已变化（过期提交）"""
+
+
+class ReviewBlockedError(ValueError):
+    """审核被质检阻断：携带完整检查结果与评分（422）"""
+
+    def __init__(self, message: str, issues: list = None, score: dict = None):
+        super().__init__(message)
+        self.issues = issues or []
+        self.score = score or {}
+
+
+# =====================================================================
+# 审核三态（第三批：设计 / 生成 / 视频审核分离）
+#   design     设计审核（生成前：提示词/对白/时长/角色等创作参数）
+#   generation 生成审核（排队/生成中：提交前校验与产出等待）
+#   video      视频审核（生成后：成片质检与采用版本）
+#   ''         无待审事项
+# 旧的 status 状态机（draft/queued/generating/review/approved/rework）不变，
+# review_stage 只表达"当前处于哪个审核门"，旧客户端忽略即可。
+# =====================================================================
+REVIEW_STAGES = ("design", "generation", "video", "")
+REVIEW_STAGE_LABELS = {
+    "design": "设计审核",
+    "generation": "生成审核",
+    "video": "视频审核",
+    "": "无待审",
+}
+
+
+# =====================================================================
 # 镜头状态机
 #   draft(草稿) -> queued(排队) -> generating(生成中) -> review(待审核)
 #   review -> approved(通过) / rework(需重做) -> draft
@@ -103,6 +157,8 @@ def update_project(project_id: str, **fields) -> Optional[dict]:
 
 
 def delete_project(project_id: str) -> None:
+    # 3A：项目被时间线片段/进行中任务引用时拒绝删除（409 + 明细）
+    _guard_no_references(project_references(project_id), "该项目")
     _write("DELETE FROM projects WHERE id = ?", (project_id,))
 
 
@@ -168,6 +224,10 @@ def update_scene(scene_id: str, **fields) -> Optional[dict]:
 
 def delete_scene(scene_id: str) -> None:
     sc = get_scene(scene_id)
+    # 3A：场景内镜头被时间线/任务引用时拒绝删除（级联会毁掉剪辑素材）
+    _guard_no_references(
+        scene_references(scene_id), f"场景「{sc['title'] if sc else scene_id}」"
+    )
     _write("DELETE FROM scenes WHERE id = ?", (scene_id,))
     if sc:
         _touch_project(sc["project_id"])
@@ -227,7 +287,7 @@ def update_shot(shot_id: str, **fields) -> Optional[dict]:
         "title", "dialogue", "shot_size", "camera_movement", "duration_s",
         "prompt", "negative_prompt", "reference_image", "status", "order_index",
         "job_id", "current_version_id", "note", "scene_id",
-        "character_ids", "mode", "continue_from",
+        "character_ids", "mode", "continue_from", "review_stage",
     }
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "character_ids" in fields and not isinstance(fields["character_ids"], str):
@@ -241,6 +301,8 @@ def update_shot(shot_id: str, **fields) -> Optional[dict]:
 
 
 def delete_shot(shot_id: str) -> None:
+    # 3A：镜头被时间线片段/进行中任务引用时拒绝删除
+    _guard_no_references(shot_references(shot_id), "该镜头")
     _write("DELETE FROM shots WHERE id = ?", (shot_id,))
     _write("DELETE FROM timeline_items WHERE shot_id = ?", (shot_id,))
 
@@ -271,6 +333,106 @@ def _decode_shot(shot: dict) -> None:
 
     shot["characters"] = assets.characters_of_shot(shot)
     shot["voices"] = tracks.list_voices_of_shot(shot["id"])
+
+
+# =====================================================================
+# 引用检查（3A：被引用产物不可误删、采用指针不可静默更换）
+# =====================================================================
+def shot_references(shot_id: str) -> dict:
+    """镜头被哪些成果引用：时间线片段 + 进行中的生成任务"""
+    items = _rows(
+        "SELECT id, project_id, position FROM timeline_items WHERE shot_id = ?"
+        " ORDER BY position", (shot_id,),
+    )
+    jobs = _rows(
+        "SELECT id, status, stage FROM jobs WHERE shot_id = ?"
+        " AND status IN ('pending', 'running')", (shot_id,),
+    )
+    return {"timeline_items": items, "active_jobs": jobs}
+
+
+def scene_references(scene_id: str) -> dict:
+    """场景下所有镜头的引用汇总（含镜头标题，便于定位）"""
+    shots = list_shots(scene_id)
+    timeline_items, active_jobs = [], []
+    for shot in shots:
+        refs = shot_references(shot["id"])
+        for it in refs["timeline_items"]:
+            it["shot_id"] = shot["id"]
+            it["shot_title"] = shot.get("title") or ""
+            timeline_items.append(it)
+        for j in refs["active_jobs"]:
+            j["shot_id"] = shot["id"]
+            j["shot_title"] = shot.get("title") or ""
+            active_jobs.append(j)
+    return {
+        "shot_count": len(shots),
+        "timeline_items": timeline_items,
+        "active_jobs": active_jobs,
+    }
+
+
+def project_references(project_id: str) -> dict:
+    timeline_items = _rows(
+        "SELECT id, shot_id, position FROM timeline_items WHERE project_id = ?"
+        " ORDER BY position", (project_id,),
+    )
+    active_jobs = _rows(
+        "SELECT j.id, j.status, j.shot_id FROM jobs j"
+        " JOIN shots s ON j.shot_id = s.id JOIN scenes sc ON s.scene_id = sc.id"
+        " WHERE sc.project_id = ? AND j.status IN ('pending', 'running')",
+        (project_id,),
+    )
+    return {"timeline_items": timeline_items, "active_jobs": active_jobs}
+
+
+def job_references(job_id: str) -> dict:
+    """生成任务被哪些成果引用：由它产生的镜头版本 + 被时间线引用的版本"""
+    versions = _rows(
+        "SELECT id, shot_id, version_no, video_url FROM shot_versions WHERE job_id = ?",
+        (job_id,),
+    )
+    timeline_items: list = []
+    for v in versions:
+        items = _rows(
+            "SELECT t.id, t.position, s.title AS shot_title FROM timeline_items t"
+            " JOIN shots s ON t.shot_id = s.id WHERE s.current_version_id = ?",
+            (v["id"],),
+        )
+        for it in items:
+            it["version_id"] = v["id"]
+        timeline_items.extend(items)
+    return {"versions": versions, "timeline_items": timeline_items}
+
+
+def _guard_no_references(refs: dict, what: str) -> None:
+    """有引用即拒绝（3A 过渡策略：引用则 409 + 明细，不做静默清理）"""
+    if refs["timeline_items"] or refs["active_jobs"]:
+        parts = []
+        if refs["timeline_items"]:
+            positions = ", ".join(
+                f"#{it['position'] + 1}" + (f"（{it['shot_title']}）" if it.get("shot_title") else "")
+                for it in refs["timeline_items"][:10]
+            )
+            parts.append(f"时间线片段 {positions}")
+        if refs["active_jobs"]:
+            parts.append(f"进行中的任务 {len(refs['active_jobs'])} 个")
+        raise ReferenceConflictError(
+            f"{what}正被{'；'.join(parts)}引用，不能删除/更换", details=refs,
+        )
+
+
+def _video_path_ok(url: str) -> bool:
+    """受管路径（/outputs/...）且文件存在可读"""
+    if not url or not url.startswith("/outputs/"):
+        return False
+    from .config import OUTPUTS_DIR
+
+    p = OUTPUTS_DIR / url[len("/outputs/"):]
+    try:
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
 
 
 # =====================================================================
@@ -316,14 +478,14 @@ def rework_from(project_id: str, shot_id: str, cascade: bool = False,
 # =====================================================================
 def log_review(shot_id: str, project_id: str, action: str, from_status: str = "",
                to_status: str = "", version_id: str = "", comment: str = "",
-               checks: list = None) -> dict:
+               checks: list = None, stage: str = "") -> dict:
     rid = _new_id("rvh")
     return db.insert_and_get(
         "review_history",
         ["id", "shot_id", "project_id", "action", "from_status", "to_status",
-         "version_id", "comment", "checks", "created_at"],
+         "version_id", "comment", "checks", "stage", "created_at"],
         (rid, shot_id, project_id, action, from_status, to_status, version_id,
-         comment, json.dumps(checks or [], ensure_ascii=False), _utcnow()),
+         comment, json.dumps(checks or [], ensure_ascii=False), stage, _utcnow()),
         rid,
     )
 
@@ -387,25 +549,55 @@ def get_version(version_id: str) -> Optional[dict]:
 def adopt_version(shot_id: str, version_id: str) -> None:
     """采用某版本：current_version_id 指向它，镜头回到待审核/已通过态由调用方定。
 
-    后端强制校验版本归属：跨镜头采用直接拒绝（不能把 A 镜头的视频采到 B 镜头）。
+    后端强制校验（3A）：
+    - 版本归属：跨镜头采用直接拒绝（不能把 A 镜头的视频采到 B 镜头）；
+    - 文件有效：受管路径且文件存在、非空；
+    - 引用保护：镜头被时间线引用时不得静默更换采用指针（409 + 片段明细）；
+    - 审核有效性：已通过镜头换采用版本后回到视频审核（新版本不继承旧版本的
+      approved），与指针切换在同一事务里原子完成。
     """
     v = get_version(version_id)
     if not v:
         raise ValueError(f"版本不存在: {version_id}")
     if v["shot_id"] != shot_id:
         raise ValueError("版本不属于该镜头，拒绝采用")
-    _write(
-        "UPDATE shots SET current_version_id = ? WHERE id = ?", (version_id, shot_id)
-    )
+    if not _video_path_ok(v.get("video_url") or ""):
+        raise ValueError(
+            f"版本视频文件缺失或不可读: {v.get('video_url') or '(空)'}，拒绝采用"
+        )
+    shot = get_shot(shot_id)
+    if not shot:
+        raise ValueError(f"镜头不存在: {shot_id}")
+    now = _utcnow()
+    if shot["current_version_id"] != version_id:
+        _guard_no_references(shot_references(shot_id), "该镜头（更换采用版本）")
+    # 原子写：采用指针（+ 已通过镜头换版本时回到视频审核，新版本不继承 approved）
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE shots SET current_version_id = ?, updated_at = ? WHERE id = ?",
+            (version_id, now, shot_id),
+        )
+        if shot.get("status") == "approved":
+            conn.execute(
+                "UPDATE shots SET status = 'review', review_stage = 'video',"
+                " updated_at = ? WHERE id = ?",
+                (now, shot_id),
+            )
 
 
 def delete_version(shot_id: str, version_id: str) -> None:
-    """删除版本（带归属校验）；若删的是当前采用版本，回退到最新候选。"""
+    """删除版本（带归属校验）；若删的是当前采用版本，回退到最新候选。
+
+    3A：删当前版本会更换采用指针——镜头被时间线引用时拒绝（409 + 明细）。
+    """
     v = get_version(version_id)
     if not v:
         raise ValueError(f"版本不存在: {version_id}")
     if v["shot_id"] != shot_id:
         raise ValueError("版本不属于该镜头，拒绝删除")
+    shot = get_shot(shot_id)
+    if shot and shot["current_version_id"] == version_id:
+        _guard_no_references(shot_references(shot_id), "该镜头（删除当前采用版本）")
     _write("DELETE FROM shot_versions WHERE id = ?", (version_id,))
     shot = get_shot(shot_id)
     if shot and shot["current_version_id"] == version_id:
@@ -414,6 +606,161 @@ def delete_version(shot_id: str, version_id: str) -> None:
             "UPDATE shots SET current_version_id = ? WHERE id = ?",
             (rest[0]["id"] if rest else "", shot_id),
         )
+
+
+# =====================================================================
+# 审核（3A：三态分离 + 质检前置 + 原子写入）
+# =====================================================================
+def _review_quality(issues: list) -> dict:
+    from .shotcheck import quality_score
+
+    return {"issues": issues, "score": quality_score(issues)}
+
+
+def review_shot(shot_id: str, action: str, version_id: str = "", comment: str = "",
+                stage: str = "video", expected_version_id: str = "") -> dict:
+    """审核入口（数据层原子版）。
+
+    - stage="design"：设计审核（生成前）。只检查创作参数，不要求有生成版本。
+      approve → review_stage="design_ok"；rework → review_stage="design"。
+      生成状态机不变（draft 保持 draft）。
+    - stage="video"（默认，兼容旧行为）：视频审核。先对**候选版本**做只读
+      质检，阻断时状态与 current_version_id 均保持原值（修 S1）；
+      通过后在同一事务原子写「采用指针 + 审核状态 + 审核记录」。
+    - expected_version_id：提交时复核，与镜头当前采用版本不一致 → 409
+      （客户端基于旧视图提交）。
+    """
+    from .shotcheck import check_design, check_shot
+
+    if action not in ("approve", "rework"):
+        raise ValueError(f"未知审核动作: {action}")
+    if stage not in ("design", "video"):
+        raise ValueError(f"未知审核阶段: {stage}")
+
+    shot = get_shot(shot_id)
+    if not shot:
+        raise ValueError("分镜不存在")
+    scene = get_scene(shot["scene_id"])
+    project_id = scene["project_id"] if scene else ""
+    from_status = shot["status"]
+
+    # ---------- 设计审核 ----------
+    if stage == "design":
+        issues = check_design(shot)
+        if action == "approve":
+            blocking = [i for i in issues if i["level"] == "error"]
+            if blocking:
+                log_review(shot_id, project_id, action="design_blocked",
+                           from_status=from_status, to_status=from_status,
+                           comment=comment or "存在阻断性设计问题，设计审核未通过",
+                           checks=issues, stage="design")
+                raise ReviewBlockedError(
+                    "存在阻断性设计问题，不能通过设计审核；请先解决后再试",
+                    issues=issues, score=_review_quality(issues)["score"],
+                )
+            to_stage = "design_ok"
+        else:
+            to_stage = "design"
+        _write(
+            "UPDATE shots SET review_stage = ?, updated_at = ? WHERE id = ?",
+            (to_stage, _utcnow(), shot_id),
+        )
+        log_review(shot_id, project_id, action=action,
+                   from_status=from_status, to_status=from_status,
+                   comment=comment, checks=issues, stage="design")
+        result = get_shot(shot_id)
+        result["quality"] = _review_quality(issues)
+        return result
+
+    # ---------- 视频审核 ----------
+    if action == "approve":
+        candidate_id = shot["current_version_id"]
+        if version_id:
+            version = get_version(version_id)
+            if not version:
+                raise ValueError("版本不存在")
+            if version["shot_id"] != shot_id:
+                raise ValueError("版本不属于该镜头，无法采用")
+            if not _video_path_ok(version.get("video_url") or ""):
+                raise ValueError(
+                    f"版本视频文件缺失或不可读: {version.get('video_url') or '(空)'}，无法采用"
+                )
+            candidate_id = version_id
+            if shot["current_version_id"] != version_id:
+                # 更换采用指针：被时间线引用的镜头不允许静默更换（3A）
+                _guard_no_references(shot_references(shot_id), "该镜头（更换采用版本）")
+        elif not candidate_id:
+            raise ValueError("还没有生成任何版本，无法审核通过")
+
+        if expected_version_id and shot["current_version_id"] != expected_version_id:
+            raise StaleSubmissionError(
+                "提交时采用版本已变化（镜头已被其他操作修改），请刷新后重试"
+            )
+
+        # 质检前置：候选版本在内存中替换，不写库——阻断时指针与状态均不变（S1）
+        fresh = dict(shot)
+        fresh["current_version_id"] = candidate_id
+        fresh["current_version"] = next(
+            (v for v in shot.get("versions") or [] if v["id"] == candidate_id), None
+        )
+        issues = check_shot(fresh)
+        blocking = [i for i in issues if i["level"] == "error"]
+        if blocking:
+            log_review(shot_id, project_id, action="approve_blocked",
+                       from_status=from_status, to_status=from_status,
+                       version_id=candidate_id,
+                       comment=comment or "存在阻断性问题，审核未通过",
+                       checks=issues, stage="video")
+            raise ReviewBlockedError(
+                "存在阻断性问题，不能通过审核；请先解决后再试",
+                issues=issues, score=_review_quality(issues)["score"],
+            )
+
+        # 原子写：采用指针 + 审核状态 + 审核记录（同一事务）
+        now = _utcnow()
+        rid = _new_id("rvh")
+        with db.transaction() as conn:
+            if version_id and shot["current_version_id"] != version_id:
+                conn.execute(
+                    "UPDATE shots SET current_version_id = ?, updated_at = ? WHERE id = ?",
+                    (version_id, now, shot_id),
+                )
+            conn.execute(
+                "UPDATE shots SET status = 'approved', review_stage = '',"
+                " updated_at = ? WHERE id = ?",
+                (now, shot_id),
+            )
+            conn.execute(
+                "INSERT INTO review_history (id, shot_id, project_id, action,"
+                " from_status, to_status, version_id, comment, checks, stage,"
+                " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (rid, shot_id, project_id, "approve", from_status, "approved",
+                 candidate_id, comment, json.dumps(issues, ensure_ascii=False),
+                 "video", now),
+            )
+    else:
+        # 打回重做：检查结果仅作留痕，不阻断
+        issues = check_shot(shot)
+        now = _utcnow()
+        rid = _new_id("rvh")
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE shots SET status = 'rework', review_stage = '',"
+                " updated_at = ? WHERE id = ?",
+                (now, shot_id),
+            )
+            conn.execute(
+                "INSERT INTO review_history (id, shot_id, project_id, action,"
+                " from_status, to_status, version_id, comment, checks, stage,"
+                " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (rid, shot_id, project_id, "rework", from_status, "rework",
+                 version_id or shot.get("current_version_id") or "", comment,
+                 json.dumps(issues, ensure_ascii=False), "video", now),
+            )
+
+    result = get_shot(shot_id)
+    result["quality"] = _review_quality(issues)
+    return result
 
 
 # =====================================================================
@@ -520,13 +867,22 @@ def parse_script(text: str) -> list:
 
 
 def script_preview(project_id: str, text: str) -> dict:
-    """解析剧本并与现有分镜做差异对比，**不写库**——供导入前确认。"""
+    """解析剧本并与现有分镜做差异对比，**不写库**——供导入前确认。
+
+    第三批（S3）：预览绑定内容哈希与项目 revision，提交时校验，
+    预览之后项目被修改则拒绝过期提交。
+    """
+    import hashlib
+
     parsed = parse_script(text)
     existing_scenes = list_scenes(project_id)
     existing_titles = {sc["title"].strip() for sc in existing_scenes}
     new_titles = [ps["title"].strip() for ps in parsed]
+    project = get_project(project_id) or {}
     return {
         "mode": "preview",
+        "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "project_revision": project.get("revision") or 0,
         "existing": {
             "scene_count": len(existing_scenes),
             "shot_count": sum(len(sc["shots"]) for sc in existing_scenes),
@@ -541,7 +897,35 @@ def script_preview(project_id: str, text: str) -> dict:
     }
 
 
-def import_script(project_id: str, text: str, mode: str = "rebuild") -> dict:
+def _destructive_loss(project_id: str) -> dict:
+    """rebuild 将损失的成果明细（场景/镜头/已生成版本/时间线）
+
+    注意：list_scenes 的分镜不带 versions 字段，版本数必须直查
+    shot_versions 表（曾经用 shot.get("versions") 恒为 0，漏统计）。
+    """
+    scenes = list_scenes(project_id)
+    shot_count = sum(len(sc["shots"]) for sc in scenes)
+    version_count = _row(
+        "SELECT COUNT(*) AS c FROM shot_versions v"
+        " JOIN shots s ON v.shot_id = s.id"
+        " JOIN scenes sc ON s.scene_id = sc.id WHERE sc.project_id = ?",
+        (project_id,),
+    )["c"]
+    timeline_count = _row(
+        "SELECT COUNT(*) AS c FROM timeline_items WHERE project_id = ?", (project_id,)
+    )["c"]
+    return {
+        "scene_count": len(scenes),
+        "shot_count": shot_count,
+        "version_count": version_count,
+        "timeline_count": timeline_count,
+    }
+
+
+def import_script(project_id: str, text: str, mode: str = "rebuild",
+                  expected_revision: Optional[int] = None,
+                  content_hash: Optional[str] = None,
+                  confirm: bool = False) -> dict:
     """解析剧本并写入场景/分镜。
 
     - rebuild（默认）：清空该项目场景与分镜后重建。整个重建在**单个事务**
@@ -549,22 +933,56 @@ def import_script(project_id: str, text: str, mode: str = "rebuild") -> dict:
       的半破坏现场。
     - append：保留已有场景与分镜，把解析结果追加进去；标题与现有场景相同的
       场景跳过（不覆盖已有制作成果）。
+
+    第三批保护（S3，服务端强制，不依赖前端先调预览）：
+    - content_hash 传入时必须与 text 实际哈希一致，否则 400；
+    - expected_revision 传入时必须与项目当前 revision 一致，否则 409
+      （预览之后项目被改过，提交已过期）；
+    - rebuild 且已有制作成果（版本/时间线）时必须 confirm=True，
+      否则 409 并返回将损失的明细；确认后先做一致性备份再重建；
+    - 每次成功导入 revision +1（与预览绑定）。
     """
+    import hashlib
+
     if mode not in ("rebuild", "append"):
         raise ValueError(f"未知导入模式: {mode}")
+    if content_hash is not None:
+        actual = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if actual != content_hash:
+            raise ValueError("剧本内容与预览时不一致（content_hash 不匹配），请重新预览")
+    project = get_project(project_id)
+    if not project:
+        raise ValueError("项目不存在")
+    if expected_revision is not None and expected_revision != (project.get("revision") or 0):
+        raise StalePreviewError(
+            f"项目已在预览后被修改（revision {project.get('revision') or 0} != {expected_revision}），"
+            "请重新预览后再提交"
+        )
+
     parsed = parse_script(text)
     if not parsed:
         raise ValueError("剧本中没有解析出任何场景（请检查「场景一：xxx」格式标记）")
 
     removed = {"scenes": 0, "shots": 0}
+    backup_path = None
     if mode == "rebuild":
         existing = list_scenes(project_id)
         removed["scenes"] = len(existing)
         removed["shots"] = sum(len(sc["shots"]) for sc in existing)
+        loss = _destructive_loss(project_id)
+        if (loss["version_count"] or loss["timeline_count"]) and not confirm:
+            raise DestructiveImportError(
+                "覆盖重建将删除已生成的镜头版本/时间线片段，请确认后重试"
+                "（confirm=true）；或改用 append 模式保留已有成果",
+                details=loss,
+            )
+        if loss["version_count"] or loss["timeline_count"]:
+            # 确认后的破坏性重建：先一致性备份（可恢复），再进事务
+            backup_path = str(db.auto_backup("aivideo-pre-rebuild"))
 
     now = _utcnow()
     created_scenes = []
-    # 单事务：场景/分镜重建 + 剧本文本更新一起提交或整体回滚
+    # 单事务：场景/分镜重建 + 剧本文本更新 + revision 自增一起提交或整体回滚
     #（旧代码把 update_project(script=text) 放在事务外，重建失败也会
     # 留下半升级的剧本文本——审查项 S3）
     with db.transaction() as conn:
@@ -610,7 +1028,8 @@ def import_script(project_id: str, text: str, mode: str = "rebuild") -> dict:
                 )
             created_scenes.append(sid)
         conn.execute(
-            "UPDATE projects SET script = ?, updated_at = ? WHERE id = ?",
+            "UPDATE projects SET script = ?, revision = COALESCE(revision, 0) + 1,"
+            " updated_at = ? WHERE id = ?",
             (text, now, project_id),
         )
 
@@ -625,6 +1044,8 @@ def import_script(project_id: str, text: str, mode: str = "rebuild") -> dict:
         "scene_count": len(scenes),
         "shot_count": n_shots,
         "removed": removed,
+        "backup": backup_path,
+        "revision": (get_project(project_id) or {}).get("revision") or 0,
     }
 
 

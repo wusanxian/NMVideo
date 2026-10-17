@@ -5,6 +5,8 @@
       <span class="shot-order">{{ index + 1 }}</span>
       <span class="shot-title" :title="shot.title">{{ shot.title || '未命名镜头' }}</span>
       <span class="badge" :class="badgeClass">{{ statusLabel }}</span>
+      <span v-if="shot.review_stage" class="stage-chip" :class="shot.review_stage"
+            :title="stageTip">{{ STAGE_LABELS[shot.review_stage] || shot.review_stage }}</span>
       <div class="shot-head-actions">
         <button class="icon-btn" title="上移" :disabled="index === 0" @click.stop="$emit('move-up')">↑</button>
         <button class="icon-btn" title="下移" :disabled="isLast" @click.stop="$emit('move-down')">↓</button>
@@ -53,6 +55,9 @@
       <button class="btn btn-primary" :disabled="!canGenerate" @click="$emit('generate')">
         🎬 {{ shot.status === 'approved' || shot.status === 'rework' ? '重新制作' : '生成' }}
       </button>
+      <button v-if="['draft', 'rework'].includes(shot.status)" class="btn"
+              title="生成前的设计审核：检查提示词 / 对白 / 时长 / 角色等创作参数"
+              @click="$emit('review-design')">📐 设计审核</button>
       <template v-if="shot.status === 'review'">
         <button class="btn ok" @click="$emit('review', 'approve')">✔ 通过</button>
         <button class="btn warn" @click="$emit('review', 'rework')">↺ 重做</button>
@@ -77,7 +82,7 @@ const props = defineProps({
   job: { type: Object, default: null },   // 关联的生成任务（用于进度条）
 })
 
-const emit = defineEmits(['edit', 'generate', 'review', 'rework', 'delete', 'versions', 'move-up', 'move-down', 'drag-start', 'drag-end', 'drop'])
+const emit = defineEmits(['edit', 'generate', 'review', 'review-design', 'rework', 'delete', 'versions', 'move-up', 'move-down', 'drag-start', 'drag-end', 'drop'])
 
 const MODE_LABELS = { i2v: '图生视频', first_last: '首尾帧', continuation: '视频续接' }
 
@@ -85,6 +90,16 @@ const STATUS_LABELS = {
   draft: '草稿', queued: '排队中', generating: '生成中',
   review: '待审核', approved: '已通过', rework: '需重做',
 }
+// 3A 审核三态（与后端 REVIEW_STAGE_LABELS 对应）
+const STAGE_LABELS = {
+  design: '设计审核', generation: '生成审核', video: '视频审核', design_ok: '设计已通过', '': '',
+}
+const stageTip = computed(() => ({
+  design: '设计审核中：生成前的创作参数检查门',
+  design_ok: '设计审核已通过，可以发起生成',
+  generation: '生成审核中：任务已排队/正在生成',
+  video: '视频审核中：成片质检与采用版本确认',
+})[props.shot.review_stage] || '')
 const statusLabel = computed(() => STATUS_LABELS[props.shot.status] || props.shot.status)
 const badgeClass = computed(() => {
   const m = {
@@ -146,6 +161,17 @@ function playPreview() {
   overflow: hidden; text-overflow: ellipsis; max-width: 220px;
 }
 .shot-head-actions { margin-left: auto; display: flex; gap: 4px; }
+
+/* 3A 审核三态徽标 */
+.stage-chip {
+  font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 600;
+  flex-shrink: 0; background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text-dim); cursor: default;
+}
+.stage-chip.design { background: rgba(96, 165, 250, 0.15); color: #60a5fa; border-color: transparent; }
+.stage-chip.design_ok { background: rgba(52, 211, 153, 0.15); color: var(--green); border-color: transparent; }
+.stage-chip.generation { background: rgba(251, 191, 36, 0.15); color: var(--yellow); border-color: transparent; }
+.stage-chip.video { background: rgba(167, 139, 250, 0.15); color: #a78bfa; border-color: transparent; }
 
 .icon-btn {
   background: transparent; border: none; color: var(--text-dim);

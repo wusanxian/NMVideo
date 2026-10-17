@@ -61,6 +61,7 @@
             @versions="openEditor(shot)"
             @generate="quickGenerate(shot)"
             @review="openReview(shot, $event)"
+            @review-design="openReviewDesign(shot)"
             @rework="openRework(shot)"
             @delete="removeShot(shot.id)"
             @move-up="moveShot(scene, i, i - 1)"
@@ -423,6 +424,7 @@
       v-if="reviewingShot"
       :shot="reviewingShot"
       :preset="reviewPreset"
+      :initial-stage="reviewInitialStage"
       @close="reviewingShot = null"
       @done="onReviewed"
     />
@@ -664,16 +666,27 @@ async function quickGenerate(shot) {
 // ---------- 审核 / 返工 ----------
 const reviewingShot = ref(null)
 const reviewPreset = ref('')
+const reviewInitialStage = ref('video')
 const reworkingShot = ref(null)
 
 function openReview(shot, presetAction = '') {
   reviewingShot.value = shot
   reviewPreset.value = presetAction
+  // 3A：镜头处于设计审核门时默认打开设计审核页
+  reviewInitialStage.value = shot.review_stage === 'design' ? 'design' : 'video'
+}
+function openReviewDesign(shot) {
+  reviewingShot.value = shot
+  reviewPreset.value = ''
+  reviewInitialStage.value = 'design'
 }
 async function onReviewed(action) {
+  const wasDesign = reviewInitialStage.value === 'design'
   reviewingShot.value = null
   reviewPreset.value = ''
-  message.value = action === 'approve' ? '已审核通过' : '已打回重做'
+  message.value = wasDesign
+    ? (action === 'approve' ? '设计审核已通过' : '已打回修改设计')
+    : (action === 'approve' ? '已审核通过' : '已打回重做')
   setTimeout(() => (message.value = ''), 2000)
   await store.refresh()
 }
@@ -781,10 +794,34 @@ async function doImport(mode) {
         : '\n没有同名场景。'
     }
     if (!confirm(tip + '\n\n确定继续？')) return
-    const r = await store.importScript(scriptText.value, mode)
+    // 3A：预览绑定回传——预览之后项目被改过则 409 过期提交；
+    // 破坏性重建若将损失已生成版本/时间线，服务端先返回损失明细（409）
+    const binding = {
+      expected_revision: pv.project_revision,
+      content_hash: pv.content_hash,
+    }
+    let r
+    try {
+      r = await store.importScript(scriptText.value, mode, binding)
+    } catch (e) {
+      const loss = e.data?.detail?.loss
+      if (e.status === 409 && loss) {
+        const ok = confirm(
+          '覆盖重建将删除以下制作成果：\n' +
+          `· 已生成镜头版本 ${loss.version_count} 个\n` +
+          `· 时间线片段 ${loss.timeline_count} 个\n` +
+          `· 场景 ${loss.scene_count} 个 / 分镜 ${loss.shot_count} 个\n\n` +
+          '服务端会先自动备份数据库再重建（备份在 backend/backups/）。确定继续？')
+        if (!ok) return
+        r = await store.importScript(scriptText.value, mode, { ...binding, confirm: true })
+      } else {
+        throw e
+      }
+    }
     message.value = `导入完成（${mode === 'rebuild' ? '覆盖重建' : '追加'}）：` +
       `${r.scene_count} 个场景 / ${r.shot_count} 个分镜` +
-      (mode === 'rebuild' && r.removed?.shots ? `，已移除旧分镜 ${r.removed.shots} 个` : '')
+      (mode === 'rebuild' && r.removed?.shots ? `，已移除旧分镜 ${r.removed.shots} 个` : '') +
+      (r.backup ? '（已自动备份数据库）' : '')
     setTimeout(() => (message.value = ''), 4000)
     tab.value = 'shots'
   } catch (e) {

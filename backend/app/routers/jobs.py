@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as db_module
+from .. import storyboard as sb
 from ..config import OUTPUTS_DIR
 from ..engines import ENGINES
 from ..quality import PREVIEW_OVERRIDE, QUALITY_PRESETS, apply_preset
@@ -89,6 +90,15 @@ def delete_job(job_id: str):
     job = db_module.db.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
+    # 3A：任务产物被镜头版本/时间线引用时拒绝删除（409 + 引用明细），
+    # 避免画廊误删正在剪辑使用的视频
+    refs = sb.job_references(job_id)
+    if refs["versions"] or refs["timeline_items"]:
+        raise HTTPException(status_code=409, detail={
+            "message": "该任务的产物已被镜头版本/时间线引用，不能删除；"
+                       "请先删除对应镜头版本或时间线片段",
+            "references": refs,
+        })
     shutil.rmtree(OUTPUTS_DIR / job_id, ignore_errors=True)
     (OUTPUTS_DIR / f"{job_id}.mp4").unlink(missing_ok=True)
     db_module.db.delete_job(job_id)
