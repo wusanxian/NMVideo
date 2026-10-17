@@ -423,14 +423,12 @@ def _guard_no_references(refs: dict, what: str) -> None:
 
 
 def _video_path_ok(url: str) -> bool:
-    """受管路径（/outputs/...）且文件存在可读"""
-    if not url or not url.startswith("/outputs/"):
-        return False
-    from .config import OUTPUTS_DIR
+    """受管路径（/outputs/...）且文件存在可读（P0-03：安全解析）"""
+    from .managed_paths import VIDEO_SUFFIXES, resolve_managed_asset
 
-    p = OUTPUTS_DIR / url[len("/outputs/"):]
+    p = resolve_managed_asset(url, allowed_types=VIDEO_SUFFIXES)
     try:
-        return p.is_file() and p.stat().st_size > 0
+        return p is not None and p.is_file() and p.stat().st_size > 0
     except OSError:
         return False
 
@@ -1073,7 +1071,7 @@ def timeline_layout(project_id: str) -> list:
 
     供字幕自动生成、配音对齐、导出混音共用同一套时间基准。
     """
-    from .config import OUTPUTS_DIR
+    from .managed_paths import VIDEO_SUFFIXES, resolve_managed_asset
     from .video import probe_duration
 
     items = list_timeline(project_id)
@@ -1081,8 +1079,8 @@ def timeline_layout(project_id: str) -> list:
     for it in items:
         dur = 0.0
         if it.get("video_url"):
-            p = OUTPUTS_DIR / it["video_url"][len("/outputs/"):]
-            if p.exists():
+            p = resolve_managed_asset(it["video_url"], allowed_types=VIDEO_SUFFIXES)
+            if p and p.exists():
                 dur = probe_duration(p)
         t_in = min(float(it.get("trim_in_s") or 0), max(dur - 0.3, 0))
         t_out = float(it.get("trim_out_s") or 0)

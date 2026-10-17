@@ -94,6 +94,7 @@ class Database:
                 ("continue_from", "TEXT DEFAULT ''"),    # 续接来源镜头
                 ("prompt_id", "TEXT DEFAULT ''"),        # ComfyUI prompt_id（2B：持久化，重启恢复用）
                 ("workflow_snapshot", "TEXT DEFAULT ''"),  # ComfyUI 工作流快照路径（2B：入队即固化）
+                ("client_id", "TEXT DEFAULT ''"),        # ComfyUI 提交 client_id（P0-01：与 prompt_id 同时落库，恢复可续 WS）
             ):
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")

@@ -2,7 +2,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 
 @dataclass
@@ -24,6 +24,7 @@ class GenerationCancelled(Exception):
 
 ProgressCallback = Callable[[float, str], None]  # (进度 0~1, 阶段描述)
 CancelCheck = Callable[[], bool]
+SubmittedCallback = Callable[[str, str], None]  # (prompt_id, client_id) 提交即回调
 
 
 class BaseEngine(ABC):
@@ -48,6 +49,8 @@ class BaseEngine(ABC):
         reference_image: str = "",
         resume_prompt_id: str = "",
         workflow_snapshot: str = "",
+        on_submitted: Optional[SubmittedCallback] = None,
+        resume_client_id: str = "",
     ) -> List[Path]:
         """生成帧序列，逐帧保存到 frames_dir，返回帧文件路径列表。
 
@@ -57,6 +60,12 @@ class BaseEngine(ABC):
         直接按已持久化的 prompt_id 等待/下载（其他引擎忽略）。
         workflow_snapshot: ComfyUI 专用——入队时固化的工作流快照路径，
         避免排队期间用户改模板影响已排队任务（其他引擎忽略）。
+        on_submitted: ComfyUI 专用（P0-01）——HTTP /prompt 返回后**立即**
+        回调 (prompt_id, client_id)，由队列落库；不等生成完成。ComfyUI
+        已受理但 NMVideo 崩溃时，重启恢复靠库里的 prompt_id 对账，不会
+        重复提交。本地引擎忽略。
+        resume_client_id: ComfyUI 专用——恢复执行时带上提交时持久化的
+        client_id（新连接订阅同一 id 可继续收 WS 进度；为空走轮询）。
 
         返回契约（2C）：通常返回帧路径列表，由队列合成 MP4；若引擎产出
         的是原生视频（ComfyUI VHS_VideoCombine 等），把视频路径写到

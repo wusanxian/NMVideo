@@ -135,9 +135,11 @@ class AnimeEngine(BaseEngine):
     def generate(self, *, prompt, negative_prompt, width, height, num_frames,
                  fps, steps, guidance, seed, frames_dir, on_progress, is_cancelled,
                  reference_image: str = "", resume_prompt_id: str = "",
-                 workflow_snapshot: str = "") -> List[Path]:
+                 workflow_snapshot: str = "", on_submitted=None,
+                 resume_client_id: str = "") -> List[Path]:
         # AnimateDiff 运动模块仅支持文生视频；reference_image 忽略（续接靠提示词衔接）
-        # resume_prompt_id / workflow_snapshot 为 ComfyUI 专用参数，本引擎忽略
+        # resume_prompt_id / workflow_snapshot / on_submitted / resume_client_id
+        # 为 ComfyUI 专用参数，本引擎忽略
         import torch
 
         if seed < 0:

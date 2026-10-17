@@ -67,10 +67,11 @@ def delete_voice(voice_id: str) -> None:
     v = get_voice(voice_id)
     _write("DELETE FROM shot_voices WHERE id = ?", (voice_id,))
     if v and v.get("audio_url"):
-        from .config import OUTPUTS_DIR
+        from .managed_paths import AUDIO_SUFFIXES, resolve_managed_asset
 
-        p = OUTPUTS_DIR / v["audio_url"][len("/outputs/"):]
-        p.unlink(missing_ok=True)
+        p = resolve_managed_asset(v["audio_url"], allowed_types=AUDIO_SUFFIXES)
+        if p:
+            p.unlink(missing_ok=True)
 
 
 # =====================================================================
@@ -124,10 +125,11 @@ def delete_audio_track(track_id: str) -> None:
     t = _row("SELECT * FROM audio_tracks WHERE id = ?", (track_id,))
     _write("DELETE FROM audio_tracks WHERE id = ?", (track_id,))
     if t and t.get("audio_url"):
-        from .config import OUTPUTS_DIR
+        from .managed_paths import AUDIO_SUFFIXES, resolve_managed_asset
 
-        p = OUTPUTS_DIR / t["audio_url"][len("/outputs/"):]
-        p.unlink(missing_ok=True)
+        p = resolve_managed_asset(t["audio_url"], allowed_types=AUDIO_SUFFIXES)
+        if p:
+            p.unlink(missing_ok=True)
 
 
 # =====================================================================

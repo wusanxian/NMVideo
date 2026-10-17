@@ -128,11 +128,12 @@ def check_shot(shot: dict, characters: list = None, voices: list = None) -> list
             issues.append({"level": "error", "code": "no_video",
                            "message": "当前版本没有视频文件"})
         elif url.startswith("/outputs/"):
-            from .config import OUTPUTS_DIR
-            p = OUTPUTS_DIR / url[len("/outputs/"):]
-            if not p.exists():
+            from .managed_paths import VIDEO_SUFFIXES, resolve_managed_asset
+
+            p = resolve_managed_asset(url, allowed_types=VIDEO_SUFFIXES)
+            if not p or not p.exists():
                 issues.append({"level": "error", "code": "video_missing",
-                               "message": f"当前版本视频文件缺失: {url}"})
+                               "message": f"当前版本视频文件缺失或不受管: {url}"})
 
     # 参考图模式提示
     mode = shot.get("mode") or "t2v"

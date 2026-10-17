@@ -346,9 +346,15 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
         src_ver = sb.get_version(src_shot["current_version_id"])
         if not src_ver or not src_ver.get("video_url"):
             raise HTTPException(400, "上一镜头的当前版本没有视频文件")
-        src_path = OUTPUTS_DIR / src_ver["video_url"][len("/outputs/"):]
-        if not src_path.exists():
-            raise HTTPException(400, f"上一镜头视频缺失: {src_path}")
+        from ..managed_paths import VIDEO_SUFFIXES, resolve_managed_asset
+
+        # base_dir 显式传本模块 OUTPUTS_DIR（与 refs_dir/snap_dir 同一绑定，
+        # 历史上续接取帧就用模块级 OUTPUTS_DIR）
+        src_path = resolve_managed_asset(src_ver["video_url"],
+                                         allowed_types=VIDEO_SUFFIXES,
+                                         base_dir=OUTPUTS_DIR)
+        if not src_path or not src_path.exists():
+            raise HTTPException(400, f"上一镜头视频缺失或不受管: {src_ver['video_url']}")
         refs_dir = OUTPUTS_DIR / "refs"
         refs_dir.mkdir(parents=True, exist_ok=True)
         frame_path = refs_dir / f"{shot_id}_from_{src_shot['id']}.png"
@@ -392,38 +398,55 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["mode"] = mode
     params["continue_from"] = continue_from
 
+    # ---- P0-02：ComfyUI 备料先行，全部成功后才创建 job ----
+    # 旧顺序先 create_job 再上传参考图：上传失败（HTTPException 400）不回滚，
+    # 留下无 prompt_id 的 pending 僵尸任务，重启后还会被恢复器捡起来重跑。
+    # 现在模板加载/参考图上传/工作流构建/预检都在建 job 前完成，
+    # 任一失败 → 400 且 DB 不落任何可执行任务。
+    graph = None
+    if data.engine == "comfyui":
+        from ..comfyui import (
+            build_shot_workflow,
+            load_workflow_template,
+            upload_reference_image,
+        )
+
+        template = load_workflow_template()
+        prompt_graph = template.get("prompt")
+        if not isinstance(prompt_graph, dict) or not prompt_graph:
+            raise HTTPException(
+                400, "工作流模板为空或缺少 prompt 节点图，请在 ComfyUI 设置里检查"
+            )
+        ref_for_graph = params["reference_image"]
+        # 2C：工作流消费参考图时，上传到 ComfyUI input 目录并用返回名注入
+        # （LoadImage 只能引用 input 目录内的文件，本机路径对 ComfyUI 无意
+        # 义；默认模板不映射 reference_image，纯文生视频不受影响）
+        if ref_for_graph and (template.get("_aivideo_map") or {}).get("reference_image"):
+            try:
+                ref_for_graph = upload_reference_image(client, ref_for_graph)
+            except Exception as e:
+                raise HTTPException(400, f"参考图上传 ComfyUI 失败: {e}")
+        graph = build_shot_workflow({
+            "prompt": params["prompt"],
+            "negative_prompt": params["negative_prompt"],
+            "width": params["width"], "height": params["height"],
+            "num_frames": params["num_frames"], "seed": params["seed"],
+            "steps": params["steps"], "guidance": params["guidance"],
+            "reference_image": ref_for_graph,
+        }, template=template)
+        if not graph:
+            raise HTTPException(
+                400, "工作流模板为空或缺少 prompt 节点图，请在 ComfyUI 设置里检查"
+            )
+
     from .. import db as db_module
 
     job = db_module.db.create_job(params)
     job_id = job["id"]
     # 2B：ComfyUI 入队即固化工作流快照——排队期间用户在设置里改模板，
-    # 不影响已排队任务（执行时优先读快照；快照失败不阻断，执行时兜底）
-    if data.engine == "comfyui":
+    # 不影响已排队任务（执行时优先读快照；快照写盘失败不阻断，执行时兜底重建）
+    if graph is not None:
         try:
-            from ..comfyui import (
-                build_shot_workflow,
-                load_workflow_template,
-                upload_reference_image,
-            )
-
-            template = load_workflow_template()
-            ref_for_graph = params["reference_image"]
-            # 2C：工作流消费参考图时，上传到 ComfyUI input 目录并用返回名注入
-            # （LoadImage 只能引用 input 目录内的文件，本机路径对 ComfyUI 无意
-            # 义；默认模板不映射 reference_image，纯文生视频不受影响）
-            if ref_for_graph and (template.get("_aivideo_map") or {}).get("reference_image"):
-                try:
-                    ref_for_graph = upload_reference_image(client, ref_for_graph)
-                except Exception as e:
-                    raise HTTPException(400, f"参考图上传 ComfyUI 失败: {e}")
-            graph = build_shot_workflow({
-                "prompt": params["prompt"],
-                "negative_prompt": params["negative_prompt"],
-                "width": params["width"], "height": params["height"],
-                "num_frames": params["num_frames"], "seed": params["seed"],
-                "steps": params["steps"], "guidance": params["guidance"],
-                "reference_image": ref_for_graph,
-            }, template=template)
             snap_dir = OUTPUTS_DIR / "workflows"
             snap_dir.mkdir(parents=True, exist_ok=True)
             snap = snap_dir / f"{job_id}.json"
@@ -432,8 +455,6 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
                 encoding="utf-8",
             )
             db_module.db.update_job(job_id, workflow_snapshot=str(snap))
-        except HTTPException:
-            raise  # 参考图上传失败等明确错误：透传 400，不走兜底
         except Exception as e:
             print(f"[storyboard] ComfyUI 工作流快照写入失败（执行时兜底）: {e}")
     await job_queue.enqueue(job_id)

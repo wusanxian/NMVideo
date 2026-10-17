@@ -24,6 +24,7 @@ from typing import Callable, Optional
 import requests
 
 from .config import OUTPUTS_DIR
+from .managed_paths import IMAGE_SUFFIXES, resolve_managed_asset
 
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "comfy_workflows"
 DEFAULT_WORKFLOW = WORKFLOWS_DIR / "default.json"
@@ -395,19 +396,16 @@ def build_workflow(template: dict, mapping: dict, params: dict) -> dict:
 def local_path_from_output_url(url: str) -> Optional[Path]:
     """/outputs/... URL → 本机文件路径（2C：参考图上传 ComfyUI 前定位）。
 
-    兼容带域名的绝对 URL（取其中 /outputs/ 段，如同机部署的 http 地址）；
-    非受管路径返回 None（外链图片本机没有副本，无法上传）。
+    安全解析（P0-03）：只接受受管 /outputs/ 前缀，规范化后必须仍在
+    OUTPUTS_DIR 内（拒绝 ../、绝对路径/盘符、反斜杠、% 编码穿越、
+    符号链接逃逸），且扩展名须在图片白名单内；否则返回 None
+    （外链图片本机没有副本，也无法上传）。
+
+    base_dir 显式传本模块的 OUTPUTS_DIR：历史上该函数就用 comfyui
+    模块级绑定（测试 monkeypatch app.comfyui.OUTPUTS_DIR 隔离）。
     """
-    u = (url or "").strip()
-    if not u:
-        return None
-    idx = 0 if u.startswith("/outputs/") else u.find("/outputs/")
-    if idx < 0:
-        return None
-    rel = u[idx + len("/outputs/"):].lstrip("/")
-    if not rel:
-        return None
-    return OUTPUTS_DIR / rel
+    return resolve_managed_asset(url, allowed_types=IMAGE_SUFFIXES,
+                                 base_dir=OUTPUTS_DIR)
 
 
 def upload_reference_image(client: "ComfyUIClient", url: str) -> str:

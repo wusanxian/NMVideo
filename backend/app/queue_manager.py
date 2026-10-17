@@ -208,6 +208,16 @@ class JobQueue:
                 job_id, progress=round(min(max(p, 0.0), 1.0), 4), stage=stage
             )
 
+        def on_submitted(prompt_id: str, client_id: str):
+            # P0-01：ComfyUI /prompt 返回即持久化（在 worker 线程调用，
+            # db 内部有锁，线程安全）——不等 generate 返回。崩溃恢复与
+            # 对账都靠这两列；client_id 同时落库供恢复时续 WS 进度。
+            if db_module.db.get_job(job_id):
+                db_module.db.update_job(
+                    job_id, prompt_id=prompt_id, client_id=client_id,
+                    stage="ComfyUI 已受理，生成中",
+                )
+
         def is_cancelled() -> bool:
             return job_id in self._cancelled
 
@@ -215,9 +225,13 @@ class JobQueue:
         # 2B：ComfyUI 恢复执行——job 带上 prompt_id 说明是重启恢复的任务，
         # 跳过提交直接按 prompt_id 继续等（正常流程执行前 prompt_id 必然为空）
         resume_prompt_id = ""
+        resume_client_id = ""
         workflow_snapshot = ""
         if job.get("engine") == "comfyui":
             resume_prompt_id = job.get("prompt_id") or ""
+            # P0-01：提交时持久化的 client_id——恢复后续 WS 进度；
+            # 老任务没有该列，为空走轮询（兼容旧行为）
+            resume_client_id = job.get("client_id") or ""
             workflow_snapshot = job.get("workflow_snapshot") or ""
         try:
             frame_paths = await loop.run_in_executor(
@@ -238,6 +252,8 @@ class JobQueue:
                     reference_image=job.get("reference_image") or "",
                     resume_prompt_id=resume_prompt_id,
                     workflow_snapshot=workflow_snapshot,
+                    on_submitted=on_submitted,
+                    resume_client_id=resume_client_id,
                 ),
             )
         except GenerationCancelled:
@@ -258,7 +274,9 @@ class JobQueue:
                 sb.set_shot_status(shot_id, "rework", review_stage="")
             return
 
-        # 2B：ComfyUI prompt_id 持久化——重启恢复与对账都靠它
+        # 2B：ComfyUI prompt_id 持久化——重启恢复与对账都靠它。
+        # P0-01 起主路径是 on_submitted（提交即落库）；这里是兜底：
+        # 引擎未触发回调（如恢复路径）或回调写入失败时补写。
         prompt_id = getattr(engine, "last_prompt_id", "") or ""
         if prompt_id and db_module.db.get_job(job_id):
             db_module.db.update_job(job_id, prompt_id=prompt_id)

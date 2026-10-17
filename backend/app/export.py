@@ -15,18 +15,25 @@ from typing import Optional
 from . import storyboard as sb
 from . import tracks
 from .config import OUTPUTS_DIR
+from .managed_paths import MEDIA_SUFFIXES, resolve_managed_asset
 from .video import concat_videos, get_ffmpeg, probe_duration
 
 EXPORTS_DIR = OUTPUTS_DIR / "exports"
 
 
-def _url_to_path(url: str) -> Path:
-    """/outputs/xxx.mp3 -> backend/outputs/xxx.mp3"""
-    return OUTPUTS_DIR / url[len("/outputs/"):]
+def _url_to_path(url: str) -> Optional[Path]:
+    """/outputs/xxx.mp3 -> 本机路径；越界/非白名单/外链返回 None（P0-03）。
+
+    base_dir 显式传本模块的 OUTPUTS_DIR（保持历史上 export 模块级绑定
+    的语义；app.config 未被 reassign 时两者一致）。
+    """
+    return resolve_managed_asset(url, allowed_types=MEDIA_SUFFIXES,
+                                 base_dir=OUTPUTS_DIR)
 
 
 def _exists(url: str) -> bool:
-    return bool(url) and _url_to_path(url).exists()
+    p = _url_to_path(url)
+    return p is not None and p.is_file()
 
 
 def _mix_audio(project_id: str, layout: list, out_wav: Path) -> bool:
@@ -37,20 +44,22 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path) -> bool:
     sources: list = []
     for it in layout:
         for v in tracks.list_voices_of_shot(it["shot_id"]):
-            if _exists(v.get("audio_url") or ""):
+            audio_path = _url_to_path(v.get("audio_url") or "")
+            if audio_path:
                 # 配音落在片段起点；超出片段长度的部分由 atrim 裁掉
                 sources.append((
-                    _url_to_path(v["audio_url"]),
+                    audio_path,
                     it["start_s"], it["end_s"],
                     1.0,
                 ))
     for t in tracks.list_audio_tracks(project_id):
-        if _exists(t.get("audio_url") or ""):
+        track_path = _url_to_path(t.get("audio_url") or "")
+        if track_path:
             start = float(t.get("start_s") or 0)
             t_in = float(t.get("trim_in_s") or 0)
             t_out = float(t.get("trim_out_s") or 0)
             sources.append((
-                _url_to_path(t["audio_url"]),
+                track_path,
                 start, (start + t_out) if t_out > 0 else None,
                 float(t.get("volume", 0.8) or 0.8),
                 t_in,
@@ -114,8 +123,8 @@ def run_export(export_id: str) -> None:
             if not it.get("video_url"):
                 raise ValueError(f"镜头「{it['shot_title']}」还没有生成视频")
             path = _url_to_path(it["video_url"])
-            if not path.exists():
-                raise FileNotFoundError(f"视频文件缺失: {path}")
+            if not path or not path.exists():
+                raise FileNotFoundError(f"视频文件缺失或不受管: {it['video_url']}")
             seg_inputs.append(
                 {
                     "path": str(path),

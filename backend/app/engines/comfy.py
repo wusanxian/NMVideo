@@ -7,10 +7,11 @@
 
 2B 任务可靠性：
   - 提交与 WS 订阅共用同一 client_id（否则收不到进度推送）
-  - prompt_id 持久化到 job 记录（worker 读 engine.last_prompt_id 落库），
-    服务重启后可恢复
-  - resume_prompt_id：恢复执行——跳过提交，按已持久化的 prompt_id 直接等待
-    （原 client_id 已丢失，走历史轮询）
+  - prompt_id 提交即持久化（P0-01）：/prompt 返回后立刻经 on_submitted
+    回调交队列落库（prompt_id + client_id），不等 _wait 完成——ComfyUI
+    已受理但本服务崩溃时，重启恢复靠库里的 prompt_id 对账，不重复提交
+  - resume_prompt_id / resume_client_id：恢复执行——跳过提交，按已持久化
+    的 prompt_id 继续等（client_id 在库则续 WS 进度，否则走历史轮询）
   - workflow_snapshot：入队时固化的工作流快照；排队期间用户改模板不影响
     已排队任务
 
@@ -94,6 +95,8 @@ class ComfyEngine(BaseEngine):
         reference_image: str = "",
         resume_prompt_id: str = "",
         workflow_snapshot: str = "",
+        on_submitted: Callable[[str, str], None] = None,
+        resume_client_id: str = "",
     ) -> List[Path]:
         if not self.client.is_available():
             raise ComfyUIError(
@@ -120,14 +123,27 @@ class ComfyEngine(BaseEngine):
             # ---- 恢复路径：服务重启后按已持久化的 prompt_id 继续等 ----
             prompt_id = resume_prompt_id
             on_progress(0.05, "恢复等待 ComfyUI 任务（服务重启恢复）")
-            entry = self._wait(prompt_id, client_id="", on_progress=on_progress,
-                               is_cancelled=is_cancelled)
+            # 带上提交时持久化的 client_id：新连接订阅同一 id 可继续收 WS
+            # 进度；为空（老任务/上次没落库）走历史轮询
+            entry = self._wait(prompt_id, client_id=resume_client_id,
+                               on_progress=on_progress, is_cancelled=is_cancelled)
         else:
             # ---- 正常路径：快照/模板 → 注入 → 提交（client_id 与 WS 一致） ----
             graph = self._resolve_workflow(workflow_snapshot, inject, frames_dir)
             on_progress(0.03, "提交工作流到 ComfyUI")
             client_id = self.client.new_client_id()
             prompt_id = self.client.submit(graph, client_id=client_id)
+            # P0-01：提交即持久化——/prompt 返回后立刻把 prompt_id +
+            # client_id 交队列落库，不等 _wait 完成。ComfyUI 已受理但
+            # NMVideo 在等待期间崩溃时，重启恢复靠库里的 prompt_id 对账
+            # （/history + /queue 探测），不会重复提交同一任务。
+            self.last_prompt_id = prompt_id
+            if on_submitted:
+                try:
+                    on_submitted(prompt_id, client_id)
+                except Exception:
+                    # 持久化失败不阻断生成；该任务重启时按 lost 处理（标失败）
+                    pass
             entry = self._wait(prompt_id, client_id=client_id, on_progress=on_progress,
                                is_cancelled=is_cancelled)
 
