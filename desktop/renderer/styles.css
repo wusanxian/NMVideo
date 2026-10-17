@@ -307,6 +307,64 @@ body { display: flex; flex-direction: column; }
   50% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
 }
 
+/* ---------- 系统面板（右侧抽屉：服务状态/安装信息/终端/更新） ---------- */
+.system-panel {
+  position: fixed;
+  top: var(--titlebar-h);
+  right: 0;
+  bottom: 0;
+  width: 480px;
+  max-width: 94vw;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 50px rgba(0, 0, 0, 0.45);
+  transform: translateX(102%);
+  transition: transform 0.28s ease;
+}
+.system-panel.open { transform: translateX(0); }
+.system-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.system-panel-title { font-size: 14px; font-weight: 700; }
+.system-panel-actions { display: flex; gap: 6px; }
+.system-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* 面板内卡片去掉主区 margin，间距交给 flex gap */
+.system-panel-body .progress-card { margin-top: 0; padding: 18px 20px; }
+.system-panel-body .install-info { margin-top: 0; }
+.system-panel-body .terminal { margin-top: 0; }
+.service-timer {
+  margin-left: auto;
+  align-self: flex-start;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-hover);
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+#system-btn.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(139, 92, 246, 0.12);
+}
+
 /* 应用视图 */
 .app-bar {
   flex: none;
@@ -318,7 +376,6 @@ body { display: flex; flex-direction: column; }
 }
 webview { display: inline-flex; }
 body.workspace-open > .layout > .sidebar { display: none; }
-.app-bar { display: none; }
 .app-view { position: relative; }
 .connection-card {
   position: absolute; inset: 0; z-index: 5;

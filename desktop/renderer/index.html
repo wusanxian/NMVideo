@@ -15,7 +15,7 @@
       <span class="brand-name">AI 动画导演工作台</span>
     </div>
     <div class="titlebar-right">
-      <button id="system-btn" class="lang-btn" data-i18n="system">系统管理</button>
+      <button id="system-btn" class="lang-btn" data-i18n="system" aria-expanded="false" aria-controls="system-panel">系统管理</button>
       <button id="lang-btn" class="lang-btn" title="Language">中文</button>
       <div class="win-buttons">
         <button id="win-min" class="win-btn" title="Minimize">─</button>
@@ -26,27 +26,17 @@
   </header>
 
   <div class="layout">
-    <!-- 侧边栏 -->
+    <!-- 侧边栏（系统导航，已与前端创作侧边栏去重：只保留工作台/系统/ComfyUI） -->
     <aside class="sidebar">
       <nav>
-        <button class="nav-item" data-action="start">
-          <span class="nav-ico">▶</span><span data-i18n="start">启动</span>
+        <button class="nav-item" data-action="workspace">
+          <span class="nav-ico">▶</span><span data-i18n="workspaceNav">工作台</span>
         </button>
-        <button class="nav-item" data-action="install">
-          <span class="nav-ico">⤓</span><span data-i18n="install">安装</span>
-        </button>
-        <button class="nav-item" data-action="processing">
-          <span class="nav-ico">◴</span><span data-i18n="processing">正在处理</span>
-          <span class="nav-badge" style="display:none">00:00</span>
+        <button class="nav-item" data-action="system">
+          <span class="nav-ico">⚙</span><span data-i18n="system">系统管理</span>
         </button>
         <button class="nav-item" data-action="comfy">
           <span class="nav-ico">⬡</span><span data-i18n="openComfyUI">打开 ComfyUI</span>
-        </button>
-        <button class="nav-item" data-action="terminal">
-          <span class="nav-ico">▸</span><span data-i18n="terminal">终端</span>
-        </button>
-        <button class="nav-item" data-action="settings">
-          <span class="nav-ico">⚙</span><span data-i18n="settings">设置</span>
         </button>
       </nav>
       <div class="sidebar-foot">
@@ -54,14 +44,14 @@
       </div>
     </aside>
 
-    <!-- 主区：启动台 -->
+    <!-- 主区：启动台（未就绪 / 用户主动返回时显示；系统分区收在右侧面板） -->
     <main id="boot-view" class="main">
       <div class="workspace-head">
         <h1 id="workspace-title">你的工作空间</h1>
         <p id="workspace-sub" class="workspace-sub">后台正在忙，完成后可以操作</p>
       </div>
 
-      <!-- 进度卡 -->
+      <!-- 状态英雄卡（与系统面板内的服务卡同步渲染） -->
       <section id="progress-card" class="progress-card">
         <div class="progress-icon" id="progress-icon">F</div>
         <div class="progress-body">
@@ -69,6 +59,49 @@
           <div class="progress-desc" id="progress-desc">已连接你的模型与运行环境。</div>
           <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
         </div>
+      </section>
+
+      <div class="main-foot">
+        <div class="foot-right">
+          <button id="open-app-btn" class="btn primary">打开应用</button>
+          <button id="action-btn" class="btn ghost">正在处理...</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- 主区：应用视图（webview 承载创作工作台，状态跨系统面板保留） -->
+    <main id="webview-wrap" class="main app-view" style="display:none">
+      <div class="app-bar">
+        <button id="back-btn" class="btn ghost">返回启动台</button>
+      </div>
+      <div id="connection-card" class="connection-card" hidden>
+        <h2 data-i18n="waitingBackend">正在等待本地服务…</h2>
+        <p id="connection-message" role="status"></p>
+        <button id="reconnect-btn" class="btn" data-i18n="retry">重试</button>
+      </div>
+      <webview id="app-webview" partition="persist:aivideo"
+               style="flex:1; border:none"></webview>
+    </main>
+  </div>
+
+  <!-- 系统面板：可展开抽屉（服务状态/安装信息/终端/更新），应用视图上悬浮不离开工作台 -->
+  <aside id="system-panel" class="system-panel" aria-hidden="true" aria-label="系统管理">
+    <div class="system-panel-head">
+      <span class="system-panel-title" data-i18n="system">系统管理</span>
+      <div class="system-panel-actions">
+        <button id="panel-close-btn" class="term-btn" data-i18n="close">关闭</button>
+      </div>
+    </div>
+    <div class="system-panel-body">
+      <!-- 服务状态（与启动台英雄卡同步渲染） -->
+      <section id="panel-status" class="progress-card">
+        <div class="progress-icon" id="panel-status-icon">F</div>
+        <div class="progress-body">
+          <div class="progress-text" id="panel-status-text">正在安装环境与模型</div>
+          <div class="progress-desc" id="panel-status-desc">已连接你的模型与运行环境。</div>
+          <div class="progress-track"><div class="progress-bar" id="panel-status-bar"></div></div>
+        </div>
+        <span id="service-timer" class="service-timer" style="display:none">00:00</span>
       </section>
 
       <!-- 安装信息 -->
@@ -100,32 +133,13 @@
         <pre id="log-box" class="log-box"></pre>
       </section>
 
-      <div class="main-foot">
-        <div id="update-bar" class="update-bar" style="display:none">
-          <span id="update-text" class="update-text"></span>
-          <button id="update-btn" class="btn primary"></button>
-        </div>
-        <div class="foot-right">
-          <button id="open-app-btn" class="btn primary">打开应用</button>
-          <button id="action-btn" class="btn ghost">正在处理...</button>
-        </div>
+      <!-- 更新 -->
+      <div id="update-bar" class="update-bar" style="display:none">
+        <span id="update-text" class="update-text"></span>
+        <button id="update-btn" class="btn primary"></button>
       </div>
-    </main>
-
-    <!-- 主区：应用视图 -->
-    <main id="webview-wrap" class="main app-view" style="display:none">
-      <div class="app-bar">
-        <button id="back-btn" class="btn ghost">返回启动台</button>
-      </div>
-      <div id="connection-card" class="connection-card" hidden>
-        <h2 data-i18n="waitingBackend">正在等待本地服务…</h2>
-        <p id="connection-message" role="status"></p>
-        <button id="reconnect-btn" class="btn" data-i18n="retry">重试</button>
-      </div>
-      <webview id="app-webview" partition="persist:aivideo"
-               style="flex:1; border:none"></webview>
-    </main>
-  </div>
+    </div>
+  </aside>
 
   <script src="app.js"></script>
 </body>

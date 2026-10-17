@@ -1,9 +1,13 @@
 /**
- * 桌面壳 UI —— 对齐 FreeVideo 示意图：
- *  自定义标题栏（Logo / 中英切换 / 窗口按钮）
- *  侧栏：启动 / 安装 / 正在处理 / 打开 ComfyUI / 终端 / 设置 / 版本号
- *  主区：工作空间标题 → 进度卡 → 安装信息卡 → 终端面板
- *  ready 后：主区切换为 <webview> 加载本地应用
+ * 桌面壳 UI —— 面板化交互模型：
+ *  自定义标题栏（Logo / 系统管理开关 / 中英切换 / 窗口按钮）
+ *  侧栏（去重后三项）：工作台 / 系统管理 / 打开 ComfyUI
+ *  两个主区视图：
+ *    - boot-view（系统视图）：安装进度英雄卡 + 打开应用；系统分区收在右侧面板
+ *    - app-view（应用视图）：<webview> 全屏承载创作工作台，app-bar 可返回启动台
+ *  系统面板 #system-panel：右侧抽屉，含服务状态卡 / 安装信息 / 终端 / 更新；
+ *    boot 视图自动展开，app 视图默认收起、可悬浮展开——任何系统操作都不离开应用视图
+ *  ready 后默认进入应用视图；返回启动台不销毁 webview，路由记忆恢复
  * 中英 i18n：全局 t(key)
  */
 (function () {
@@ -16,15 +20,13 @@
       workspace: '你的工作空间',
       workspaceSub: '后台正在忙，完成后可以操作',
       workspaceSubReady: '工作空间已就绪',
-      start: '启动', install: '安装', processing: '正在处理',
-      openComfyUI: '打开 ComfyUI', terminal: '终端', settings: '设置',
+      workspaceNav: '工作台',
+      openComfyUI: '打开 ComfyUI', terminal: '终端', close: '关闭',
       starting: '正在启动', installing: '正在安装环境与模型',
-      connecting: '已连接你的模型与运行环境。',
       installInfo: '安装信息',
       enginePath: '引擎', comfyPath: 'ComfyUI', runtimePath: '运行目录',
       createShortcut: '创建桌面快捷方式', shortcutReady: '快捷方式已就绪',
       shortcutDone: '快捷方式已创建',
-      processingBtn: '正在处理...', pauseBtn: '暂停',
       copy: '复制', export: '导出报告', clear: '清空',
       terminalHint: '这里显示最近的输出；复制或导出可获取完整日志。',
       openApp: '打开应用', backToBoot: '返回启动台',
@@ -36,8 +38,8 @@
       updateNone: '已是最新版本', updateDownloading: '正在下载更新',
       updateReady: '更新已就绪，重启后生效', updateInstall: '重启并安装',
       updateDownload: '下载更新', updateError: '检查更新失败',
-      lang: '中文', version: '版本',
-      retry: '重试', stop: '停止',
+      lang: '中文',
+      retry: '重试',
       system: '系统管理', checkUpdate: '检查更新', waitingBackend: '正在等待本地服务…',
       disconnected: '连接暂不可用，正在自动重连。可重试或打开系统管理查看终端日志。',
       hardware: '检测 GPU', detecting: '检测中…',
@@ -47,15 +49,13 @@
       workspace: 'Your Workspace',
       workspaceSub: 'Working in the background. Ready soon.',
       workspaceSubReady: 'Workspace is ready',
-      start: 'Start', install: 'Install', processing: 'Processing',
-      openComfyUI: 'Open ComfyUI', terminal: 'Terminal', settings: 'Settings',
+      workspaceNav: 'Workspace',
+      openComfyUI: 'Open ComfyUI', terminal: 'Terminal', close: 'Close',
       starting: 'Starting', installing: 'Installing environment & models',
-      connecting: 'Models and runtime connected.',
       installInfo: 'Installation Info',
       enginePath: 'Engine', comfyPath: 'ComfyUI', runtimePath: 'Runtime',
       createShortcut: 'Create Desktop Shortcut', shortcutReady: 'Shortcut ready',
       shortcutDone: 'Shortcut created',
-      processingBtn: 'Processing...', pauseBtn: 'Pause',
       copy: 'Copy', export: 'Export', clear: 'Clear',
       terminalHint: 'Recent output shown here. Copy or export for the full log.',
       openApp: 'Open App', backToBoot: 'Back to Launcher',
@@ -67,8 +67,8 @@
       updateNone: 'Up to date', updateDownloading: 'Downloading update',
       updateReady: 'Update ready. Restart to apply.', updateInstall: 'Restart & Install',
       updateDownload: 'Download Update', updateError: 'Update check failed',
-      lang: 'EN', version: 'Version',
-      retry: 'Retry', stop: 'Stop',
+      lang: 'EN',
+      retry: 'Retry',
       system: 'System', checkUpdate: 'Check Updates', waitingBackend: 'Waiting for local service…',
       disconnected: 'Connection unavailable. Reconnecting automatically. Retry or open System to inspect logs.',
       hardware: 'Detect GPU', detecting: 'Detecting…',
@@ -81,8 +81,8 @@
   const state = {
     bootState: 'preparing',   // preparing|python|torch|deps|models|starting|ready|error
     progress: 0.04,
-    seconds: 0,
-    view: 'boot',             // boot | app
+    view: 'boot',             // boot（系统视图） | app（应用视图）
+    panelOpen: false,         // 系统面板抽屉是否展开
     logs: [],
     shortcutDone: false,
     update: null,             // { phase, info, percent }
@@ -105,11 +105,6 @@
     navItems: document.querySelectorAll('.nav-item'),
     workspaceTitle: $('#workspace-title'),
     workspaceSub: $('#workspace-sub'),
-    progressCard: $('#progress-card'),
-    progressIcon: $('#progress-icon'),
-    progressText: $('#progress-text'),
-    progressDesc: $('#progress-desc'),
-    progressBar: $('#progress-bar'),
     installInfo: $('#install-info'),
     enginePath: $('#engine-path'), comfyPath: $('#comfy-path'), runtimePath: $('#runtime-path'),
     shortcutBtn: $('#shortcut-btn'),
@@ -128,6 +123,9 @@
     backBtn: $('#back-btn'),
     bootView: $('#boot-view'),
     systemBtn: $('#system-btn'),
+    systemPanel: $('#system-panel'),
+    panelCloseBtn: $('#panel-close-btn'),
+    serviceTimer: $('#service-timer'),
     connectionCard: $('#connection-card'),
     connectionMessage: $('#connection-message'),
   }
@@ -138,8 +136,6 @@
     document.title = t('appName')
     el.langBtn.textContent = t('lang')
     el.workspaceTitle.textContent = t('workspace')
-    el.workspaceSub.textContent = state.bootState === 'ready' ? t('workspaceSubReady') : t('workspaceSub')
-    el.progressDesc.textContent = t('connecting')
     el.shortcutBtn.textContent = state.shortcutDone ? '✓ ' + t('shortcutReady') : t('createShortcut')
     el.logCopy.textContent = t('copy')
     el.logExport.textContent = t('export')
@@ -162,24 +158,29 @@
     ready: 'statusReady', error: 'statusError',
   }
 
+  /** 双卡同步：boot 视图英雄卡 + 系统面板服务卡渲染同一份状态 */
   function renderProgress() {
     const s = state.bootState
-    el.progressText.textContent = t(STATE_TEXT[s] || 'statusPreparing')
-    el.progressDesc.textContent = state.online ? t('workspaceSubReady') : t('disconnected')
-    el.openAppBtn.disabled = !state.online
-    el.progressIcon.textContent = s === 'ready' ? '✓' : (s === 'error' ? '⚠' : 'F')
-    el.progressCard.classList.toggle('done', s === 'ready')
-    el.progressCard.classList.toggle('error', s === 'error')
-    el.progressBar.style.width = Math.round(state.progress * 100) + '%'
     const stateText = t(STATE_TEXT[s] || 'statusPreparing')
+    for (const card of document.querySelectorAll('.progress-card')) {
+      const icon = card.querySelector('.progress-icon')
+      const text = card.querySelector('.progress-text')
+      const desc = card.querySelector('.progress-desc')
+      const bar = card.querySelector('.progress-bar')
+      if (icon) icon.textContent = s === 'ready' ? '✓' : (s === 'error' ? '⚠' : 'F')
+      if (text) text.textContent = stateText
+      if (desc) desc.textContent = state.online ? t('workspaceSubReady') : t('disconnected')
+      if (bar) bar.style.width = Math.round(state.progress * 100) + '%'
+      card.classList.toggle('done', s === 'ready')
+      card.classList.toggle('error', s === 'error')
+    }
+    el.openAppBtn.disabled = !state.online
     el.actionBtn.textContent = s === 'error' ? t('retry') : stateText
     el.actionBtn.classList.toggle('busy', s !== 'ready' && s !== 'error')
     el.workspaceSub.textContent = s === 'ready' ? t('workspaceSubReady') : t('workspaceSub')
-    if (s === 'ready') {
-      el.openAppBtn.classList.add('pulse')
-    } else {
-      el.openAppBtn.classList.remove('pulse')
-    }
+    el.openAppBtn.classList.toggle('pulse', s === 'ready')
+    // 服务计时器：启动/重连期间显示已耗时，就绪后隐藏
+    el.serviceTimer.style.display = s === 'ready' ? 'none' : ''
   }
 
   function renderTerminal() {
@@ -215,12 +216,24 @@
     }
   }
 
+  /** 侧栏高亮：应用视图亮「工作台」，面板展开亮「系统管理」 */
+  function renderNav() {
+    el.navItems.forEach((n) => {
+      const action = n.getAttribute('data-action')
+      const active = (action === 'workspace' && state.view === 'app') ||
+        (action === 'system' && state.panelOpen)
+      n.classList.toggle('active', active)
+    })
+  }
+
   function setView(v) {
+    const changed = state.view !== v
     state.view = v
     el.bootView.style.display = v === 'boot' ? '' : 'none'
     el.webviewWrap.style.display = v === 'app' ? '' : 'none'
     document.body.classList.toggle('workspace-open', v === 'app')
-    el.systemBtn.setAttribute('aria-expanded', String(v === 'boot'))
+    // 视图切换时同步面板：boot 即系统视图（自动展开）；app 默认收起（可再手动展开）
+    if (changed) setPanel(v === 'boot')
     if (v === 'app' && state.online && (state.loadedOrigin !== state.appUrl || state.loadFailed)) {
       // Keep the guest alive while system management is open; never reset a healthy guest.
       const route = /^\/(?!\/)[^\\]*$/.test(state.route) ? state.route : '/'
@@ -228,6 +241,17 @@
       state.loadedOrigin = state.appUrl
       state.loadFailed = false
     }
+    renderNav()
+  }
+
+  /** 系统面板抽屉开关：任何系统操作都不切换主视图（应用视图上悬浮） */
+  function setPanel(open) {
+    state.panelOpen = open
+    el.systemPanel.classList.toggle('open', open)
+    el.systemPanel.setAttribute('aria-hidden', String(!open))
+    el.systemBtn.setAttribute('aria-expanded', String(open))
+    el.systemBtn.classList.toggle('active', open)
+    renderNav()
   }
 
   function showConnection(show) {
@@ -243,6 +267,7 @@
     state.progress = 1
     renderProgress()
     showConnection(false)
+    // 默认进入创作工作台：首次就绪或从断线恢复且用户正停留在应用视图时
     if (!state.loadedOrigin || (!wasOnline && state.view === 'app')) setView('app')
   }
 
@@ -260,7 +285,6 @@
     }
   }
 
-  el.systemBtn.addEventListener('click', () => setView(state.view === 'app' ? 'boot' : (state.loadedOrigin ? 'app' : 'boot')))
   $('#retry-backend-btn').addEventListener('click', retryBackend)
   $('#reconnect-btn').addEventListener('click', retryBackend)
   $('#check-update-btn').addEventListener('click', () => window.desk.checkUpdate())
@@ -311,16 +335,21 @@
   })
   el.winClose.addEventListener('click', () => window.desk.close())
 
-  // ---------------- 事件：侧栏 ----------------
+  // ---------------- 事件：系统面板（不切换主视图） ----------------
+  el.systemBtn.addEventListener('click', () => setPanel(!state.panelOpen))
+  el.panelCloseBtn.addEventListener('click', () => setPanel(false))
+
+  // ---------------- 事件：侧栏（去重后三项） ----------------
   el.navItems.forEach((n) => {
     n.addEventListener('click', () => {
       const action = n.getAttribute('data-action')
-      if (action === 'start') { setView('boot'); el.progressCard.scrollIntoView({ behavior: 'smooth' }) }
-      if (action === 'install') { setView('boot'); el.installInfo.scrollIntoView({ behavior: 'smooth' }) }
-      if (action === 'processing') { setView('boot') }
-      if (action === 'terminal') { setView('boot'); el.terminal.scrollIntoView({ behavior: 'smooth' }) }
+      if (action === 'workspace') {
+        // 离线时没有工作台可回：回系统视图展示进度（面板随视图自动展开）
+        if (state.online) setView('app')
+        else setView('boot')
+      }
+      if (action === 'system') setPanel(!state.panelOpen)
       if (action === 'comfy') window.desk.openComfyUI()
-      if (action === 'settings') { setView('boot'); el.updateBar.scrollIntoView({ behavior: 'smooth' }) }
     })
   })
 
@@ -335,7 +364,7 @@
     }
   })
   el.openAppBtn.addEventListener('click', () => {
-    if (state.bootState === 'ready') setView('app')
+    if (state.online && state.bootState === 'ready') setView('app')
   })
   el.actionBtn.addEventListener('click', () => {
     if (state.bootState === 'error') retryBackend()
@@ -392,12 +421,11 @@
   })
   window.desk.on('backend:port', ({ port }) => { state.appUrl = `http://127.0.0.1:${port}` })
   window.desk.on('backend:tick', ({ seconds }) => {
-    // 「正在处理」计时
-    const badge = document.querySelector('.nav-item[data-action="processing"] .nav-badge')
-    if (badge) {
-      badge.style.display = state.bootState === 'ready' ? 'none' : ''
-      badge.textContent = String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0')
-    }
+    // 服务计时器（启动/重连期间的已耗时，MM:SS）
+    const total = Number(seconds) || 0
+    el.serviceTimer.textContent =
+      String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0')
+    el.serviceTimer.style.display = state.bootState === 'ready' ? 'none' : ''
   })
 
   // ---------------- 更新事件 ----------------
@@ -414,6 +442,8 @@
   // ---------------- 启动 ----------------
   async function boot() {
     applyStaticI18n()
+    // 初始即系统视图：面板自动展开（安装进度/终端/安装信息直接可见）
+    setPanel(true)
     try {
       state.paths = await window.desk.paths()
       if (state.paths) {
