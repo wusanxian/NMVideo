@@ -1,6 +1,7 @@
 """分镜工作台数据层：Project / Scene / Shot 三层 + 版本 + 时间线 + 导出记录
 
-所有写操作走 db._lock 串行化；读操作直接查询（SQLite 连接共享）。
+第二阶段 2A：不再直接触摸 db._conn/db._lock，全部经 db 统一接口
+（fetch_one/fetch_all/execute/transaction）；多步业务走同一事务。
 """
 import json
 import re
@@ -20,20 +21,15 @@ def _new_id(prefix: str) -> str:
 
 
 def _row(sql: str, args: tuple = ()) -> Optional[dict]:
-    cur = db._conn.execute(sql, args)
-    r = cur.fetchone()
-    return dict(r) if r else None
+    return db.fetch_one(sql, args)
 
 
 def _rows(sql: str, args: tuple = ()) -> list:
-    cur = db._conn.execute(sql, args)
-    return [dict(r) for r in cur.fetchall()]
+    return db.fetch_all(sql, args)
 
 
 def _write(sql: str, args: tuple = ()):
-    with db._lock:
-        db._conn.execute(sql, args)
-        db._conn.commit()
+    db.execute(sql, args)
 
 
 # =====================================================================
@@ -63,12 +59,12 @@ GENERATABLE = ("draft", "rework", "approved")
 def create_project(name: str, description: str = "") -> dict:
     pid = _new_id("prj")
     now = _utcnow()
-    _write(
-        "INSERT INTO projects (id, name, description, created_at, updated_at)"
-        " VALUES (?,?,?,?,?)",
+    return db.insert_and_get(
+        "projects",
+        ["id", "name", "description", "created_at", "updated_at"],
         (pid, name.strip() or "未命名项目", description.strip(), now, now),
+        pid,
     )
-    return get_project(pid)
 
 
 def list_projects() -> list:
@@ -121,14 +117,16 @@ def create_scene(project_id: str, title: str, description: str = "",
         "SELECT COALESCE(MAX(order_index), -1) AS m FROM scenes WHERE project_id = ?",
         (project_id,),
     )["m"]
-    _write(
-        "INSERT INTO scenes (id, project_id, title, description, environment,"
-        " lighting, order_index, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    scene = db.insert_and_get(
+        "scenes",
+        ["id", "project_id", "title", "description", "environment",
+         "lighting", "order_index", "created_at", "updated_at"],
         (sid, project_id, title.strip() or "新场景", description, environment,
          lighting, max_order + 1, now, now),
+        sid,
     )
     _touch_project(project_id)
-    return get_scene(sid)
+    return scene
 
 
 def get_scene(scene_id: str) -> Optional[dict]:
@@ -185,37 +183,25 @@ def create_shot(scene_id: str, **fields) -> dict:
         "SELECT COALESCE(MAX(order_index), -1) AS m FROM shots WHERE scene_id = ?",
         (scene_id,),
     )["m"]
-    row = {
-        "id": sid,
-        "scene_id": scene_id,
-        "title": fields.get("title", ""),
-        "dialogue": fields.get("dialogue", ""),
-        "shot_size": fields.get("shot_size", "中景"),
-        "camera_movement": fields.get("camera_movement", "固定"),
-        "duration_s": float(fields.get("duration_s", 3)),
-        "prompt": fields.get("prompt", ""),
-        "negative_prompt": fields.get("negative_prompt", ""),
-        "reference_image": fields.get("reference_image", ""),
-        "character_ids": json.dumps(fields.get("character_ids") or []),
-        "mode": fields.get("mode", "t2v"),
-        "continue_from": fields.get("continue_from", ""),
-        "order_index": fields.get("order_index", max_order + 1),
-        "created_at": now,
-        "updated_at": now,
-    }
-    _write(
-        "INSERT INTO shots (id, scene_id, title, dialogue, shot_size, camera_movement,"
-        " duration_s, prompt, negative_prompt, reference_image, character_ids, mode,"
-        " continue_from, order_index, created_at, updated_at)"
-        " VALUES (:id,:scene_id,:title,:dialogue,:shot_size,:camera_movement,"
-        ":duration_s,:prompt,:negative_prompt,:reference_image,:character_ids,:mode,"
-        ":continue_from,:order_index,:created_at,:updated_at)",
-        row,
+    shot = db.insert_and_get(
+        "shots",
+        ["id", "scene_id", "title", "dialogue", "shot_size", "camera_movement",
+         "duration_s", "prompt", "negative_prompt", "reference_image",
+         "character_ids", "mode", "continue_from", "order_index",
+         "created_at", "updated_at"],
+        (sid, scene_id, fields.get("title", ""),
+         fields.get("dialogue", ""), fields.get("shot_size", "中景"),
+         fields.get("camera_movement", "固定"), float(fields.get("duration_s", 3)),
+         fields.get("prompt", ""), fields.get("negative_prompt", ""),
+         fields.get("reference_image", ""), json.dumps(fields.get("character_ids") or []),
+         fields.get("mode", "t2v"), fields.get("continue_from", ""),
+         fields.get("order_index", max_order + 1), now, now),
+        sid,
     )
     sc = get_scene(scene_id)
     if sc:
         _touch_project(sc["project_id"])
-    return get_shot(sid)
+    return shot
 
 
 def get_shot(shot_id: str) -> Optional[dict]:
@@ -332,14 +318,14 @@ def log_review(shot_id: str, project_id: str, action: str, from_status: str = ""
                to_status: str = "", version_id: str = "", comment: str = "",
                checks: list = None) -> dict:
     rid = _new_id("rvh")
-    _write(
-        "INSERT INTO review_history (id, shot_id, project_id, action, from_status,"
-        " to_status, version_id, comment, checks, created_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+    return db.insert_and_get(
+        "review_history",
+        ["id", "shot_id", "project_id", "action", "from_status", "to_status",
+         "version_id", "comment", "checks", "created_at"],
         (rid, shot_id, project_id, action, from_status, to_status, version_id,
          comment, json.dumps(checks or [], ensure_ascii=False), _utcnow()),
+        rid,
     )
-    return _row("SELECT * FROM review_history WHERE id = ?", (rid,))
 
 
 def list_review_history(project_id: str, limit: int = 200) -> list:
@@ -374,16 +360,17 @@ def create_version(shot_id: str, job: dict, video_url: str = "",
                   "guidance", "seed", "preset", "preview", "hardware")
         if job.get(k) is not None
     }
-    _write(
-        "INSERT INTO shot_versions (id, shot_id, job_id, version_no, prompt,"
-        " negative_prompt, engine, params, video_url, poster_url, seed,"
-        " status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    return db.insert_and_get(
+        "shot_versions",
+        ["id", "shot_id", "job_id", "version_no", "prompt", "negative_prompt",
+         "engine", "params", "video_url", "poster_url", "seed", "status",
+         "created_at"],
         (vid, shot_id, job["id"], max_no + 1, job.get("prompt", ""),
          job.get("negative_prompt", "") or "", job.get("engine", ""),
          json.dumps(params, ensure_ascii=False), video_url, poster_url,
          job.get("seed", -1), "candidate", _utcnow()),
+        vid,
     )
-    return _row("SELECT * FROM shot_versions WHERE id = ?", (vid,))
 
 
 def list_versions(shot_id: str) -> list:
@@ -577,57 +564,56 @@ def import_script(project_id: str, text: str, mode: str = "rebuild") -> dict:
 
     now = _utcnow()
     created_scenes = []
-    with db._lock:
-        conn = db._conn
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            if mode == "rebuild":
-                conn.execute(
-                    "DELETE FROM timeline_items WHERE project_id = ?", (project_id,)
-                )
-                conn.execute("DELETE FROM scenes WHERE project_id = ?", (project_id,))
-            elif mode == "append":
-                # 追加模式：标题相同的场景跳过，保留其镜头的制作成果
-                existing_titles = {
-                    r["title"].strip()
-                    for r in conn.execute(
-                        "SELECT title FROM scenes WHERE project_id = ?", (project_id,)
-                    ).fetchall()
-                }
-                parsed = [ps for ps in parsed if ps["title"].strip() not in existing_titles]
+    # 单事务：场景/分镜重建 + 剧本文本更新一起提交或整体回滚
+    #（旧代码把 update_project(script=text) 放在事务外，重建失败也会
+    # 留下半升级的剧本文本——审查项 S3）
+    with db.transaction() as conn:
+        if mode == "rebuild":
+            conn.execute(
+                "DELETE FROM timeline_items WHERE project_id = ?", (project_id,)
+            )
+            conn.execute("DELETE FROM scenes WHERE project_id = ?", (project_id,))
+        elif mode == "append":
+            # 追加模式：标题相同的场景跳过，保留其镜头的制作成果
+            existing_titles = {
+                r["title"].strip()
+                for r in conn.execute(
+                    "SELECT title FROM scenes WHERE project_id = ?", (project_id,)
+                ).fetchall()
+            }
+            parsed = [ps for ps in parsed if ps["title"].strip() not in existing_titles]
 
-            scene_base = _row(
-                "SELECT COALESCE(MAX(order_index), -1) AS m"
-                " FROM scenes WHERE project_id = ?", (project_id,),
-            )["m"]
-            for i, ps in enumerate(parsed):
-                sid = _new_id("scn")
+        scene_base = conn.execute(
+            "SELECT COALESCE(MAX(order_index), -1) AS m"
+            " FROM scenes WHERE project_id = ?", (project_id,),
+        ).fetchone()["m"]
+        for i, ps in enumerate(parsed):
+            sid = _new_id("scn")
+            conn.execute(
+                "INSERT INTO scenes (id, project_id, title, description,"
+                " environment, lighting, order_index, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (sid, project_id, ps["title"].strip() or "新场景", ps["description"],
+                 "", "", scene_base + 1 + i, now, now),
+            )
+            for j, ps_shot in enumerate(ps["shots"]):
                 conn.execute(
-                    "INSERT INTO scenes (id, project_id, title, description,"
-                    " environment, lighting, order_index, created_at, updated_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?)",
-                    (sid, project_id, ps["title"].strip() or "新场景", ps["description"],
-                     "", "", scene_base + 1 + i, now, now),
+                    "INSERT INTO shots (id, scene_id, title, dialogue, shot_size,"
+                    " camera_movement, duration_s, prompt, negative_prompt,"
+                    " reference_image, character_ids, mode, continue_from,"
+                    " order_index, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (_new_id("sht"), sid, ps_shot["title"], ps_shot["dialogue"],
+                     ps_shot["shot_size"], ps_shot["camera_movement"],
+                     ps_shot["duration_s"], ps_shot["prompt"], "", "",
+                     "[]", "t2v", "", j, now, now),
                 )
-                for j, ps_shot in enumerate(ps["shots"]):
-                    conn.execute(
-                        "INSERT INTO shots (id, scene_id, title, dialogue, shot_size,"
-                        " camera_movement, duration_s, prompt, negative_prompt,"
-                        " reference_image, character_ids, mode, continue_from,"
-                        " order_index, created_at, updated_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (_new_id("sht"), sid, ps_shot["title"], ps_shot["dialogue"],
-                         ps_shot["shot_size"], ps_shot["camera_movement"],
-                         ps_shot["duration_s"], ps_shot["prompt"], "", "",
-                         "[]", "t2v", "", j, now, now),
-                    )
-                created_scenes.append(sid)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+            created_scenes.append(sid)
+        conn.execute(
+            "UPDATE projects SET script = ?, updated_at = ? WHERE id = ?",
+            (text, now, project_id),
+        )
 
-    update_project(project_id, script=text)
     scenes = [get_scene(sid) for sid in created_scenes]
     n_shots = sum(
         _row("SELECT COUNT(*) AS c FROM shots WHERE scene_id = ?", (sid,))["c"]
@@ -740,11 +726,12 @@ def remove_timeline_item(item_id: str) -> None:
 # =====================================================================
 def create_export(project_id: str) -> dict:
     eid = _new_id("exp")
-    _write(
-        "INSERT INTO exports (id, project_id, status, created_at) VALUES (?,?,?,?)",
+    return db.insert_and_get(
+        "exports",
+        ["id", "project_id", "status", "created_at"],
         (eid, project_id, "pending", _utcnow()),
+        eid,
     )
-    return _row("SELECT * FROM exports WHERE id = ?", (eid,))
 
 
 def update_export(export_id: str, **fields) -> None:

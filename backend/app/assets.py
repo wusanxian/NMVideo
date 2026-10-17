@@ -5,6 +5,8 @@
 
 角色与分镜多对多关联：shots.character_ids 存 JSON id 列表。
 生成时由路由层把角色外貌/服装拼进提示词，保证同一角色跨镜头外观一致。
+
+第二阶段 2A：读/写经 db 统一接口，不再直接触摸 db._conn/db._lock。
 """
 import json
 import uuid
@@ -23,20 +25,15 @@ def _new_id(prefix: str) -> str:
 
 
 def _row(sql: str, args: tuple = ()) -> Optional[dict]:
-    cur = db._conn.execute(sql, args)
-    r = cur.fetchone()
-    return dict(r) if r else None
+    return db.fetch_one(sql, args)
 
 
 def _rows(sql: str, args: tuple = ()) -> list:
-    cur = db._conn.execute(sql, args)
-    return [dict(r) for r in cur.fetchall()]
+    return db.fetch_all(sql, args)
 
 
 def _write(sql: str, args: tuple = ()):
-    with db._lock:
-        db._conn.execute(sql, args)
-        db._conn.commit()
+    db.execute(sql, args)
 
 
 ROLE_OPTIONS = ("主角", "配角", "群演", "旁白", "其他")
@@ -75,16 +72,11 @@ def create_character(project_id: str, **fields) -> dict:
         "created_at": now,
         "updated_at": now,
     }
-    _write(
-        "INSERT INTO characters (id, project_id, name, role, appearance, outfit,"
-        " voice_id, voice_name, lora, expressions, reference_images, notes,"
-        " created_at, updated_at)"
-        " VALUES (:id,:project_id,:name,:role,:appearance,:outfit,"
-        ":voice_id,:voice_name,:lora,:expressions,:reference_images,:notes,"
-        ":created_at,:updated_at)",
-        row,
+    # 插入与读回同一事务：创建成功必得实际记录（2A）
+    character = db.insert_and_get(
+        "characters", list(row.keys()), tuple(row.values()), cid
     )
-    return get_character(cid)
+    return character
 
 
 def get_character(character_id: str) -> Optional[dict]:

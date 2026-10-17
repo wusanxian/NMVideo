@@ -3,6 +3,8 @@
 - shot_voices：镜头对白配音（TTS 产物，属于「对白轨」）
 - audio_tracks：音乐 / 音效素材片段（可多条，带起止与音量）
 - subtitle_tracks：字幕片段（可由镜头对白自动生成，可编辑）
+
+第二阶段 2A：读/写经 db 统一接口，不再直接触摸 db._conn/db._lock。
 """
 import uuid
 from datetime import datetime, timezone
@@ -20,20 +22,15 @@ def _new_id(prefix: str) -> str:
 
 
 def _row(sql: str, args: tuple = ()) -> Optional[dict]:
-    cur = db._conn.execute(sql, args)
-    r = cur.fetchone()
-    return dict(r) if r else None
+    return db.fetch_one(sql, args)
 
 
 def _rows(sql: str, args: tuple = ()) -> list:
-    cur = db._conn.execute(sql, args)
-    return [dict(r) for r in cur.fetchall()]
+    return db.fetch_all(sql, args)
 
 
 def _write(sql: str, args: tuple = ()):
-    with db._lock:
-        db._conn.execute(sql, args)
-        db._conn.commit()
+    db.execute(sql, args)
 
 
 # =====================================================================
@@ -41,10 +38,10 @@ def _write(sql: str, args: tuple = ()):
 # =====================================================================
 def create_voice(shot_id: str, **fields) -> dict:
     vid = _new_id("voc")
-    _write(
-        "INSERT INTO shot_voices (id, shot_id, character_id, character_name, voice,"
-        " text, audio_url, duration_s, engine, status, created_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    return db.insert_and_get(
+        "shot_voices",
+        ["id", "shot_id", "character_id", "character_name", "voice", "text",
+         "audio_url", "duration_s", "engine", "status", "created_at"],
         (
             vid, shot_id,
             fields.get("character_id", ""), fields.get("character_name", ""),
@@ -52,8 +49,8 @@ def create_voice(shot_id: str, **fields) -> dict:
             fields.get("audio_url", ""), float(fields.get("duration_s") or 0),
             fields.get("engine", ""), fields.get("status", "done"), _utcnow(),
         ),
+        vid,
     )
-    return _row("SELECT * FROM shot_voices WHERE id = ?", (vid,))
 
 
 def list_voices_of_shot(shot_id: str) -> list:
@@ -85,10 +82,10 @@ def create_audio_track(project_id: str, **fields) -> dict:
         "SELECT COALESCE(MAX(position), -1) AS m FROM audio_tracks WHERE project_id = ?",
         (project_id,),
     )["m"]
-    _write(
-        "INSERT INTO audio_tracks (id, project_id, kind, title, audio_url, start_s,"
-        " trim_in_s, trim_out_s, volume, position, created_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    return db.insert_and_get(
+        "audio_tracks",
+        ["id", "project_id", "kind", "title", "audio_url", "start_s",
+         "trim_in_s", "trim_out_s", "volume", "position", "created_at"],
         (
             aid, project_id, fields.get("kind", "music"), fields.get("title", ""),
             fields.get("audio_url", ""), float(fields.get("start_s") or 0),
@@ -96,8 +93,8 @@ def create_audio_track(project_id: str, **fields) -> dict:
             float(fields.get("volume", 0.8)), fields.get("position", max_pos + 1),
             _utcnow(),
         ),
+        aid,
     )
-    return _row("SELECT * FROM audio_tracks WHERE id = ?", (aid,))
 
 
 def list_audio_tracks(project_id: str, kind: Optional[str] = None) -> list:
@@ -142,16 +139,17 @@ def create_subtitle(project_id: str, **fields) -> dict:
         "SELECT COALESCE(MAX(position), -1) AS m FROM subtitle_tracks WHERE project_id = ?",
         (project_id,),
     )["m"]
-    _write(
-        "INSERT INTO subtitle_tracks (id, project_id, shot_id, text, start_s, end_s,"
-        " position, created_at) VALUES (?,?,?,?,?,?,?,?)",
+    return db.insert_and_get(
+        "subtitle_tracks",
+        ["id", "project_id", "shot_id", "text", "start_s", "end_s", "position",
+         "created_at"],
         (
             sid, project_id, fields.get("shot_id", ""), fields.get("text", ""),
             float(fields.get("start_s") or 0), float(fields.get("end_s") or 0),
             fields.get("position", max_pos + 1), _utcnow(),
         ),
+        sid,
     )
-    return _row("SELECT * FROM subtitle_tracks WHERE id = ?", (sid,))
 
 
 def list_subtitles(project_id: str) -> list:

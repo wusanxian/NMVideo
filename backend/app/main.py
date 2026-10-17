@@ -3,10 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import hw_probe
+from .db import DatabaseBusyError
 from .queue_manager import job_queue
 from .quality import list_presets
 from .routers import assets as assets_router
@@ -25,6 +26,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AI 视频工坊", version="0.2.0", lifespan=lifespan)
+
+# 数据库忙（外部写者竞争）：可理解、可重试的 503，不无限重试、不重放写请求
+@app.exception_handler(DatabaseBusyError)
+async def _db_busy_handler(_request, exc: DatabaseBusyError):
+    return JSONResponse(
+        status_code=503,
+        headers={"Retry-After": "2"},
+        content={"detail": str(exc)},
+    )
 
 # 开发模式（vite dev server 5173）跨源
 app.add_middleware(
