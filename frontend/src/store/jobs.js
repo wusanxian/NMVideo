@@ -34,6 +34,10 @@ export const useJobsStore = defineStore('jobs', {
       await api.cancelJob(id)
       await this.fetch()
     },
+    async retry(id) {
+      await api.retryJob(id)
+      await this.fetch()
+    },
     async remove(id) {
       await api.deleteJob(id)
       await this.fetch()

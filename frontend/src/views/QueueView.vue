@@ -34,6 +34,8 @@
       </div>
       <div class="job-actions">
         <button v-if="job.status === 'pending' || job.status === 'running'" class="btn" @click="store.cancel(job.id)">取消</button>
+        <button v-if="job.status === 'needs_attention'" class="btn" @click="store.retry(job.id)">重试</button>
+        <button v-if="job.status === 'needs_attention'" class="btn" @click="store.cancel(job.id)">取消</button>
         <button class="btn btn-danger" @click="store.remove(job.id)">删除</button>
       </div>
     </div>
@@ -54,6 +56,7 @@ const statusText = {
   done: '已完成',
   failed: '失败',
   cancelled: '已取消',
+  needs_attention: '待核查',
 }
 
 function engineName(id) {

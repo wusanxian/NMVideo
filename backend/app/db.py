@@ -520,14 +520,15 @@ class Database:
         return dict(row) if row else None
 
     def list_jobs(self, limit: int = 100, status: Optional[str] = None,
-                  order: str = "desc") -> list:
+                  order: str = "desc", offset: int = 0) -> list:
         sql = "SELECT * FROM jobs"
         args: list = []
         if status:
             sql += " WHERE status = ?"
             args.append(status)
-        sql += f" ORDER BY created_at {'ASC' if order == 'asc' else 'DESC'} LIMIT ?"
-        args.append(limit)
+        # HF-04：offset 支持分页（重启恢复 >1000 条不再截断丢任务）
+        sql += f" ORDER BY created_at {'ASC' if order == 'asc' else 'DESC'} LIMIT ? OFFSET ?"
+        args += [limit, offset]
         with self._lock:
             cur = self._conn.execute(sql, tuple(args))
             return [dict(r) for r in cur.fetchall()]

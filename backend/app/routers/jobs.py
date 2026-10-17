@@ -85,6 +85,34 @@ def cancel_job(job_id: str):
     return {"ok": True}
 
 
+@router.post("/{job_id}/retry")
+async def retry_job(job_id: str):
+    """断线待核查（needs_attention）任务的手动重试：重新入队走 resume。
+
+    仅 needs_attention 可重试——该状态的任务从未被 worker 执行过
+    （HF-04：ComfyUI 暂不可达时重启恢复放入待核查），重新入队安全；
+    其他状态的重试语义未定义（要重来请取消后重新生成）。
+    ComfyUI 仍不可达时会以明确错误失败，可稍后再次重试。
+    """
+    job = db_module.db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job["status"] != "needs_attention":
+        raise HTTPException(
+            status_code=409,
+            detail=f"仅「待核查」状态的任务可重试（当前: {job['status']}）",
+        )
+    db_module.db.update_job(
+        job_id, status="running", stage="重试：恢复等待（手动）",
+        progress=0.0, error="",
+    )
+    await job_queue.enqueue(job_id)
+    shot_id = job.get("shot_id") or ""
+    if shot_id and sb.get_shot(shot_id):
+        sb.set_shot_status(shot_id, "generating", review_stage="generation")
+    return db_module.db.get_job(job_id)
+
+
 @router.delete("/{job_id}")
 def delete_job(job_id: str):
     job = db_module.db.get_job(job_id)

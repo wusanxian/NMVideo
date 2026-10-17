@@ -103,6 +103,12 @@ class ComfyUIClient:
         return prompt_id
 
     def interrupt(self) -> None:
+        """请求 ComfyUI 全局中断当前执行。
+
+        注意（HF-06）：这会中断 ComfyUI 上**所有**客户端正在执行的任务，
+        共享服务器时误伤风险极高。任务取消路径（_wait_ws/_wait_poll）已
+        不再调用它；仅保留给管理用途，默认不应触发。
+        """
         try:
             requests.post(f"{self.base_url}/interrupt", timeout=5)
         except Exception:
@@ -192,8 +198,11 @@ class ComfyUIClient:
         with ws:
             while True:
                 if is_cancelled and is_cancelled():
-                    self.interrupt()
-                    raise ComfyUICancelled("已取消")
+                    # HF-06：/interrupt 是 ComfyUI **全局**中断——共享服务器
+                    # 时会误伤其他客户端正在跑的任务。本服务不默认全局打断：
+                    # 本地标记取消即可，远端任务可能仍在执行（其产物由
+                    # ComfyUI 侧自行清理，或用户在 ComfyUI 界面手动处理）。
+                    raise ComfyUICancelled("已取消（远端任务可能仍在执行）")
                 if time.time() > deadline:
                     raise ComfyUIError("等待超时")
                 # 完成检测不依赖消息：任务可能在 WS 连接建立前就已完成、或推送丢失。
@@ -238,8 +247,9 @@ class ComfyUIClient:
         waited = 0.0
         while time.time() <= deadline:
             if is_cancelled and is_cancelled():
-                self.interrupt()
-                raise ComfyUICancelled("已取消")
+                # HF-06：同 _wait_ws——不调全局 /interrupt，避免误伤共享
+                # ComfyUI 上其他客户端的任务；仅本地标记取消
+                raise ComfyUICancelled("已取消（远端任务可能仍在执行）")
             entry = self._completed_entry(prompt_id)
             if entry:
                 return entry
@@ -267,29 +277,37 @@ class ComfyUIClient:
         return r.json()
 
     def get_queue(self) -> dict:
+        # 与 get_history 一致显式查状态码（不依赖 raise_for_status）：
+        # 非 200 抛 ComfyUIError，probe 据此判 temporarily_unavailable
+        # （HF-04：服务端错误 ≠ 任务不存在）
         r = requests.get(f"{self.base_url}/queue", timeout=8)
-        r.raise_for_status()
+        if r.status_code != 200:
+            raise ComfyUIError(f"queue 接口状态码 {r.status_code}: {r.text[:200]}")
         return r.json()
 
     def probe(self, prompt_id: str) -> str:
-        """查询任务在 ComfyUI 侧的状态：done / running / queued / error / lost。
+        """查询任务在 ComfyUI 侧的状态。
 
-        重启恢复用（2B）：done→可直接拿产物；running/queued→继续等；
-        error→ComfyUI 侧已失败；lost→history 与队列都没有。
+        done / running / queued / error / lost / temporarily_unavailable。
+
+        HF-04：网络异常（连不上/超时/5xx）返回 temporarily_unavailable——
+        ComfyUI 临时离线不代表任务已不存在，恢复侧据此进入"待核查"，
+        不重新提交、不过早确认失败；只有 history 与队列都明确应答
+        "没有这个任务"才判 lost。
         """
-        if self._completed_entry(prompt_id):
-            return "done"
         try:
+            if self._completed_entry(prompt_id):
+                return "done"
             hist = self.get_history(prompt_id)
             raw = (hist or {}).get(prompt_id)
             if raw and (raw.get("status") or {}).get("status_str") == "error":
                 return "error"
         except Exception:
-            return "lost"
+            return "temporarily_unavailable"
         try:
             q = self.get_queue()
         except Exception:
-            return "lost"
+            return "temporarily_unavailable"
         for item in (q.get("queue_running") or []):
             if item and len(item) > 1 and item[1] == prompt_id:
                 return "running"

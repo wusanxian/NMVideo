@@ -8,7 +8,14 @@
 - prompt_id 持久化到 job；重启后按 prompt_id 探测决定 续/完成/失败
 - 入队即固化工作流快照；执行优先读快照（排队后不读可变模板）
 - 取消走 GenerationCancelled（job 标 cancelled、镜头回 draft），
-  interrupt 仅在本任务取消时触发
+  **不调用全局 /interrupt**（HF-06：共享 ComfyUI 会误伤其他客户端）
+
+Hotfix 追加（改造.md §2）：
+- HF-00：last_native_video/last_prompt_id 每轮 generate 入口清零，
+  原生视频不跨任务继承（串片回归）
+- HF-04：probe 区分 temporarily_unavailable（断线待核查 needs_attention，
+  不误标失败）与 lost（确认没有）；恢复分页拉取不截断；手动重试端点
+- HF-05：快照存在但损坏 → 明确失败，不静默改用当前模板
 """
 import asyncio
 import json
@@ -82,6 +89,10 @@ def _patch_http(monkeypatch, handler):
 
         def json(self):
             return self._data
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
 
         @property
         def text(self):
@@ -193,8 +204,9 @@ def test_probe_states(monkeypatch):
     assert c.probe("pid") == "lost"
 
 
-def test_poll_cancel_interrupts_once(monkeypatch):
-    """取消：interrupt 被触发（全局中断只应在本任务取消时发生），抛 ComfyUICancelled。"""
+def test_poll_cancel_does_not_global_interrupt(monkeypatch):
+    """HF-06：取消**不**触发全局 /interrupt——共享 ComfyUI 时会误伤其他
+    客户端的任务；仅本地标记取消，提示远端可能仍在执行。"""
     interrupted = []
 
     class _Requests:
@@ -212,7 +224,7 @@ def test_poll_cancel_interrupts_once(monkeypatch):
     c = ComfyUIClient("http://127.0.0.1:8188")
     with pytest.raises(ComfyUICancelled):
         c.wait_for_completion("pid", is_cancelled=lambda: True, timeout_s=5)
-    assert interrupted, "取消时未调 interrupt"
+    assert not interrupted, "取消时不应调用全局 interrupt（HF-06）"
 
 
 # =====================================================================
@@ -733,3 +745,262 @@ def test_upload_success_creates_job_with_snapshot(client, fresh_db, tmp_path,
     assert len(runnable) == 1 and runnable[0]["id"] == job["id"]
     shot = client.get(f"/api/shots/{sid}").json()
     assert shot["status"] == "queued" and shot["job_id"] == job["id"]
+
+
+# =====================================================================
+# HF-00：last_native_video 跨任务污染（原生视频串片）
+# =====================================================================
+_VIDEO_ENTRY = {
+    "status": {"completed": True, "status_str": "success"},
+    "outputs": {"7": {"videos": [
+        {"filename": "aivideo_00001.mp4", "subfolder": "", "type": "output"},
+    ]}},
+}
+
+
+class _AlternatingClient:
+    """第 1/3/5… 次提交产原生视频，第 2/4/6… 次产图片序列。
+
+    模拟「任务 A 出 MP4、任务 B 只出图片帧」的交替场景——队列缓存同一
+    引擎实例，B 不得继承 A 的 last_native_video（HF-00）。
+    """
+
+    def __init__(self):
+        self.submits = 0
+
+    def is_available(self, timeout=2.5):
+        return True
+
+    def new_client_id(self, prefix="aivideo"):
+        return "aivideo-alt"
+
+    def submit(self, graph, client_id="aivideo"):
+        self.submits += 1
+        return f"pid_alt{self.submits}"
+
+    def wait_for_completion(self, prompt_id, on_progress=None, is_cancelled=None,
+                            timeout_s=3600, client_id=""):
+        if self.submits % 2 == 1:
+            return _VIDEO_ENTRY
+        return _COMPLETED_ENTRY
+
+    def download(self, filename, subfolder="", ftype="output"):
+        return b"MP4DATA-" + filename.encode()
+
+
+def test_engine_native_video_not_inherited_across_jobs(tmp_path, monkeypatch):
+    """HF-00：同一引擎实例交替 MP4/图片序列——图片轮不得带上轮的原生视频。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    engine.client = _AlternatingClient()
+
+    f1 = engine.generate(**_gen_kwargs(tmp_path / "altA" / "frames"))
+    assert f1 == [] and engine.last_native_video, "第一轮应走原生视频直通"
+    first_native = engine.last_native_video
+
+    f2 = engine.generate(**_gen_kwargs(tmp_path / "altB" / "frames"))
+    assert f2, "第二轮应下载图片帧"
+    assert engine.last_native_video == "", (
+        f"第二轮继承了上一轮的原生视频: {engine.last_native_video}（串片！）"
+    )
+
+    f3 = engine.generate(**_gen_kwargs(tmp_path / "altC" / "frames"))
+    assert f3 == [] and engine.last_native_video, "第三轮应恢复原生视频直通"
+    assert engine.last_native_video != first_native
+
+
+def test_engine_no_stale_native_video_after_failure(tmp_path, monkeypatch):
+    """HF-00：上一轮产视频、本轮失败——失败后不得残留旧 native_video。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    engine.client = _AlternatingClient()
+    engine.generate(**_gen_kwargs(tmp_path / "failA" / "frames"))
+    assert engine.last_native_video
+
+    class _BoomClient(_AlternatingClient):
+        def wait_for_completion(self, *a, **k):
+            raise ComfyUIError("模拟生成中失败")
+
+    engine.client = _BoomClient()
+    with pytest.raises(ComfyUIError):
+        engine.generate(**_gen_kwargs(tmp_path / "failB" / "frames"))
+    assert engine.last_native_video == "", "失败后仍带着上一轮的原生视频"
+
+
+def test_queue_native_video_not_inherited(fresh_db, fake_engine_env, monkeypatch):
+    """HF-00 队列级（真实 ComfyEngine + 假客户端）：A=原生视频、B=图片序列，
+    B 的成片必须来自 B 的帧，不是 A 的视频（串片回归，worker 归档路径）。"""
+    proj = sb.create_project("hf00q", "")
+    scene = sb.create_scene(proj["id"], "场景一")
+    shot_a = sb.create_shot(scene["id"], title="A", prompt=GOOD_PROMPT, duration_s=4)
+    shot_b = sb.create_shot(scene["id"], title="B", prompt=GOOD_PROMPT, duration_s=4)
+
+    engine, _ = _mk_engine(fake_engine_env, monkeypatch)
+    engine.client = _AlternatingClient()
+    _use_engine(monkeypatch, engine)
+
+    job_a = _mk_job(fresh_db, shot_a["id"])
+    asyncio.run(qm.job_queue._run_job(job_a["id"]))
+    assert fresh_db.get_job(job_a["id"])["status"] == "done"
+    final_a = fake_engine_env / f"{job_a['id']}.mp4"
+    assert final_a.read_bytes() == b"MP4DATA-aivideo_00001.mp4", "A 未走原生视频归档"
+
+    job_b = _mk_job(fresh_db, shot_b["id"])
+    asyncio.run(qm.job_queue._run_job(job_b["id"]))
+    assert fresh_db.get_job(job_b["id"])["status"] == "done"
+    final_b = fake_engine_env / f"{job_b['id']}.mp4"
+    assert final_b.read_bytes() != b"MP4DATA-aivideo_00001.mp4", (
+        "B 串片了：归档了 A 的原生视频而不是 B 的帧序列"
+    )
+
+
+# =====================================================================
+# HF-04：断线待核查（temporarily_unavailable）+ 分页恢复 + 手动重试
+# =====================================================================
+def test_probe_temporarily_unavailable_on_network_error(monkeypatch):
+    """HF-04：ComfyUI 网络异常 → temporarily_unavailable（≠ lost，不误判）。"""
+    import app.comfyui as comfyui_mod
+
+    class _Requests:
+        def get(self, url, **kw):
+            raise ConnectionError("连不上 ComfyUI")
+
+        def post(self, url, **kw):
+            raise ConnectionError("连不上 ComfyUI")
+
+    monkeypatch.setattr(comfyui_mod, "requests", _Requests())
+    c = ComfyUIClient("http://127.0.0.1:8188")
+    assert c.probe("pid") == "temporarily_unavailable"
+
+
+def test_probe_lost_only_when_reachable_and_absent(monkeypatch):
+    """HF-04：只有 history/队列都明确应答"没有"才判 lost。"""
+    _patch_http(monkeypatch, lambda url: type("R", (), {
+        "status_code": 200, "json": lambda self: {},
+    })())
+    c = ComfyUIClient("http://127.0.0.1:8188")
+    assert c.probe("pid") == "lost"
+
+
+def test_recover_comfy_unavailable_marks_needs_attention(fresh_db, monkeypatch):
+    """HF-04：ComfyUI 暂不可达 → needs_attention 待核查：不误标失败、
+    不重新入队，镜头保持 generating。"""
+    proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_net")
+    # 崩溃前镜头已由 worker 置 generating（真实场景的持久化状态）
+    sb.set_shot_status(shot["id"], "generating", review_stage="generation")
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
+                        staticmethod(lambda pid: "temporarily_unavailable"))
+    qm.job_queue._recover_stale_jobs()
+
+    done = fresh_db.get_job(job["id"])
+    assert done["status"] == "needs_attention", "断线被误标为其他状态"
+    assert "暂不可达" in (done["error"] or "") + (done["stage"] or "")
+    assert qm.job_queue._queue.empty(), "待核查任务不应入队"
+    after = sb.get_shot(shot["id"])
+    assert after["status"] == "generating", "待核查不应把镜头打回重做"
+    assert after["review_stage"] == "generation"
+
+
+def test_recover_needs_attention_resumes_when_back(fresh_db, monkeypatch):
+    """HF-04：待核查任务下次重启时 ComfyUI 恢复 → 重新入队 resume。"""
+    proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_back")
+    fresh_db.update_job(job["id"], status="needs_attention")
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
+                        staticmethod(lambda pid: "running"))
+    qm.job_queue._recover_stale_jobs()
+
+    done = fresh_db.get_job(job["id"])
+    assert done["status"] == "running"
+    assert not qm.job_queue._queue.empty()
+    assert qm.job_queue._queue.get_nowait() == job["id"]
+    after = sb.get_shot(shot["id"])
+    assert after["status"] == "generating"
+
+
+def test_recover_needs_attention_stays_when_still_unavailable(fresh_db, monkeypatch):
+    """HF-04：仍不可达 → 继续待核查，绝不误标失败。"""
+    proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_still")
+    fresh_db.update_job(job["id"], status="needs_attention")
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
+                        staticmethod(lambda pid: "temporarily_unavailable"))
+    qm.job_queue._recover_stale_jobs()
+
+    assert fresh_db.get_job(job["id"])["status"] == "needs_attention"
+    assert qm.job_queue._queue.empty()
+
+
+def test_recover_needs_attention_confirmed_lost_fails(fresh_db, monkeypatch):
+    """HF-04：待核查后确认 ComfyUI 侧也没有（lost）→ 标中断失败。"""
+    proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_gone2")
+    fresh_db.update_job(job["id"], status="needs_attention")
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
+                        staticmethod(lambda pid: "lost"))
+    qm.job_queue._recover_stale_jobs()
+
+    done = fresh_db.get_job(job["id"])
+    assert done["status"] == "failed" and "中断" in (done["error"] or "")
+    assert sb.get_shot(shot["id"])["status"] == "rework"
+
+
+def test_iter_jobs_paginates_beyond_one_page(fresh_db):
+    """HF-04：_iter_jobs 分页拉取，超过一页（_RECOVER_PAGE）也能取全且保序。"""
+    for _ in range(qm.JobQueue._RECOVER_PAGE + 3):
+        fresh_db.create_job({
+            "engine": "anime", "prompt": GOOD_PROMPT, "width": 512, "height": 512,
+            "num_frames": 16, "fps": 8, "steps": 25, "guidance": 7.5, "seed": 1,
+        })
+    got = list(qm.job_queue._iter_jobs("pending", order="asc"))
+    assert len(got) == qm.JobQueue._RECOVER_PAGE + 3, "分页拉取遗漏了任务"
+
+
+def test_recover_reenqueues_beyond_one_page(fresh_db):
+    """HF-04：恢复时分页重新入队，超过一页的 pending 不截断（原 limit=1000）。"""
+    for _ in range(qm.JobQueue._RECOVER_PAGE + 3):
+        fresh_db.create_job({
+            "engine": "anime", "prompt": GOOD_PROMPT, "width": 512, "height": 512,
+            "num_frames": 16, "fps": 8, "steps": 25, "guidance": 7.5, "seed": 1,
+        })
+    qm.job_queue._recover_stale_jobs()
+    assert qm.job_queue._queue.qsize() == qm.JobQueue._RECOVER_PAGE + 3
+
+
+def test_retry_needs_attention_job(client, fresh_db):
+    """HF-04：needs_attention 任务可手动重试（重新入队走 resume）。"""
+    proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_retry")
+    fresh_db.update_job(job["id"], status="needs_attention")
+    r = client.post(f"/api/jobs/{job['id']}/retry")
+    assert r.status_code == 200, r.text
+    done = fresh_db.get_job(job["id"])
+    assert done["status"] == "running"
+    assert not qm.job_queue._queue.empty()
+    assert qm.job_queue._queue.get_nowait() == job["id"]
+
+
+def test_retry_rejects_non_attention_job(client, fresh_db):
+    """HF-04：非待核查状态不可重试（409，语义未定义）。"""
+    proj, shot, job = _stale_running_job(fresh_db)
+    r = client.post(f"/api/jobs/{job['id']}/retry")
+    assert r.status_code == 409
+
+
+# =====================================================================
+# HF-05：快照损坏显式失败（不静默改用当前模板）
+# =====================================================================
+def test_engine_corrupt_snapshot_fails_explicitly(tmp_path, monkeypatch):
+    """HF-05：快照文件损坏 → ComfyUIError 明确失败，不退回当前模板。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    snap = tmp_path / "corrupt.json"
+    snap.write_text("{invalid json", encoding="utf-8")
+    with pytest.raises(ComfyUIError) as ei:
+        engine._resolve_workflow(str(snap), {"prompt": "x"},
+                                 tmp_path / "jobH" / "frames")
+    assert "快照" in str(ei.value), "错误信息未说明是快照问题"
+
+
+def test_engine_snapshot_without_graph_fails(tmp_path, monkeypatch):
+    """HF-05：快照是合法 JSON 但没有有效节点图 → 同样明确失败。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    snap = tmp_path / "empty_graph.json"
+    snap.write_text(json.dumps({"job_id": "x", "graph": {}}), encoding="utf-8")
+    with pytest.raises(ComfyUIError) as ei:
+        engine._resolve_workflow(str(snap), {"prompt": "x"},
+                                 tmp_path / "jobI" / "frames")
+    assert "快照" in str(ei.value)

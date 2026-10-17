@@ -35,6 +35,7 @@ export const api = {
   jobs: () => request('/jobs?limit=200'),
   createJob: (data) => request('/jobs', { method: 'POST', body: JSON.stringify(data) }),
   cancelJob: (id) => request(`/jobs/${id}/cancel`, { method: 'POST' }),
+  retryJob: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
   deleteJob: (id) => request(`/jobs/${id}`, { method: 'DELETE' }),
   hardware: () => request('/hardware'),
   presets: () => request('/presets'),

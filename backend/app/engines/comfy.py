@@ -19,6 +19,10 @@
   - 参考图（i2v/首尾帧）上传到 ComfyUI input 目录，用返回名注入工作流
   - ComfyUI 原生视频输出原样归档：下载后设置 last_native_video 并返回空帧
     列表，由队列 remux（-c copy 码流原样 + 元数据），不抽帧不重编码
+
+HF-00 跨任务状态隔离：
+  - 引擎实例被队列缓存复用，generate() 入口即清零 last_prompt_id /
+    last_native_video——任务 A 的原生视频不会被只产图片帧的任务 B 继承
 """
 import json
 from pathlib import Path
@@ -98,6 +102,12 @@ class ComfyEngine(BaseEngine):
         on_submitted: Callable[[str, str], None] = None,
         resume_client_id: str = "",
     ) -> List[Path]:
+        # HF-00：引擎实例被 queue_manager 跨任务缓存（模型常驻内存），
+        # 上一轮的 last_* 必须在这里清零——否则任务 A 产出的原生视频会
+        # 被任务 B（只产图片帧）继承，worker 按 last_native_video 优先
+        # 归档，导致视频串片。失败/取消同样不带旧值进入下一轮。
+        self.last_prompt_id = ""
+        self.last_native_video = ""
         if not self.client.is_available():
             raise ComfyUIError(
                 f"连不上 ComfyUI 服务器（{self.client.base_url}）："
@@ -203,8 +213,13 @@ class ComfyEngine(BaseEngine):
     def _resolve_workflow(self, snapshot_path: str, inject: dict, frames_dir: Path) -> dict:
         """确定本次执行用的工作流图（2B：排队后不读可变模板）。
 
-        优先用入队时固化的快照；没有快照（老任务/快照被删）才现场读模板，
-        并立即补一份快照，保证每个 ComfyUI 任务都有独立工作流存档。
+        优先用入队时固化的快照；没有快照文件（老任务/快照被清理）才现场
+        读模板，并立即补一份快照，保证每个 ComfyUI 任务都有独立工作流存档。
+
+        HF-05：快照**存在但损坏/不可读/无有效节点图**时明确抛
+        ComfyUIError 需人工处理——老任务重试悄悄改用当前模板会导致
+        输出不可复现（同一镜头两次生成用了不同工作流）。只有快照文件
+        不存在才允许走模板兜底。
 
         2C：兜底路径下参考图在此上传——工作流确实映射了 reference_image
         才传（默认模板不映射，纯文生视频不受影响）；上传失败抛
@@ -217,10 +232,18 @@ class ComfyEngine(BaseEngine):
                 try:
                     data = json.loads(p.read_text(encoding="utf-8"))
                     graph = data.get("graph") or data.get("prompt")
-                    if isinstance(graph, dict) and graph:
-                        return graph
-                except (ValueError, OSError):
-                    pass  # 快照损坏：退回复位模板
+                except (ValueError, OSError) as e:
+                    raise ComfyUIError(
+                        f"工作流快照损坏或不可读: {p}（{e}）。为保证输出可复现，"
+                        "请人工处理后重试；系统不会静默改用当前模板"
+                    )
+                if not isinstance(graph, dict) or not graph:
+                    raise ComfyUIError(
+                        f"工作流快照缺少有效节点图: {p}。请人工处理后重试；"
+                        "系统不会静默改用当前模板"
+                    )
+                return graph
+            # 快照文件不存在（老任务/被清理）→ 走下面的模板兜底并补写
         template = load_workflow_template()
         inject = dict(inject)
         if inject.get("reference_image") and (template.get("_aivideo_map") or {}).get(
