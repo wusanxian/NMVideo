@@ -1,4 +1,5 @@
 """分镜工作台 REST API：项目 / 场景 / 分镜 / 版本 / 时间线 / 导出 / ComfyUI"""
+import json
 import random
 from pathlib import Path
 from typing import Optional
@@ -391,10 +392,36 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["mode"] = mode
     params["continue_from"] = continue_from
 
-    job_id = await job_queue.submit(params)
-    sb.set_shot_status(shot_id, "queued", job_id=job_id, review_stage="generation")
     from .. import db as db_module
 
+    job = db_module.db.create_job(params)
+    job_id = job["id"]
+    # 2B：ComfyUI 入队即固化工作流快照——排队期间用户在设置里改模板，
+    # 不影响已排队任务（执行时优先读快照；快照失败不阻断，执行时兜底）
+    if data.engine == "comfyui":
+        try:
+            from ..comfyui import build_shot_workflow
+
+            graph = build_shot_workflow({
+                "prompt": params["prompt"],
+                "negative_prompt": params["negative_prompt"],
+                "width": params["width"], "height": params["height"],
+                "num_frames": params["num_frames"], "seed": params["seed"],
+                "steps": params["steps"], "guidance": params["guidance"],
+                "reference_image": params["reference_image"],
+            })
+            snap_dir = OUTPUTS_DIR / "workflows"
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            snap = snap_dir / f"{job_id}.json"
+            snap.write_text(
+                json.dumps({"job_id": job_id, "graph": graph}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            db_module.db.update_job(job_id, workflow_snapshot=str(snap))
+        except Exception as e:
+            print(f"[storyboard] ComfyUI 工作流快照写入失败（执行时兜底）: {e}")
+    await job_queue.enqueue(job_id)
+    sb.set_shot_status(shot_id, "queued", job_id=job_id, review_stage="generation")
     return db_module.db.get_job(job_id)
 
 

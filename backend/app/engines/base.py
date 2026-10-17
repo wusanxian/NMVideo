@@ -46,10 +46,16 @@ class BaseEngine(ABC):
         on_progress: ProgressCallback,
         is_cancelled: CancelCheck,
         reference_image: str = "",
+        resume_prompt_id: str = "",
+        workflow_snapshot: str = "",
     ) -> List[Path]:
         """生成帧序列，逐帧保存到 frames_dir，返回帧文件路径列表。
 
         reference_image: 参考图/首帧 URL（图生视频/首尾帧/续接模式）；
         不支持的引擎可忽略该参数（保持纯文生视频行为）。
+        resume_prompt_id: ComfyUI 专用——服务重启后恢复执行：跳过提交，
+        直接按已持久化的 prompt_id 等待/下载（其他引擎忽略）。
+        workflow_snapshot: ComfyUI 专用——入队时固化的工作流快照路径，
+        避免排队期间用户改模板影响已排队任务（其他引擎忽略）。
         """
         raise NotImplementedError

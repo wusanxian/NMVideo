@@ -92,6 +92,8 @@ class Database:
                 ("reference_image", "TEXT DEFAULT ''"),  # 参考图/首帧（i2v/首尾帧/续接）
                 ("mode", "TEXT DEFAULT 't2v'"),          # t2v/i2v/first_last/continuation
                 ("continue_from", "TEXT DEFAULT ''"),    # 续接来源镜头
+                ("prompt_id", "TEXT DEFAULT ''"),        # ComfyUI prompt_id（2B：持久化，重启恢复用）
+                ("workflow_snapshot", "TEXT DEFAULT ''"),  # ComfyUI 工作流快照路径（2B：入队即固化）
             ):
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")

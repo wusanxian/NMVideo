@@ -17,6 +17,7 @@ import os
 import threading
 import time
 import urllib.parse
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -49,9 +50,24 @@ class ComfyUIError(RuntimeError):
     pass
 
 
+class ComfyUICancelled(ComfyUIError):
+    """等待被用户取消：引擎层应转换为 GenerationCancelled 走取消路径
+    （而不是失败路径——取消的 job 标 cancelled、镜头回 draft）。"""
+
+
 class ComfyUIClient:
     def __init__(self, base_url: str = None):
         self.base_url = (base_url or _default_base_url()).rstrip("/")
+
+    @staticmethod
+    def new_client_id(prefix: str = "aivideo") -> str:
+        """提交与 WS 订阅共用的 client_id。
+
+        ComfyUI 的 WS 只把任务的进度推送给提交时携带同一 client_id 的连接——
+        两边不一致就一条进度都收不到（2B 修复：曾用默认 "aivideo" 提交、
+        却按 prompt_id 派生 id 订阅）。
+        """
+        return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
     # ---------- 连接性 ----------
     def is_available(self, timeout: float = 2.5) -> bool:
@@ -96,38 +112,77 @@ class ComfyUIClient:
         on_progress: Optional[Callable[[float, str], None]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
         timeout_s: float = 3600,
+        client_id: str = "",
     ) -> dict:
         """阻塞直到任务完成，返回 history 条目。
 
-        优先 WebSocket 实时进度；WS 不可用则退化为 2s 轮询 /history。
+        client_id：提交时使用的 client_id（必须一致才能收到 WS 推送）。
+        为空表示 resume 场景——原 client_id 已随上次进程丢失，新 id 订阅不到
+        旧任务的推送，直接走历史轮询（2B）。
+        WS 不可用/中断时自动降级为轮询兜底。
         """
         deadline = time.time() + timeout_s
+        if client_id:
+            try:
+                return self._wait_ws(prompt_id, client_id, on_progress, is_cancelled, deadline)
+            except ComfyUICancelled:
+                raise
+            except ComfyUIError:
+                if is_cancelled and is_cancelled():
+                    raise
+                if time.time() >= deadline:
+                    raise
+                return self._wait_poll(prompt_id, on_progress, is_cancelled, deadline)
+        return self._wait_poll(prompt_id, on_progress, is_cancelled, deadline)
+
+    def _completed_entry(self, prompt_id: str) -> Optional[dict]:
+        """history 里该任务的已完成条目；未完成/不存在返回 None。"""
         try:
-            return self._wait_ws(prompt_id, on_progress, is_cancelled, deadline)
-        except ComfyUIError:
-            if is_cancelled and is_cancelled():
-                raise
-            if time.time() >= deadline:
-                raise
-            return self._wait_poll(prompt_id, on_progress, is_cancelled, deadline)
+            hist = self.get_history(prompt_id)
+        except Exception:
+            return None
+        entry = (hist or {}).get(prompt_id)
+        if not entry:
+            return None
+        status = entry.get("status") or {}
+        if status.get("completed") or status.get("status_str") == "success":
+            return entry
+        return None
 
-    def _wait_ws(self, prompt_id, on_progress, is_cancelled, deadline) -> dict:
-        import websockets  # 延迟导入，未安装时自动走轮询兜底
+    def _wait_ws(self, prompt_id, client_id, on_progress, is_cancelled, deadline) -> dict:
+        try:
+            import websockets.sync.client  # v14+ 必须显式导入子模块，否则 websockets.sync 不存在
+        except ImportError:
+            raise ComfyUIError("websockets 未安装，WS 进度不可用（降级轮询）")
 
-        client_id = f"aivideo-{prompt_id[:8]}"
         stage = "提交中"
-        with websockets.sync.client.connect(
-            _ws_url(self.base_url, client_id), open_timeout=10, close_timeout=5
-        ) as ws:
+        last_hist_check = 0.0
+        try:
+            ws = websockets.sync.client.connect(
+                _ws_url(self.base_url, client_id), open_timeout=10, close_timeout=5
+            )
+        except Exception as e:
+            # 连不上（ComfyUI 没开/WS 不可用）：转 ComfyUIError 让上层降级轮询
+            raise ComfyUIError(f"WS 连接失败: {e}")
+        with ws:
             while True:
                 if is_cancelled and is_cancelled():
                     self.interrupt()
-                    raise ComfyUIError("已取消")
+                    raise ComfyUICancelled("已取消")
                 if time.time() > deadline:
                     raise ComfyUIError("等待超时")
+                # 完成检测不依赖消息：任务可能在 WS 连接建立前就已完成、或推送丢失。
+                # 静默期（无消息）定期查历史兜底（2B）
+                now = time.time()
+                if now - last_hist_check >= 5:
+                    last_hist_check = now
+                    entry = self._completed_entry(prompt_id)
+                    if entry:
+                        return entry
                 try:
                     raw = ws.recv(timeout=5)
-                except websockets.TimeoutError:
+                except TimeoutError:
+                    # websockets 17：recv(timeout) 超时抛内置 TimeoutError
                     continue
                 except Exception as e:
                     raise ComfyUIError(f"WS 连接中断: {e}")
@@ -143,33 +198,36 @@ class ComfyUIClient:
                     stage = f"执行节点 {node}" if node else "完成中"
                     if on_progress:
                         on_progress(0.95, stage)
+                    if not node:
+                        # 执行收尾：立刻查一次历史确认完成
+                        entry = self._completed_entry(prompt_id)
+                        if entry:
+                            return entry
                 elif mtype == "executed":
                     if on_progress:
                         on_progress(0.97, "节点完成")
                 elif mtype in ("execution_error", "execution_interrupted"):
                     raise ComfyUIError(f"ComfyUI 执行失败: {str(data)[:400]}")
-                # 完成信号：executing 且 node 为空 + status success
-                hist = self.get_history(prompt_id)
-                if hist:
-                    entry = hist.get(prompt_id, {})
-                    status = entry.get("status", {})
-                    if status.get("completed") or status.get("status_str") == "success":
-                        return entry
 
     def _wait_poll(self, prompt_id, on_progress, is_cancelled, deadline) -> dict:
         waited = 0.0
         while time.time() <= deadline:
             if is_cancelled and is_cancelled():
                 self.interrupt()
-                raise ComfyUIError("已取消")
-            hist = self.get_history(prompt_id)
-            entry = hist.get(prompt_id) if hist else None
+                raise ComfyUICancelled("已取消")
+            entry = self._completed_entry(prompt_id)
             if entry:
-                status = entry.get("status", {})
-                if status.get("completed") or status.get("status_str") == "success":
-                    return entry
-                if status.get("status_str") == "error":
-                    raise ComfyUIError(f"ComfyUI 执行失败: {str(entry.get('status'))[:400]}")
+                return entry
+            # 失败检测：history 有条目但状态是 error
+            try:
+                hist = self.get_history(prompt_id)
+                raw = (hist or {}).get(prompt_id)
+                if raw and (raw.get("status") or {}).get("status_str") == "error":
+                    raise ComfyUIError(f"ComfyUI 执行失败: {str(raw.get('status'))[:400]}")
+            except ComfyUIError:
+                raise
+            except Exception:
+                pass
             # 轮询兜底：按已等待时间给出平滑的假进度（WS 不可用时前端不空转）
             waited += 2
             if on_progress:
@@ -187,6 +245,33 @@ class ComfyUIClient:
         r = requests.get(f"{self.base_url}/queue", timeout=8)
         r.raise_for_status()
         return r.json()
+
+    def probe(self, prompt_id: str) -> str:
+        """查询任务在 ComfyUI 侧的状态：done / running / queued / error / lost。
+
+        重启恢复用（2B）：done→可直接拿产物；running/queued→继续等；
+        error→ComfyUI 侧已失败；lost→history 与队列都没有。
+        """
+        if self._completed_entry(prompt_id):
+            return "done"
+        try:
+            hist = self.get_history(prompt_id)
+            raw = (hist or {}).get(prompt_id)
+            if raw and (raw.get("status") or {}).get("status_str") == "error":
+                return "error"
+        except Exception:
+            return "lost"
+        try:
+            q = self.get_queue()
+        except Exception:
+            return "lost"
+        for item in (q.get("queue_running") or []):
+            if item and len(item) > 1 and item[1] == prompt_id:
+                return "running"
+        for item in (q.get("queue_pending") or []):
+            if item and len(item) > 1 and item[1] == prompt_id:
+                return "queued"
+        return "lost"
 
     # ---------- 产物 ----------
     def download(self, filename: str, subfolder: str = "", ftype: str = "output") -> bytes:
@@ -281,6 +366,19 @@ def build_workflow(template: dict, mapping: dict, params: dict) -> dict:
         inputs = node.setdefault("inputs", {})
         inputs[target.get("input")] = params[key]
     return graph
+
+
+def build_shot_workflow(params: dict) -> dict:
+    """按当前模板把镜头参数注入，返回可直接提交的节点图。
+
+    params 支持 prompt/negative_prompt/width/height/num_frames/seed/steps/
+    guidance/reference_image（模板 _aivideo_map 里映射了才注入）。
+
+    入队时（router）与执行时（引擎兜底）共用：入队时构建并落快照，
+    执行时优先用快照——排队期间用户改模板不影响已排队任务（2B）。
+    """
+    template = load_workflow_template()
+    return build_workflow(template, template.get("_aivideo_map", {}), params)
 
 
 def extract_output_files(entry: dict) -> list:

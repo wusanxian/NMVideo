@@ -42,3 +42,17 @@ def fresh_db(tmp_path):
         db_module.db = saved_singleton
         for m, ref in saved.items():
             setattr(sys.modules[m], "db", ref)
+
+
+@pytest.fixture()
+def client(fresh_db):
+    """TestClient（依赖 fresh_db：不打真实库）。
+
+    不进 lifespan：不起 worker 线程，这些用例只打数据路由
+    （需要队列消费的用例自行调用 _run_job）。
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    return TestClient(app)

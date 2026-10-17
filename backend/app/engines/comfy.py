@@ -4,6 +4,15 @@
   - 视频类输出（VHS_VideoCombine 等）→ ffmpeg 抽帧到 frames_dir
   - 图片序列输出（SaveImage 等）   → 逐张下载到 frames_dir
 统一返回帧路径列表，由队列管理器合成 MP4（与本地引擎走同一条链路）。
+
+2B 任务可靠性：
+  - 提交与 WS 订阅共用同一 client_id（否则收不到进度推送）
+  - prompt_id 持久化到 job 记录（worker 读 engine.last_prompt_id 落库），
+    服务重启后可恢复
+  - resume_prompt_id：恢复执行——跳过提交，按已持久化的 prompt_id 直接等待
+    （原 client_id 已丢失，走历史轮询）
+  - workflow_snapshot：入队时固化的工作流快照；排队期间用户改模板不影响
+    已排队任务
 """
 import json
 import shutil
@@ -13,11 +22,11 @@ from typing import Callable, List
 from .base import BaseEngine, EngineMeta, GenerationCancelled
 
 from ..comfyui import (
+    ComfyUICancelled,
     ComfyUIClient,
     ComfyUIError,
-    build_workflow,
+    build_shot_workflow,
     extract_output_files,
-    load_workflow_template,
 )
 from ..config import OUTPUTS_DIR
 from ..video import get_ffmpeg
@@ -35,6 +44,8 @@ class ComfyEngine(BaseEngine):
     def __init__(self):
         self.client = ComfyUIClient()
         self._avail_cache = (0.0, False)  # (timestamp, available)
+        # 2B：最近一次提交的 prompt_id（worker 负责持久化到 job 记录）
+        self.last_prompt_id = ""
 
     def is_available_cached(self, ttl: float = 10.0) -> bool:
         import time
@@ -73,6 +84,8 @@ class ComfyEngine(BaseEngine):
         on_progress: Callable[[float, str], None],
         is_cancelled: Callable[[], bool],
         reference_image: str = "",
+        resume_prompt_id: str = "",
+        workflow_snapshot: str = "",
     ) -> List[Path]:
         if not self.client.is_available():
             raise ComfyUIError(
@@ -80,8 +93,6 @@ class ComfyEngine(BaseEngine):
                 "请先启动 ComfyUI，或在分镜编辑弹窗里修改服务器地址"
             )
 
-        template = load_workflow_template()
-        mapping = template.get("_aivideo_map", {})
         inject = {
             "prompt": prompt,
             "negative_prompt": negative_prompt,
@@ -91,22 +102,27 @@ class ComfyEngine(BaseEngine):
             "seed": seed,
             "steps": steps,
             "guidance": guidance,
+            # 模板 _aivideo_map 映射了 reference_image 才注入（2C 会改为上传
+            # ComfyUI input 目录后用返回名注入）
+            "reference_image": reference_image,
         }
-        # 参考图注入：模板 _aivideo_map 里配置了 "reference_image" → 节点/输入名时才注入
-        # （LoadImage 的 image 字段填 /outputs/... 相对 ComfyUI input 目录的路径）
-        if reference_image and "reference_image" in (mapping or {}):
-            inject["reference_image"] = reference_image
-        graph = build_workflow(template, mapping, inject)
 
-        on_progress(0.03, "提交工作流到 ComfyUI")
-        prompt_id = self.client.submit(graph)
+        if resume_prompt_id:
+            # ---- 恢复路径：服务重启后按已持久化的 prompt_id 继续等 ----
+            prompt_id = resume_prompt_id
+            on_progress(0.05, "恢复等待 ComfyUI 任务（服务重启恢复）")
+            entry = self._wait(prompt_id, client_id="", on_progress=on_progress,
+                               is_cancelled=is_cancelled)
+        else:
+            # ---- 正常路径：快照/模板 → 注入 → 提交（client_id 与 WS 一致） ----
+            graph = self._resolve_workflow(workflow_snapshot, inject, frames_dir)
+            on_progress(0.03, "提交工作流到 ComfyUI")
+            client_id = self.client.new_client_id()
+            prompt_id = self.client.submit(graph, client_id=client_id)
+            entry = self._wait(prompt_id, client_id=client_id, on_progress=on_progress,
+                               is_cancelled=is_cancelled)
 
-        def _cancelled() -> bool:
-            return bool(is_cancelled and is_cancelled())
-
-        entry = self.client.wait_for_completion(
-            prompt_id, on_progress=on_progress, is_cancelled=_cancelled
-        )
+        self.last_prompt_id = prompt_id
 
         files = extract_output_files(entry)
         if not files:
@@ -132,7 +148,7 @@ class ComfyEngine(BaseEngine):
             on_progress(0.96, "下载 ComfyUI 图片序列")
             images = sorted(files, key=lambda f: f["filename"])
             for i, f in enumerate(images):
-                if _cancelled():
+                if is_cancelled and is_cancelled():
                     raise GenerationCancelled()
                 data = self.client.download(f["filename"], f["subfolder"], f["type"])
                 (frames_dir / f"frame_{i:04d}.png").write_bytes(data)
@@ -143,6 +159,47 @@ class ComfyEngine(BaseEngine):
             raise ComfyUIError("帧目录为空：ComfyUI 产物解析失败")
         on_progress(0.99, "ComfyUI 产物就绪")
         return frames
+
+    # ---------- 2B 内部 helpers ----------
+    def _wait(self, prompt_id: str, client_id: str, on_progress, is_cancelled) -> dict:
+        """等待完成；把客户端级取消异常转换为引擎级 GenerationCancelled
+        （取消的 job 应标 cancelled、镜头回 draft，而不是走失败路径）。"""
+        try:
+            return self.client.wait_for_completion(
+                prompt_id, on_progress=on_progress, is_cancelled=is_cancelled,
+                client_id=client_id,
+            )
+        except ComfyUICancelled:
+            raise GenerationCancelled()
+
+    def _resolve_workflow(self, snapshot_path: str, inject: dict, frames_dir: Path) -> dict:
+        """确定本次执行用的工作流图（2B：排队后不读可变模板）。
+
+        优先用入队时固化的快照；没有快照（老任务/快照被删）才现场读模板，
+        并立即补一份快照，保证每个 ComfyUI 任务都有独立工作流存档。
+        """
+        job_id = frames_dir.parent.name  # frames_dir = outputs/{job_id}/frames
+        if snapshot_path:
+            p = Path(snapshot_path)
+            if p.is_file():
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    graph = data.get("graph") or data.get("prompt")
+                    if isinstance(graph, dict) and graph:
+                        return graph
+                except (ValueError, OSError):
+                    pass  # 快照损坏：退回复位模板
+        graph = build_shot_workflow(inject)
+        snap = OUTPUTS_DIR / "workflows" / f"{job_id}.json"
+        try:
+            snap.parent.mkdir(parents=True, exist_ok=True)
+            snap.write_text(
+                json.dumps({"job_id": job_id, "graph": graph}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass  # 快照写失败不阻断生成
+        return graph
 
     @staticmethod
     def _video_to_frames(video: Path, frames_dir: Path, fps: int) -> None:

@@ -36,13 +36,48 @@ class JobQueue:
 
         - pending：还没开始跑的任务**重新入队**（按提交顺序 FIFO），
           批量生成的排队任务不丢。
-        - running：worker 线程已随上次进程死亡，本地引擎没有断点续算；
-          ComfyUI 任务也无法从我们的 job_id 反查其内部 prompt 历史，
-          因此统一标记中断并**明确告知用户需重新生成**，对应镜头打回需重做。
+        - running：worker 线程已随上次进程死亡。
+          · ComfyUI 任务（已持久化 prompt_id）：先查 ComfyUI 历史/队列——
+            还在跑/排队/已完成 → 重新入队走 resume 路径（跳过提交，
+            按 prompt_id 继续等并下载产物）；ComfyUI 侧也没了 → 标失败。
+          · 本地引擎没有断点续算：统一标记中断并**明确告知用户需重新生成**，
+            对应镜头打回需重做。
         """
-        # ---- running：无法续算，标记中断 ----
+        # ---- running：ComfyUI 先探活再决定，其余标记中断 ----
         running = db_module.db.list_jobs(limit=1000, status="running")
+        recovered, interrupted = [], []
         for job in running:
+            shot_id = job.get("shot_id") or ""
+            prompt_id = job.get("prompt_id") or ""
+            if job.get("engine") == "comfyui" and prompt_id:
+                state = self._probe_comfy_job(prompt_id)
+                if state in ("done", "running", "queued"):
+                    # ComfyUI 侧任务仍在（或已完成）：重新入队，worker 走
+                    # resume 路径（resume_prompt_id）直接等待/下载
+                    db_module.db.update_job(
+                        job["id"], stage="恢复等待（服务重启）", progress=0.0,
+                    )
+                    self._queue.put_nowait(job["id"])
+                    if shot_id and sb.get_shot(shot_id):
+                        sb.set_shot_status(shot_id, "generating",
+                                           review_stage="generation")
+                    recovered.append(job["id"])
+                    continue
+                if state == "error":
+                    db_module.db.update_job(
+                        job["id"],
+                        status="failed",
+                        error="ComfyUI 任务在服务重启前已执行失败，请重新生成",
+                        stage="失败",
+                        finished_at=_utcnow(),
+                    )
+                    if shot_id and sb.get_shot(shot_id):
+                        sb.update_shot(shot_id, job_id="",
+                                       note="ComfyUI 任务重启前已失败，请重新生成")
+                        sb.set_shot_status(shot_id, "rework", review_stage="")
+                    interrupted.append(job["id"])
+                    continue
+                # lost：ComfyUI 历史与队列都没有 → 按中断处理
             db_module.db.update_job(
                 job["id"],
                 status="failed",
@@ -50,13 +85,15 @@ class JobQueue:
                 stage="已中断",
                 finished_at=_utcnow(),
             )
-            shot_id = job.get("shot_id") or ""
             if shot_id and sb.get_shot(shot_id):
                 sb.update_shot(shot_id, job_id="", note="服务重启时生成中断，请重新生成")
                 # 3A：回到需重做时清除视频审核标记（版本未变，无待审成片）
                 sb.set_shot_status(shot_id, "rework", review_stage="")
-        if running:
-            print(f"[queue] 标记了 {len(running)} 个中断任务（服务重启前正在生成）")
+            interrupted.append(job["id"])
+        if recovered:
+            print(f"[queue] 恢复了 {len(recovered)} 个 ComfyUI 任务（重启后按 prompt_id 继续等待）")
+        if interrupted:
+            print(f"[queue] 标记了 {len(interrupted)} 个中断任务（服务重启前正在生成）")
 
         # ---- pending：重新入队（保持提交顺序） ----
         pending = db_module.db.list_jobs(limit=1000, status="pending", order="asc")
@@ -67,6 +104,20 @@ class JobQueue:
                 sb.set_shot_status(shot_id, "queued")
         if pending:
             print(f"[queue] 重新入队 {len(pending)} 个未执行任务")
+
+    @staticmethod
+    def _probe_comfy_job(prompt_id: str) -> str:
+        """重启恢复探测：ComfyUI 侧任务状态（done/running/queued/error/lost）。
+
+        网络异常等保守情况按 lost 处理——标失败让用户重试，而不是无限
+        等待一个可能已不存在的任务。
+        """
+        try:
+            from .comfyui import ComfyUIClient
+
+            return ComfyUIClient().probe(prompt_id)
+        except Exception:
+            return "lost"
 
     def stop(self):
         if self._task is not None:
@@ -79,6 +130,14 @@ class JobQueue:
         job = db_module.db.create_job(params)
         await self._queue.put(job["id"])
         return job["id"]
+
+    async def enqueue(self, job_id: str) -> None:
+        """把已创建的 job 入队。
+
+        router 需要「先建 job → 落 ComfyUI 工作流快照 → 再入队」时用
+        （2B：入队即固化快照，排队期间用户改模板不影响已排队任务）。
+        """
+        await self._queue.put(job_id)
 
     def cancel(self, job_id: str):
         job = db_module.db.get_job(job_id)
@@ -151,6 +210,13 @@ class JobQueue:
             return job_id in self._cancelled
 
         loop = asyncio.get_running_loop()
+        # 2B：ComfyUI 恢复执行——job 带上 prompt_id 说明是重启恢复的任务，
+        # 跳过提交直接按 prompt_id 继续等（正常流程执行前 prompt_id 必然为空）
+        resume_prompt_id = ""
+        workflow_snapshot = ""
+        if job.get("engine") == "comfyui":
+            resume_prompt_id = job.get("prompt_id") or ""
+            workflow_snapshot = job.get("workflow_snapshot") or ""
         try:
             frame_paths = await loop.run_in_executor(
                 self._executor,
@@ -168,6 +234,8 @@ class JobQueue:
                     on_progress=on_progress,
                     is_cancelled=is_cancelled,
                     reference_image=job.get("reference_image") or "",
+                    resume_prompt_id=resume_prompt_id,
+                    workflow_snapshot=workflow_snapshot,
                 ),
             )
         except GenerationCancelled:
@@ -187,6 +255,11 @@ class JobQueue:
                 sb.update_shot(shot_id, job_id="", note=str(e)[:200])
                 sb.set_shot_status(shot_id, "rework", review_stage="")
             return
+
+        # 2B：ComfyUI prompt_id 持久化——重启恢复与对账都靠它
+        prompt_id = getattr(engine, "last_prompt_id", "") or ""
+        if prompt_id and db_module.db.get_job(job_id):
+            db_module.db.update_job(job_id, prompt_id=prompt_id)
 
         # 合成 MP4（参数写入元数据，画廊可读回复用）
         db_module.db.update_job(job_id, stage="合成视频", progress=0.92)

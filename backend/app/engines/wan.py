@@ -159,8 +159,10 @@ class WanEngine(BaseEngine):
     # ---------- 生成 ----------
     def generate(self, *, prompt, negative_prompt, width, height, num_frames,
                  fps, steps, guidance, seed, frames_dir, on_progress, is_cancelled,
-                 reference_image: str = "") -> List[Path]:
+                 reference_image: str = "", resume_prompt_id: str = "",
+                 workflow_snapshot: str = "") -> List[Path]:
         # Wan2.2-TI2V v1 仅文生视频；reference_image 忽略（首尾帧走 ComfyUI 工作流）
+        # resume_prompt_id / workflow_snapshot 为 ComfyUI 专用参数，本引擎忽略
         import random
 
         import torch

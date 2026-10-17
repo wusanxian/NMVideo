@@ -3,22 +3,14 @@
 与 test_protection_gates.py 的分工：那边测数据层行为，这边测
 FastAPI 路由的状态码与响应体契约（前端依赖的结构）。
 """
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # noqa: F401  （client fixture 见 conftest.py）
+from fastapi.testclient import TestClient  # noqa: F401
 
 from app import storyboard as sb
 
 SCRIPT_A = "场景一：教室\n同学走进教室（中景, 固定, 3秒）\n场景二：操场\n大家在跑步"
 SCRIPT_B = "场景一：雨夜\n甲独自走在街上（远景, 跟, 4秒）\n乙追上来"
 GOOD_PROMPT = "雨夜街头，霓虹灯下的长镜头，湿地反光"
-
-
-@pytest.fixture()
-def client(fresh_db):
-    from app.main import app
-
-    # 不进 lifespan：不起 worker 线程，这些用例只打数据路由
-    return TestClient(app)
 
 
 @pytest.fixture()
