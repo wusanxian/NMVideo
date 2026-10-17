@@ -13,9 +13,13 @@
     （原 client_id 已丢失，走历史轮询）
   - workflow_snapshot：入队时固化的工作流快照；排队期间用户改模板不影响
     已排队任务
+
+2C 输入上传与产物原样归档：
+  - 参考图（i2v/首尾帧）上传到 ComfyUI input 目录，用返回名注入工作流
+  - ComfyUI 原生视频输出原样归档：下载后设置 last_native_video 并返回空帧
+    列表，由队列 remux（-c copy 码流原样 + 元数据），不抽帧不重编码
 """
 import json
-import shutil
 from pathlib import Path
 from typing import Callable, List
 
@@ -27,9 +31,10 @@ from ..comfyui import (
     ComfyUIError,
     build_shot_workflow,
     extract_output_files,
+    load_workflow_template,
+    upload_reference_image,
 )
 from ..config import OUTPUTS_DIR
-from ..video import get_ffmpeg
 
 
 class ComfyEngine(BaseEngine):
@@ -46,6 +51,9 @@ class ComfyEngine(BaseEngine):
         self._avail_cache = (0.0, False)  # (timestamp, available)
         # 2B：最近一次提交的 prompt_id（worker 负责持久化到 job 记录）
         self.last_prompt_id = ""
+        # 2C：最近一次产出的原生视频路径（worker remux 原样归档；
+        # 为空表示走帧序列合成）
+        self.last_native_video = ""
 
     def is_available_cached(self, ttl: float = 10.0) -> bool:
         import time
@@ -102,8 +110,9 @@ class ComfyEngine(BaseEngine):
             "seed": seed,
             "steps": steps,
             "guidance": guidance,
-            # 模板 _aivideo_map 映射了 reference_image 才注入（2C 会改为上传
-            # ComfyUI input 目录后用返回名注入）
+            # 模板 _aivideo_map 映射了 reference_image 才注入；值为 ComfyUI
+            # input 目录内的引用名（2C：入队时 router 已上传并写进快照，
+            # 无快照的兜底路径在 _resolve_workflow 里现场上传）
             "reference_image": reference_image,
         }
 
@@ -136,14 +145,17 @@ class ComfyEngine(BaseEngine):
         frames_dir.mkdir(parents=True, exist_ok=True)
 
         if videos:
-            on_progress(0.96, "下载 ComfyUI 视频并抽帧")
-            src = OUTPUTS_DIR / f"comfy_{prompt_id}.mp4"
+            # 2C：原生视频原样归档——下载后交队列 remux（-c copy 码流原样 +
+            # 元数据），不抽帧不重编码；返回空帧列表即通知队列走直通分支
+            v = videos[0]
+            src = OUTPUTS_DIR / f"comfy_{prompt_id}{Path(v['filename']).suffix or '.mp4'}"
+            src.parent.mkdir(parents=True, exist_ok=True)
             src.write_bytes(
-                self.client.download(videos[0]["filename"], videos[0]["subfolder"], videos[0]["type"])
+                self.client.download(v["filename"], v["subfolder"], v["type"])
             )
-            self._video_to_frames(src, frames_dir, fps)
-            shutil.rmtree(src.parent / f"comfy_{prompt_id}", ignore_errors=True)
-            src.unlink(missing_ok=True)
+            self.last_native_video = str(src)
+            on_progress(0.99, "ComfyUI 原生视频就绪")
+            return []
         else:
             on_progress(0.96, "下载 ComfyUI 图片序列")
             images = sorted(files, key=lambda f: f["filename"])
@@ -177,6 +189,10 @@ class ComfyEngine(BaseEngine):
 
         优先用入队时固化的快照；没有快照（老任务/快照被删）才现场读模板，
         并立即补一份快照，保证每个 ComfyUI 任务都有独立工作流存档。
+
+        2C：兜底路径下参考图在此上传——工作流确实映射了 reference_image
+        才传（默认模板不映射，纯文生视频不受影响）；上传失败抛
+        ComfyUIError 让任务明确失败，而不是提交一个必然报错的工作流。
         """
         job_id = frames_dir.parent.name  # frames_dir = outputs/{job_id}/frames
         if snapshot_path:
@@ -189,7 +205,15 @@ class ComfyEngine(BaseEngine):
                         return graph
                 except (ValueError, OSError):
                     pass  # 快照损坏：退回复位模板
-        graph = build_shot_workflow(inject)
+        template = load_workflow_template()
+        inject = dict(inject)
+        if inject.get("reference_image") and (template.get("_aivideo_map") or {}).get(
+            "reference_image"
+        ):
+            inject["reference_image"] = upload_reference_image(
+                self.client, inject["reference_image"]
+            )
+        graph = build_shot_workflow(inject, template=template)
         snap = OUTPUTS_DIR / "workflows" / f"{job_id}.json"
         try:
             snap.parent.mkdir(parents=True, exist_ok=True)
@@ -200,21 +224,3 @@ class ComfyEngine(BaseEngine):
         except OSError:
             pass  # 快照写失败不阻断生成
         return graph
-
-    @staticmethod
-    def _video_to_frames(video: Path, frames_dir: Path, fps: int) -> None:
-        ffmpeg = get_ffmpeg()
-        import subprocess
-
-        proc = subprocess.run(
-            [
-                ffmpeg, "-y", "-i", str(video),
-                "-vf", f"fps={fps}",
-                "-start_number", "0",
-                str(frames_dir / "frame_%04d.png"),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode != 0 or not list(frames_dir.glob("frame_*.png")):
-            raise ComfyUIError(f"视频抽帧失败: {proc.stderr[-500:]}")

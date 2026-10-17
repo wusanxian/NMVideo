@@ -1,8 +1,10 @@
 """任务队列：单 worker 顺序执行，SQLite 持久化，支持取消与进度回调"""
 import asyncio
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import db as db_module
 from . import hw_probe
@@ -10,7 +12,7 @@ from . import storyboard as sb
 from .config import OUTPUTS_DIR
 from .engines import get_engine
 from .engines.base import GenerationCancelled
-from .video import frames_to_video
+from .video import extract_first_frame, frames_to_video, remux_video
 
 
 def _utcnow() -> str:
@@ -261,27 +263,68 @@ class JobQueue:
         if prompt_id and db_module.db.get_job(job_id):
             db_module.db.update_job(job_id, prompt_id=prompt_id)
 
-        # 合成 MP4（参数写入元数据，画廊可读回复用）
-        db_module.db.update_job(job_id, stage="合成视频", progress=0.92)
-        try:
-            await loop.run_in_executor(
-                self._executor,
-                lambda: frames_to_video(
-                    frames_dir,
-                    OUTPUTS_DIR / f"{job_id}.mp4",
-                    job["fps"],
-                    metadata=self._job_metadata(job, engine),
-                ),
-            )
-        except Exception as e:
-            db_module.db.update_job(
-                job_id, status="failed", error=f"视频合成失败: {e}",
-                stage="失败", finished_at=_utcnow(),
-            )
-            if shot_id and sb.get_shot(shot_id):
-                sb.update_shot(shot_id, job_id="", note=f"视频合成失败: {e}"[:200])
-                sb.set_shot_status(shot_id, "rework", review_stage="")
-            return
+        # 2C：ComfyUI 原生视频原样归档——remux（-c copy 码流原样 + 元数据），
+        # 免抽帧重编码；没有原生视频才走帧序列合成（本地引擎/图片序列输出）
+        native_video = getattr(engine, "last_native_video", "") or ""
+        final_path = OUTPUTS_DIR / f"{job_id}.mp4"
+        metadata = self._job_metadata(job, engine)
+        if native_video and Path(native_video).is_file():
+            native_path = Path(native_video)
+            db_module.db.update_job(job_id, stage="归档原片", progress=0.92)
+            try:
+                await loop.run_in_executor(
+                    self._executor,
+                    lambda: remux_video(native_path, final_path, metadata=metadata),
+                )
+            except Exception:
+                # remux 失败兜底：原样拷贝（丢元数据不丢成片）
+                try:
+                    await loop.run_in_executor(
+                        self._executor,
+                        lambda: shutil.copyfile(native_path, final_path),
+                    )
+                except Exception as e:
+                    db_module.db.update_job(
+                        job_id, status="failed", error=f"视频归档失败: {e}",
+                        stage="失败", finished_at=_utcnow(),
+                    )
+                    if shot_id and sb.get_shot(shot_id):
+                        sb.update_shot(shot_id, job_id="", note=f"视频归档失败: {e}"[:200])
+                        sb.set_shot_status(shot_id, "rework", review_stage="")
+                    return
+            # 清理下载临时文件（含 VHS_VideoCombine 可能产生的同名子目录）
+            native_path.unlink(missing_ok=True)
+            shutil.rmtree(native_path.parent / native_path.stem, ignore_errors=True)
+            # 海报帧：从成片抽第一帧（画廊/审核要用；失败不阻断）
+            try:
+                await loop.run_in_executor(
+                    self._executor,
+                    lambda: extract_first_frame(final_path, frames_dir / "frame_0000.png"),
+                )
+            except Exception:
+                pass
+        else:
+            # 合成 MP4（参数写入元数据，画廊可读回复用）
+            db_module.db.update_job(job_id, stage="合成视频", progress=0.92)
+            try:
+                await loop.run_in_executor(
+                    self._executor,
+                    lambda: frames_to_video(
+                        frames_dir,
+                        final_path,
+                        job["fps"],
+                        metadata=metadata,
+                    ),
+                )
+            except Exception as e:
+                db_module.db.update_job(
+                    job_id, status="failed", error=f"视频合成失败: {e}",
+                    stage="失败", finished_at=_utcnow(),
+                )
+                if shot_id and sb.get_shot(shot_id):
+                    sb.update_shot(shot_id, job_id="", note=f"视频合成失败: {e}"[:200])
+                    sb.set_shot_status(shot_id, "rework", review_stage="")
+                return
 
         poster = frames_dir / "frame_0000.png"
         video_url = f"/outputs/{job_id}.mp4"

@@ -57,5 +57,10 @@ class BaseEngine(ABC):
         直接按已持久化的 prompt_id 等待/下载（其他引擎忽略）。
         workflow_snapshot: ComfyUI 专用——入队时固化的工作流快照路径，
         避免排队期间用户改模板影响已排队任务（其他引擎忽略）。
+
+        返回契约（2C）：通常返回帧路径列表，由队列合成 MP4；若引擎产出
+        的是原生视频（ComfyUI VHS_VideoCombine 等），把视频路径写到
+        self.last_native_video 并返回空列表——队列会 remux 原样归档
+        （免抽帧重编码），本地引擎恒返回帧列表。
         """
         raise NotImplementedError

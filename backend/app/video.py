@@ -57,6 +57,50 @@ def read_video_metadata(video_path: Path) -> dict:
     return {}
 
 
+def remux_video(src_path: Path, out_path: Path, metadata: dict = None) -> Path:
+    """原生视频原样归档为 MP4（2C：免抽帧重编码）。
+
+    ComfyUI 的 VHS_VideoCombine 等节点直接产出视频——旧流程把它拆成 PNG
+    帧再 libx264 重编码，既慢又有画质损失。这里：
+      - mp4/mov 容器：`-c copy` 直接拷贝原始流 + 写 comment 元数据
+        （码流原样、秒级完成，FreeVideo 式「视频自带参数」不丢）
+      - 其它容器（webm/gif）：video→video 转码（不经过 PNG 帧序列，
+        仍远优于抽帧重编码）；remux 失败也自动降级到此分支
+    """
+    ffmpeg = get_ffmpeg()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_args = []
+    if metadata:
+        meta_args = ["-metadata", f"comment={json.dumps(metadata, ensure_ascii=False)}"]
+    if src_path.suffix.lower() in (".mp4", ".mov", ".m4v"):
+        cmd = [ffmpeg, "-y", "-i", str(src_path), "-c", "copy",
+               "-movflags", "+faststart", *meta_args, str(out_path)]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+            return out_path
+        out_path.unlink(missing_ok=True)  # remux 失败：转码兜底
+    cmd = [ffmpeg, "-y", "-i", str(src_path),
+           "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+           "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+           *meta_args, str(out_path)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        raise RuntimeError(f"视频归档失败: {proc.stderr[-500:]}")
+    return out_path
+
+
+def extract_first_frame(video_path: Path, out_path: Path) -> Path:
+    """抽取视频首帧作海报（2C：原生视频直通后画廊/审核仍要有封面）。"""
+    ffmpeg = get_ffmpeg()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [ffmpeg, "-y", "-i", str(video_path),
+           "-frames:v", "1", "-update", "1", str(out_path)]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
+        raise RuntimeError(f"海报帧抽取失败: {proc.stderr[-300:]}")
+    return out_path
+
+
 def probe_duration(video_path: Path) -> float:
     """读取视频时长（秒）；失败返回 0。注意：Duration 在 ffmpeg 的 stderr 输出里"""
     ffmpeg = get_ffmpeg()

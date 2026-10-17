@@ -23,6 +23,8 @@ from typing import Callable, Optional
 
 import requests
 
+from .config import OUTPUTS_DIR
+
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "comfy_workflows"
 DEFAULT_WORKFLOW = WORKFLOWS_DIR / "default.json"
 PRESETS_DIR = WORKFLOWS_DIR / "presets"
@@ -104,6 +106,28 @@ class ComfyUIClient:
             requests.post(f"{self.base_url}/interrupt", timeout=5)
         except Exception:
             pass
+
+    # ---------- 输入上传（2C：i2v/首尾帧参考图） ----------
+    def upload_image(self, path, name: str = "") -> dict:
+        """上传本地图片到 ComfyUI input 目录。
+
+        返回 {"name": ..., "subfolder": ..., "type": "input"}；
+        工作流里引用时用 "subfolder/name"（LoadImage 的 image 输入约定）——
+        ComfyUI 只能读自己 input 目录内的文件，本机路径对它没有意义。
+        """
+        path = Path(path)
+        with open(path, "rb") as f:
+            files = {"image": (name or path.name, f, "application/octet-stream")}
+            r = requests.post(
+                f"{self.base_url}/upload/image",
+                files=files, data={"overwrite": "true"}, timeout=120,
+            )
+        if r.status_code != 200:
+            raise ComfyUIError(f"上传图片失败 {r.status_code}: {r.text[:300]}")
+        data = r.json()
+        if not data.get("name"):
+            raise ComfyUIError(f"上传响应缺少 name: {str(data)[:200]}")
+        return data
 
     # ---------- 进度 / 等待 ----------
     def wait_for_completion(
@@ -368,16 +392,54 @@ def build_workflow(template: dict, mapping: dict, params: dict) -> dict:
     return graph
 
 
-def build_shot_workflow(params: dict) -> dict:
+def local_path_from_output_url(url: str) -> Optional[Path]:
+    """/outputs/... URL → 本机文件路径（2C：参考图上传 ComfyUI 前定位）。
+
+    兼容带域名的绝对 URL（取其中 /outputs/ 段，如同机部署的 http 地址）；
+    非受管路径返回 None（外链图片本机没有副本，无法上传）。
+    """
+    u = (url or "").strip()
+    if not u:
+        return None
+    idx = 0 if u.startswith("/outputs/") else u.find("/outputs/")
+    if idx < 0:
+        return None
+    rel = u[idx + len("/outputs/"):].lstrip("/")
+    if not rel:
+        return None
+    return OUTPUTS_DIR / rel
+
+
+def upload_reference_image(client: "ComfyUIClient", url: str) -> str:
+    """参考图 URL → ComfyUI input 目录里的引用名（2C）。
+
+    上传失败/文件缺失抛 ComfyUIError（调用方决定接口层 400 还是任务失败）——
+    工作流确实需要参考图时，静默丢失比明确失败更糟。
+    """
+    p = local_path_from_output_url(url)
+    if not p or not p.is_file():
+        raise ComfyUIError(f"参考图文件不存在或非受管路径: {url}")
+    data = client.upload_image(p)
+    sub = (data.get("subfolder") or "").strip("/")
+    name = data.get("name") or ""
+    return f"{sub}/{name}" if sub else name
+
+
+def build_shot_workflow(params: dict, template: dict = None) -> dict:
     """按当前模板把镜头参数注入，返回可直接提交的节点图。
 
     params 支持 prompt/negative_prompt/width/height/num_frames/seed/steps/
-    guidance/reference_image（模板 _aivideo_map 里映射了才注入）。
+    guidance/reference_image（模板 _aivideo_map 里映射了才注入；
+    reference_image 应为 ComfyUI input 目录内的引用名，见
+    upload_reference_image）。
 
     入队时（router）与执行时（引擎兜底）共用：入队时构建并落快照，
     执行时优先用快照——排队期间用户改模板不影响已排队任务（2B）。
+    template 可传入已加载的模板，避免重复读盘（router 需要先看
+    _aivideo_map 决定是否上传参考图）。
     """
-    template = load_workflow_template()
+    if template is None:
+        template = load_workflow_template()
     return build_workflow(template, template.get("_aivideo_map", {}), params)
 
 

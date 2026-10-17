@@ -400,16 +400,30 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     # 不影响已排队任务（执行时优先读快照；快照失败不阻断，执行时兜底）
     if data.engine == "comfyui":
         try:
-            from ..comfyui import build_shot_workflow
+            from ..comfyui import (
+                build_shot_workflow,
+                load_workflow_template,
+                upload_reference_image,
+            )
 
+            template = load_workflow_template()
+            ref_for_graph = params["reference_image"]
+            # 2C：工作流消费参考图时，上传到 ComfyUI input 目录并用返回名注入
+            # （LoadImage 只能引用 input 目录内的文件，本机路径对 ComfyUI 无意
+            # 义；默认模板不映射 reference_image，纯文生视频不受影响）
+            if ref_for_graph and (template.get("_aivideo_map") or {}).get("reference_image"):
+                try:
+                    ref_for_graph = upload_reference_image(client, ref_for_graph)
+                except Exception as e:
+                    raise HTTPException(400, f"参考图上传 ComfyUI 失败: {e}")
             graph = build_shot_workflow({
                 "prompt": params["prompt"],
                 "negative_prompt": params["negative_prompt"],
                 "width": params["width"], "height": params["height"],
                 "num_frames": params["num_frames"], "seed": params["seed"],
                 "steps": params["steps"], "guidance": params["guidance"],
-                "reference_image": params["reference_image"],
-            })
+                "reference_image": ref_for_graph,
+            }, template=template)
             snap_dir = OUTPUTS_DIR / "workflows"
             snap_dir.mkdir(parents=True, exist_ok=True)
             snap = snap_dir / f"{job_id}.json"
@@ -418,6 +432,8 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
                 encoding="utf-8",
             )
             db_module.db.update_job(job_id, workflow_snapshot=str(snap))
+        except HTTPException:
+            raise  # 参考图上传失败等明确错误：透传 400，不走兜底
         except Exception as e:
             print(f"[storyboard] ComfyUI 工作流快照写入失败（执行时兜底）: {e}")
     await job_queue.enqueue(job_id)
