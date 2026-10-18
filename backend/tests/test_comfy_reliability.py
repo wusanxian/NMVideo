@@ -326,7 +326,10 @@ def test_engine_fallback_writes_snapshot(tmp_path, monkeypatch):
     assert graph["2"]["inputs"]["text"] == "注入提示词"
     snap = out / "workflows" / "jobD.json"
     assert snap.is_file(), "兜底路径未补写快照"
-    assert json.loads(snap.read_text(encoding="utf-8"))["graph"]["2"]["inputs"]["text"] == "注入提示词"
+    payload = json.loads(snap.read_text(encoding="utf-8"))
+    assert payload["graph"]["2"]["inputs"]["text"] == "注入提示词"
+    # PR-06：兜底补写的快照同样带 schema_version + sha256
+    assert payload["schema_version"] and payload["sha256"], "兜底快照缺 schema/sha256"
 
 
 def test_build_shot_workflow_injects_params(monkeypatch, tmp_path):
@@ -496,8 +499,10 @@ def test_generate_shot_writes_workflow_snapshot(client, fresh_db, tmp_path, monk
 
     snap = Path(job["workflow_snapshot"])
     assert snap.is_file(), "快照文件不存在"
-    graph = json.loads(snap.read_text(encoding="utf-8"))["graph"]
-    assert graph, "快照里没有节点图"
+    payload = json.loads(snap.read_text(encoding="utf-8"))
+    assert payload["graph"], "快照里没有节点图"
+    # PR-06：入队快照带 schema_version + sha256（执行时校验不可变性）
+    assert payload["schema_version"] and payload["sha256"], "入队快照缺 schema/sha256"
     # 分镜进入生成审核门
     after = client.get(f"/api/shots/{sid}").json()
     assert after["status"] == "queued" and after["review_stage"] == "generation"
@@ -736,8 +741,10 @@ def test_upload_success_creates_job_with_snapshot(client, fresh_db, tmp_path,
     assert job["workflow_snapshot"], "成功路径未记录快照"
     snap = Path(job["workflow_snapshot"])
     assert snap.is_file(), "快照文件不存在"
-    graph = json.loads(snap.read_text(encoding="utf-8"))["graph"]
-    assert graph, "快照里没有节点图"
+    payload = json.loads(snap.read_text(encoding="utf-8"))
+    assert payload["graph"], "快照里没有节点图"
+    # PR-06：入队快照带 schema_version + sha256
+    assert payload["schema_version"] and payload["sha256"], "入队快照缺 schema/sha256"
 
     jobs = fresh_db.list_jobs(limit=1000)
     assert len(jobs) == before + 1, "成功路径应恰好新增一个 job"
@@ -1004,3 +1011,80 @@ def test_engine_snapshot_without_graph_fails(tmp_path, monkeypatch):
         engine._resolve_workflow(str(snap), {"prompt": "x"},
                                  tmp_path / "jobI" / "frames")
     assert "快照" in str(ei.value)
+
+
+# =====================================================================
+# PR-06：快照 schema_version + sha256（不可变工作流收尾）
+# 改造.md PR-06：快照保存 schema_version 与 sha256，丢失/损坏标记为
+# "需处理"而非自动替换。取消隔离（取消不全局 interrupt）已在 HF-06 落地，
+# 本段补齐不可变快照的指纹校验。
+# =====================================================================
+def test_snapshot_payload_roundtrip_with_schema_and_sha256(tmp_path, monkeypatch):
+    """PR-06：build_snapshot_payload 带 schema_version + sha256，校验通过。"""
+    from app.comfyui import (
+        SNAPSHOT_SCHEMA_VERSION,
+        build_snapshot_payload,
+        verify_snapshot_payload,
+    )
+
+    graph = {"2": {"class_type": "KSampler", "inputs": {"seed": 7}}}
+    payload = build_snapshot_payload(graph, "jobX")
+    assert payload["schema_version"] == SNAPSHOT_SCHEMA_VERSION
+    assert payload["job_id"] == "jobX"
+    assert payload["graph"] == graph
+    assert payload["sha256"], "快照未记录 sha256"
+    # 同一节点图 → 同一指纹（跨写入方一致）
+    assert build_snapshot_payload(graph, "jobY")["sha256"] == payload["sha256"]
+    # 校验通过并原样返回节点图
+    assert verify_snapshot_payload(payload, tmp_path / "x.json") == graph
+
+
+def test_engine_snapshot_sha256_mismatch_fails(tmp_path, monkeypatch):
+    """PR-06：graph 被改但 sha256 未更新 → 明确失败（篡改/损坏）。"""
+    from app.comfyui import build_snapshot_payload
+
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    snap = tmp_path / "tampered.json"
+    payload = build_snapshot_payload({"2": {"inputs": {"text": "原文"}}}, "jobT")
+    payload["graph"]["2"]["inputs"]["text"] = "被改过"
+    snap.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ComfyUIError) as ei:
+        engine._resolve_workflow(str(snap), {"prompt": "x"},
+                                 tmp_path / "jobT" / "frames")
+    assert "sha256" in str(ei.value), "错误信息未说明指纹校验失败"
+
+
+def test_engine_snapshot_unknown_schema_fails(tmp_path, monkeypatch):
+    """PR-06：schema_version 不受支持 → 明确失败（不静默降级执行）。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    snap = tmp_path / "future.json"
+    snap.write_text(json.dumps({
+        "schema_version": "99.0", "graph": {"2": {"inputs": {}}},
+    }), encoding="utf-8")
+    with pytest.raises(ComfyUIError) as ei:
+        engine._resolve_workflow(str(snap), {"prompt": "x"},
+                                 tmp_path / "jobF" / "frames")
+    assert "schema" in str(ei.value)
+
+
+def test_engine_legacy_snapshot_without_metadata_resolves(tmp_path, monkeypatch):
+    """PR-06：旧快照无 schema_version/sha256 仍可执行（兼容历史存档；
+    校验降级为结构检查，用的仍是存档本身，不存在静默替换）。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    snap = tmp_path / "legacy.json"
+    snap.write_text(json.dumps({
+        "job_id": "jobL", "graph": {"2": {"inputs": {"text": "旧档提示词"}}},
+    }), encoding="utf-8")
+    graph = engine._resolve_workflow(str(snap), {"prompt": "x"},
+                                     tmp_path / "jobL" / "frames")
+    assert graph["2"]["inputs"]["text"] == "旧档提示词", "旧快照未被放行"
+
+
+def test_engine_snapshot_json_array_fails(tmp_path, monkeypatch):
+    """PR-06：快照是合法 JSON 但不是对象（如数组）→ 明确失败。"""
+    engine, _ = _mk_engine(tmp_path, monkeypatch)
+    snap = tmp_path / "array.json"
+    snap.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    with pytest.raises(ComfyUIError):
+        engine._resolve_workflow(str(snap), {"prompt": "x"},
+                                 tmp_path / "jobA2" / "frames")

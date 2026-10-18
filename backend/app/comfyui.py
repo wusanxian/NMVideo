@@ -12,6 +12,7 @@
 引擎按 _aivideo_map 把镜头参数注入节点；用户也可在界面里整 JSON 替换成
 自己从 ComfyUI 导出的工作流（含 AnimateDiff / VHS_VideoCombine 等自定义节点）。
 """
+import hashlib
 import json
 import os
 import threading
@@ -457,6 +458,74 @@ def build_shot_workflow(params: dict, template: dict = None) -> dict:
     if template is None:
         template = load_workflow_template()
     return build_workflow(template, template.get("_aivideo_map", {}), params)
+
+
+# ---------------------------------------------------------------------
+# PR-06：工作流快照 schema——入队即固化的不可变存档
+# 快照写入方（router 入队 / 引擎兜底补写）统一走 build_snapshot_payload，
+# 读取方（引擎执行）统一走 verify_snapshot_payload：
+#   - 写入带 schema_version + 节点图规范化 JSON 的 sha256
+#   - 读取校验 schema 版本与内容指纹；不符/损坏 → ComfyUIError 需人工
+#     处理，绝不静默改用当前模板（同一镜头两次生成必须同一工作流）
+#   - 旧快照无 schema_version/sha256 仍放行（兼容历史数据，校验降级为
+#     结构检查——用的仍是存档本身，不存在"替换"）
+# ---------------------------------------------------------------------
+SNAPSHOT_SCHEMA_VERSION = "1.0"
+
+
+def _graph_sha256(graph: dict) -> str:
+    """节点图规范化 JSON 的 sha256（sort_keys 保证跨进程/跨写入方一致）。"""
+    canonical = json.dumps(graph, sort_keys=True, ensure_ascii=False,
+                           separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def build_snapshot_payload(graph: dict, job_id: str = "") -> dict:
+    """构造带 schema_version + sha256 的快照载荷（PR-06：不可变工作流）。"""
+    return {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "job_id": job_id,
+        "graph": graph,
+        "sha256": _graph_sha256(graph),
+    }
+
+
+def verify_snapshot_payload(data: dict, path) -> dict:
+    """校验快照载荷并返回节点图；任何不一致抛 ComfyUIError（需人工处理）。
+
+    - 载荷非 JSON 对象 / graph 缺失或为空 → 明确失败（HF-05 既有行为）
+    - schema_version 存在但不为本版本支持的取值 → 明确失败（不静默降级）
+    - sha256 存在但与 graph 实际内容不符 → 明确失败（被篡改/损坏）
+    - 旧快照无 schema_version/sha256 → 放行（兼容历史存档）
+    """
+    if not isinstance(data, dict):
+        raise ComfyUIError(
+            f"工作流快照不是有效的 JSON 对象: {path}。请人工处理后重试；"
+            "系统不会静默改用当前模板"
+        )
+    graph = data.get("graph") or data.get("prompt")
+    if not isinstance(graph, dict) or not graph:
+        raise ComfyUIError(
+            f"工作流快照缺少有效节点图: {path}。请人工处理后重试；"
+            "系统不会静默改用当前模板"
+        )
+    schema_version = data.get("schema_version")
+    if schema_version is not None and str(schema_version) != SNAPSHOT_SCHEMA_VERSION:
+        raise ComfyUIError(
+            f"工作流快照 schema 版本不受支持: {path}（快照 "
+            f"{schema_version} ≠ 当前 {SNAPSHOT_SCHEMA_VERSION}）。"
+            "请人工处理后重试；系统不会静默改用当前模板"
+        )
+    digest = data.get("sha256")
+    if digest:
+        actual = _graph_sha256(graph)
+        if actual != digest:
+            raise ComfyUIError(
+                f"工作流快照 sha256 校验失败: {path}（内容被修改或损坏，"
+                f"记录值 {str(digest)[:12]}… ≠ 实际 {actual[:12]}…）。"
+                "为保证输出可复现，请人工处理后重试；系统不会静默改用当前模板"
+            )
+    return graph
 
 
 def extract_output_files(entry: dict) -> list:

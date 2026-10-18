@@ -406,6 +406,7 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     graph = None
     if data.engine == "comfyui":
         from ..comfyui import (
+            build_snapshot_payload,
             build_shot_workflow,
             load_workflow_template,
             upload_reference_image,
@@ -445,13 +446,16 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     job_id = job["id"]
     # 2B：ComfyUI 入队即固化工作流快照——排队期间用户在设置里改模板，
     # 不影响已排队任务（执行时优先读快照；快照写盘失败不阻断，执行时兜底重建）
+    # PR-06：快照带 schema_version + 节点图 sha256，执行时校验，损坏/版本
+    # 不符明确失败，不静默替换
     if graph is not None:
         try:
             snap_dir = OUTPUTS_DIR / "workflows"
             snap_dir.mkdir(parents=True, exist_ok=True)
             snap = snap_dir / f"{job_id}.json"
             snap.write_text(
-                json.dumps({"job_id": job_id, "graph": graph}, ensure_ascii=False, indent=2),
+                json.dumps(build_snapshot_payload(graph, job_id),
+                           ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             db_module.db.update_job(job_id, workflow_snapshot=str(snap))

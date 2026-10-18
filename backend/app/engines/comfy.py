@@ -34,10 +34,12 @@ from ..comfyui import (
     ComfyUICancelled,
     ComfyUIClient,
     ComfyUIError,
+    build_snapshot_payload,
     build_shot_workflow,
     extract_output_files,
     load_workflow_template,
     upload_reference_image,
+    verify_snapshot_payload,
 )
 from ..config import OUTPUTS_DIR
 
@@ -221,6 +223,11 @@ class ComfyEngine(BaseEngine):
         输出不可复现（同一镜头两次生成用了不同工作流）。只有快照文件
         不存在才允许走模板兜底。
 
+        PR-06：快照带 schema_version + 节点图 sha256（见
+        comfyui.verify_snapshot_payload）——版本不受支持或内容指纹
+        不符（被篡改/损坏）同样明确失败；旧快照无元数据仍放行，
+        兼容历史存档。
+
         2C：兜底路径下参考图在此上传——工作流确实映射了 reference_image
         才传（默认模板不映射，纯文生视频不受影响）；上传失败抛
         ComfyUIError 让任务明确失败，而不是提交一个必然报错的工作流。
@@ -231,18 +238,13 @@ class ComfyEngine(BaseEngine):
             if p.is_file():
                 try:
                     data = json.loads(p.read_text(encoding="utf-8"))
-                    graph = data.get("graph") or data.get("prompt")
                 except (ValueError, OSError) as e:
                     raise ComfyUIError(
                         f"工作流快照损坏或不可读: {p}（{e}）。为保证输出可复现，"
                         "请人工处理后重试；系统不会静默改用当前模板"
                     )
-                if not isinstance(graph, dict) or not graph:
-                    raise ComfyUIError(
-                        f"工作流快照缺少有效节点图: {p}。请人工处理后重试；"
-                        "系统不会静默改用当前模板"
-                    )
-                return graph
+                # PR-06：schema_version/sha256 统一校验（旧快照无元数据仍放行）
+                return verify_snapshot_payload(data, p)
             # 快照文件不存在（老任务/被清理）→ 走下面的模板兜底并补写
         template = load_workflow_template()
         inject = dict(inject)
@@ -256,8 +258,10 @@ class ComfyEngine(BaseEngine):
         snap = OUTPUTS_DIR / "workflows" / f"{job_id}.json"
         try:
             snap.parent.mkdir(parents=True, exist_ok=True)
+            # PR-06：兜底补写的快照同样带 schema_version + sha256
             snap.write_text(
-                json.dumps({"job_id": job_id, "graph": graph}, ensure_ascii=False, indent=2),
+                json.dumps(build_snapshot_payload(graph, job_id),
+                           ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
         except OSError:
