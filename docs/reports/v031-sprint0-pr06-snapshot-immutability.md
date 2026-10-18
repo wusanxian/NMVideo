@@ -11,9 +11,9 @@
 
 | 项 | 值 |
 |---|---|
-| `git fetch origin main` | **两次失败**（`schannel: server closed abruptly` / `Empty reply from server`）——GitHub 当前不可达，与改造.md §0 记录的现象一致 |
+| `git fetch origin main` | 首次**两次失败**（`schannel: server closed abruptly` / `Empty reply from server`）——GitHub 当时不可达，与改造.md §0 记录的现象一致；当批 push 成功后重试成功 |
 | 本地 `origin/main` 跟踪引用 | `851e21a`（feat(Electron): 桌面壳面板化…） |
-| 引用可信度 | 昨日（10-17）成功 push 后 `git branch -r -v` 核对过远程即 `851e21a`；live fetch 失败期间以本地跟踪引用为准，已在交付中如实标注 |
+| 引用可信度 | 本地跟踪引用与重试成功的 live fetch 结果一致（均 `851e21a`），且昨日（10-17）push 后亦核对过远程即 `851e21a`；Sprint 0 映射结论以此为准 |
 
 `origin/main` 近 5 条：`851e21a`（Electron 桌面壳）→ `21a0ff2`（2C 上传与归档）→ `879b17c`（2B 可靠性）→ `807344c`（3A 数据门禁）→ `ec77a38`（2A 数据库收口）。
 
