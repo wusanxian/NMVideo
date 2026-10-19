@@ -64,9 +64,14 @@ def check_design(shot: dict, characters: list = None, voices: list = None) -> li
 
     # 参考图模式：设计阶段就要确认输入齐备
     mode = shot.get("mode") or "t2v"
-    if mode in ("i2v", "first_last", "continuation") and not (shot.get("reference_image") or "").strip():
+    has_first = bool((shot.get("first_frame_image") or "").strip()
+                     or (shot.get("reference_image") or "").strip())
+    if mode in ("i2v", "first_last", "continuation") and not has_first:
         issues.append({"level": "error", "code": "no_ref_for_mode",
                        "message": f"当前模式（{MODE_LABELS.get(mode, mode)}）需要参考图/首帧，尚未设置"})
+    if mode == "first_last" and not (shot.get("last_frame_image") or "").strip():
+        issues.append({"level": "error", "code": "no_last_frame",
+                       "message": "首尾帧模式需要尾帧图片（首帧与尾帧分别独立设置）"})
 
     return issues
 
@@ -137,9 +142,14 @@ def check_shot(shot: dict, characters: list = None, voices: list = None) -> list
 
     # 参考图模式提示
     mode = shot.get("mode") or "t2v"
-    if mode in ("i2v", "first_last", "continuation") and not (shot.get("reference_image") or "").strip():
+    has_first = bool((shot.get("first_frame_image") or "").strip()
+                     or (shot.get("reference_image") or "").strip())
+    if mode in ("i2v", "first_last", "continuation") and not has_first:
         issues.append({"level": "error", "code": "no_ref_for_mode",
                        "message": f"当前模式（{MODE_LABELS.get(mode, mode)}）需要参考图/首帧，尚未设置"})
+    if mode == "first_last" and not (shot.get("last_frame_image") or "").strip():
+        issues.append({"level": "error", "code": "no_last_frame",
+                       "message": "首尾帧模式需要尾帧图片（首帧与尾帧分别独立设置）"})
 
     return issues
 

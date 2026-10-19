@@ -85,14 +85,36 @@
             </div>
           </div>
 
-          <!-- 图生视频 / 首尾帧：参考图 -->
-          <div v-if="form.mode === 'i2v' || form.mode === 'first_last'" class="field" style="margin-top: 12px">
+          <!-- 图生视频：参考图/首帧（沿用既有单图链路） -->
+          <div v-if="form.mode === 'i2v'" class="field" style="margin-top: 12px">
             <label>参考图 / 首帧（本地引擎将仅记录，实际图生视频走 ComfyUI 工作流）</label>
             <div class="ref-input-row">
               <input type="text" v-model="form.reference_image" placeholder="/outputs/xxx.png 或 http://..." />
               <label class="btn upload-btn">
                 上传
-                <input type="file" accept="image/*" hidden @change="onRefUpload" />
+                <input type="file" accept="image/*" hidden @change="onFrameUpload($event, 'reference_image')" />
+              </label>
+            </div>
+          </div>
+
+          <!-- 首尾帧（PR-02）：首帧与尾帧分别独立输入，分别注入工作流首/尾帧节点 -->
+          <div v-if="form.mode === 'first_last'" class="field" style="margin-top: 12px">
+            <label>首帧图片（本地引擎仅记录，实际首尾帧走 ComfyUI 工作流）</label>
+            <div class="ref-input-row">
+              <input type="text" v-model="form.first_frame_image" placeholder="/outputs/first.png 或 http://..." />
+              <label class="btn upload-btn">
+                上传
+                <input type="file" accept="image/*" hidden @change="onFrameUpload($event, 'first_frame_image')" />
+              </label>
+            </div>
+          </div>
+          <div v-if="form.mode === 'first_last'" class="field" style="margin-top: 12px">
+            <label>尾帧图片（工作流需映射尾帧节点；未映射时生成会明确提示而不是忽略）</label>
+            <div class="ref-input-row">
+              <input type="text" v-model="form.last_frame_image" placeholder="/outputs/last.png 或 http://..." />
+              <label class="btn upload-btn">
+                上传
+                <input type="file" accept="image/*" hidden @change="onFrameUpload($event, 'last_frame_image')" />
               </label>
             </div>
           </div>
@@ -286,6 +308,10 @@ const form = reactive({
   camera_movement: props.shot.camera_movement || '固定',
   duration_s: props.shot.duration_s || 3,
   reference_image: props.shot.reference_image || '',
+  // PR-02：独立首/尾帧。旧 first_last 只有一张参考图 → 预填为首帧，用户可见可改
+  first_frame_image: props.shot.first_frame_image
+    || (props.shot.mode === 'first_last' ? (props.shot.reference_image || '') : ''),
+  last_frame_image: props.shot.last_frame_image || '',
   prompt: props.shot.prompt || '',
   negative_prompt: props.shot.negative_prompt || '',
   character_ids: [...(props.shot.character_ids || [])],
@@ -370,12 +396,12 @@ function toggleCharacter(id) {
   else form.character_ids.push(id)
 }
 
-async function onRefUpload(e) {
+async function onFrameUpload(e, field) {
   const file = e.target.files?.[0]
   if (!file) return
   try {
     const r = await api.uploadFile(file)
-    form.reference_image = r.url
+    form[field] = r.url
   } catch (err) {
     errMsg.value = err.message
   }

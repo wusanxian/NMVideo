@@ -47,6 +47,8 @@ class BaseEngine(ABC):
         on_progress: ProgressCallback,
         is_cancelled: CancelCheck,
         reference_image: str = "",
+        first_frame_image: str = "",
+        last_frame_image: str = "",
         resume_prompt_id: str = "",
         workflow_snapshot: str = "",
         on_submitted: Optional[SubmittedCallback] = None,
@@ -56,6 +58,8 @@ class BaseEngine(ABC):
 
         reference_image: 参考图/首帧 URL（图生视频/首尾帧/续接模式）；
         不支持的引擎可忽略该参数（保持纯文生视频行为）。
+        first_frame_image / last_frame_image: 独立首帧/尾帧 URL（PR-02，
+        first_last 模式分别注入工作流首/尾帧节点；其他引擎忽略）。
         resume_prompt_id: ComfyUI 专用——服务重启后恢复执行：跳过提交，
         直接按已持久化的 prompt_id 等待/下载（其他引擎忽略）。
         workflow_snapshot: ComfyUI 专用——入队时固化的工作流快照路径，

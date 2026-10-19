@@ -99,6 +99,8 @@ class ComfyEngine(BaseEngine):
         on_progress: Callable[[float, str], None],
         is_cancelled: Callable[[], bool],
         reference_image: str = "",
+        first_frame_image: str = "",
+        last_frame_image: str = "",
         resume_prompt_id: str = "",
         workflow_snapshot: str = "",
         on_submitted: Callable[[str, str], None] = None,
@@ -129,6 +131,10 @@ class ComfyEngine(BaseEngine):
             # input 目录内的引用名（2C：入队时 router 已上传并写进快照，
             # 无快照的兜底路径在 _resolve_workflow 里现场上传）
             "reference_image": reference_image,
+            # PR-02：独立首/尾帧——同样映射了才注入；入队快照已含上传后的
+            # ComfyUI 引用名，兜底路径在 _resolve_workflow 里现场上传
+            "first_frame_image": first_frame_image,
+            "last_frame_image": last_frame_image,
         }
 
         if resume_prompt_id:
@@ -248,12 +254,13 @@ class ComfyEngine(BaseEngine):
             # 快照文件不存在（老任务/被清理）→ 走下面的模板兜底并补写
         template = load_workflow_template()
         inject = dict(inject)
-        if inject.get("reference_image") and (template.get("_aivideo_map") or {}).get(
-            "reference_image"
-        ):
-            inject["reference_image"] = upload_reference_image(
-                self.client, inject["reference_image"]
-            )
+        # 2C/PR-02：兜底路径现场上传——各图片键只有模板映射了对应节点才传
+        #（默认模板不映射任何图片键，纯文生视频不受影响）；上传失败抛
+        # ComfyUIError 让任务明确失败，而不是提交一个必然报错的工作流
+        template_map = template.get("_aivideo_map") or {}
+        for img_key in ("reference_image", "first_frame_image", "last_frame_image"):
+            if inject.get(img_key) and template_map.get(img_key):
+                inject[img_key] = upload_reference_image(self.client, inject[img_key])
         graph = build_shot_workflow(inject, template=template)
         snap = OUTPUTS_DIR / "workflows" / f"{job_id}.json"
         try:

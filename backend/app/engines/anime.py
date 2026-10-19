@@ -134,7 +134,8 @@ class AnimeEngine(BaseEngine):
     # ---------- 生成 ----------
     def generate(self, *, prompt, negative_prompt, width, height, num_frames,
                  fps, steps, guidance, seed, frames_dir, on_progress, is_cancelled,
-                 reference_image: str = "", resume_prompt_id: str = "",
+                 reference_image: str = "", first_frame_image: str = "",
+                 last_frame_image: str = "", resume_prompt_id: str = "",
                  workflow_snapshot: str = "", on_submitted=None,
                  resume_client_id: str = "") -> List[Path]:
         # AnimateDiff 运动模块仅支持文生视频；reference_image 忽略（续接靠提示词衔接）

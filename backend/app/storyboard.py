@@ -272,7 +272,36 @@ def get_shot(shot_id: str) -> Optional[dict]:
             next((v for v in shot["versions"] if v["id"] == shot["current_version_id"]), None)
         )
         _decode_shot(shot)
+        _attach_inheritance_staleness(shot)
     return shot
+
+
+def _attach_inheritance_staleness(shot: dict) -> None:
+    """续接镜头的「继承帧过期」标记（PR-02/PR-08 验收：修改前一镜头后提示下游）。
+
+    续接镜头记录了抽帧来源版本 source_video_version_id；若来源镜头的
+    当前采用版本已不是它（上游重生成了），标记 inheritance_stale=True。
+    查询失败不打断读取（标记只是提示，不是数据）。
+    """
+    shot["inheritance_stale"] = False
+    src_ver_id = (shot.get("source_video_version_id") or "").strip()
+    if (shot.get("mode") or "") != "continuation" or not src_ver_id:
+        return
+    try:
+        src_ver = get_version(src_ver_id)
+        if not src_ver:
+            shot["inheritance_stale"] = True  # 来源版本已被删除
+            return
+        src_shot = get_shot_basic(src_ver["shot_id"])
+        if src_shot and (src_shot.get("current_version_id") or "") != src_ver_id:
+            shot["inheritance_stale"] = True
+    except Exception as e:
+        print(f"[storyboard] 续接过期检查失败（忽略）: {e}")
+
+
+def get_shot_basic(shot_id: str) -> Optional[dict]:
+    """不带版本列表/角色/过期标记的轻量读取（过期检查内部用，避免递归）。"""
+    return _row("SELECT * FROM shots WHERE id = ?", (shot_id,))
 
 
 def list_shots(scene_id: str) -> list:
@@ -288,6 +317,8 @@ def update_shot(shot_id: str, **fields) -> Optional[dict]:
         "prompt", "negative_prompt", "reference_image", "status", "order_index",
         "job_id", "current_version_id", "note", "scene_id",
         "character_ids", "mode", "continue_from", "review_stage",
+        # PR-02：独立首/尾帧与续接来源版本（URL 字符串，兼容旧 reference_image）
+        "first_frame_image", "last_frame_image", "source_video_version_id",
     }
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "character_ids" in fields and not isinstance(fields["character_ids"], str):

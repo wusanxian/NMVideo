@@ -303,6 +303,31 @@ class Database:
                 self._conn.execute("ALTER TABLE review_history ADD COLUMN stage TEXT DEFAULT ''")
             self._conn.commit()
 
+        # ---------- 第四批轻量迁移：首尾帧独立输入 / 续接来源版本（PR-02） ----------
+        with self._lock:
+            shot_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(shots)").fetchall()
+            }
+            for col, ddl in (
+                ("first_frame_image", "TEXT DEFAULT ''"),   # 独立首帧图 URL（旧 reference_image 兼容：未设时充当首帧）
+                ("last_frame_image", "TEXT DEFAULT ''"),    # 独立尾帧图 URL（first_last 模式必填）
+                ("source_video_version_id", "TEXT DEFAULT ''"),  # 续接抽帧来源版本（可复现 + 下游过期提示）
+            ):
+                if col not in shot_cols:
+                    self._conn.execute(f"ALTER TABLE shots ADD COLUMN {col} {ddl}")
+            job_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            # 入队即冻结的输入资产快照（可复现：版本 params 记录当时首/尾帧与来源版本）
+            for col, ddl in (
+                ("first_frame_image", "TEXT DEFAULT ''"),
+                ("last_frame_image", "TEXT DEFAULT ''"),
+                ("source_video_version_id", "TEXT DEFAULT ''"),
+            ):
+                if col not in job_cols:
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()

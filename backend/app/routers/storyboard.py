@@ -72,6 +72,8 @@ class ShotCreate(BaseModel):
     prompt: str = ""
     negative_prompt: str = ""
     reference_image: str = ""
+    first_frame_image: str = ""
+    last_frame_image: str = ""
 
 
 class ShotUpdate(BaseModel):
@@ -83,6 +85,9 @@ class ShotUpdate(BaseModel):
     prompt: Optional[str] = None
     negative_prompt: Optional[str] = None
     reference_image: Optional[str] = None
+    # PR-02：独立首/尾帧（first_last 模式分别注入工作流首/尾帧节点）
+    first_frame_image: Optional[str] = None
+    last_frame_image: Optional[str] = None
 
 
 class ShotGenerate(BaseModel):
@@ -323,10 +328,18 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     if data.engine not in ENGINES:
         raise HTTPException(400, f"未知引擎: {data.engine}")
 
-    # ---- 参考图 / 续接处理 ----
+    # ---- 参考图 / 首尾帧 / 续接处理（PR-02：独立首帧+尾帧）----
     reference_image = (shot.get("reference_image") or "").strip()
+    first_frame = (shot.get("first_frame_image") or "").strip()
+    last_frame = (shot.get("last_frame_image") or "").strip()
     continue_from = (shot.get("continue_from") or "").strip()
+    source_version_id = (shot.get("source_video_version_id") or "").strip()
     mode = data.mode or shot.get("mode") or "t2v"
+
+    # 兼容旧数据：i2v / first_last 未设独立首帧时，reference_image 充当首帧
+    # （旧 first_last 只有一张参考图，行为不变；新 UI 两个独立输入）
+    if mode in ("i2v", "first_last") and not first_frame:
+        first_frame = reference_image
 
     if mode == "continuation":
         # 续接：取 continue_from 镜头（默认上一镜头）的末帧做首帧
@@ -363,11 +376,18 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
         except Exception as e:
             raise HTTPException(400, f"抽取上一镜头末帧失败: {e}")
         reference_image = f"/outputs/refs/{frame_path.name}"
+        source_version_id = src_ver["id"]  # PR-02：记录续接来源版本（可复现 + 过期提示）
+        first_frame = reference_image      # 续接的首帧即来源末帧
         sb.update_shot(shot_id, mode="continuation",
-                       continue_from=src_shot["id"], reference_image=reference_image)
+                       continue_from=src_shot["id"], reference_image=reference_image,
+                       source_video_version_id=source_version_id)
     elif mode in ("i2v", "first_last"):
-        if not reference_image:
+        if not first_frame:
             raise HTTPException(400, f"模式「{mode}」需要先设置参考图/首帧图片")
+        if mode == "first_last" and not last_frame:
+            raise HTTPException(
+                400, "首尾帧模式需要同时设置尾帧图片（PR-02：首帧与尾帧分别独立输入）"
+            )
 
     # ---- 提示词：角色一致性拼装 ----
     prompt = shot["prompt"]
@@ -397,6 +417,11 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["reference_image"] = reference_image
     params["mode"] = mode
     params["continue_from"] = continue_from
+    # PR-02：入队即冻结输入资产（首/尾帧与续接来源版本）——
+    # 记录的是本机 /outputs/ URL（非 ComfyUI input 引用名），保证可复现
+    params["first_frame_image"] = first_frame
+    params["last_frame_image"] = last_frame
+    params["source_video_version_id"] = source_version_id
 
     # ---- P0-02：ComfyUI 备料先行，全部成功后才创建 job ----
     # 旧顺序先 create_job 再上传参考图：上传失败（HTTPException 400）不回滚，
@@ -418,15 +443,64 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             raise HTTPException(
                 400, "工作流模板为空或缺少 prompt 节点图，请在 ComfyUI 设置里检查"
             )
-        ref_for_graph = params["reference_image"]
-        # 2C：工作流消费参考图时，上传到 ComfyUI input 目录并用返回名注入
-        # （LoadImage 只能引用 input 目录内的文件，本机路径对 ComfyUI 无意
-        # 义；默认模板不映射 reference_image，纯文生视频不受影响）
-        if ref_for_graph and (template.get("_aivideo_map") or {}).get("reference_image"):
+        template_map = template.get("_aivideo_map") or {}
+        # PR-02：first_last 需要模板真实支持两张关键帧——尾帧节点未映射
+        # 或首帧无任何可走节点时明确失败，不静默忽略（静默丢图会让用户
+        # 以为尾帧生效了）
+        if mode == "first_last":
+            if not template_map.get("last_frame_image"):
+                raise HTTPException(
+                    400, "当前工作流模板未映射尾帧节点（_aivideo_map 缺 "
+                         "last_frame_image），无法执行首尾帧模式；请在 ComfyUI "
+                         "设置里改用支持首尾帧的模板"
+                )
+            if not template_map.get("first_frame_image") and not template_map.get(
+                "reference_image"
+            ):
+                raise HTTPException(
+                    400, "当前工作流模板未映射首帧节点（_aivideo_map 缺 "
+                         "first_frame_image / reference_image），无法执行首尾帧模式"
+                )
+        # 图片路由：
+        # - t2v：无图
+        # - i2v：沿用既有链路 reference_image（行为不变）
+        # - continuation：来源末帧走 reference_image；模板另映射了
+        #   first_frame_image 时同值注入（映射哪个用哪个）
+        # - first_last：首帧优先走 first_frame_image 专用节点；模板只映射
+        #   reference_image 时兼容旧式单节点模板（首帧经 reference_image 注入）；
+        #   尾帧走 last_frame_image 专用节点
+        ref_for_graph = reference_image
+        first_for_graph = ""
+        last_for_graph = ""
+        if mode == "first_last":
+            if template_map.get("first_frame_image"):
+                first_for_graph = first_frame
+            else:
+                ref_for_graph = first_frame  # 旧式模板：首帧经参考图节点
+            last_for_graph = last_frame
+        elif mode == "continuation":
+            first_for_graph = first_frame
+        # 2C：工作流消费图片时，上传到 ComfyUI input 目录并用返回名注入
+        # （LoadImage 只能引用 input 目录内的文件，本机路径对 ComfyUI 无意义）
+        if ref_for_graph and template_map.get("reference_image"):
             try:
                 ref_for_graph = upload_reference_image(client, ref_for_graph)
             except Exception as e:
                 raise HTTPException(400, f"参考图上传 ComfyUI 失败: {e}")
+        for label, value, mapped_key in (
+            ("首帧", first_for_graph, "first_frame_image"),
+            ("尾帧", last_for_graph, "last_frame_image"),
+        ):
+            if not value or not template_map.get(mapped_key):
+                continue
+            try:
+                uploaded = upload_reference_image(client, value)
+            except Exception as e:
+                raise HTTPException(400, f"{label}图片上传 ComfyUI 失败: {e}")
+            if mapped_key == "first_frame_image":
+                first_for_graph = uploaded
+            else:
+                last_for_graph = uploaded
         graph = build_shot_workflow({
             "prompt": params["prompt"],
             "negative_prompt": params["negative_prompt"],
@@ -434,6 +508,8 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             "num_frames": params["num_frames"], "seed": params["seed"],
             "steps": params["steps"], "guidance": params["guidance"],
             "reference_image": ref_for_graph,
+            "first_frame_image": first_for_graph,
+            "last_frame_image": last_for_graph,
         }, template=template)
         if not graph:
             raise HTTPException(
