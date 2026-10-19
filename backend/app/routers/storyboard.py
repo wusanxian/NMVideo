@@ -422,6 +422,14 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["first_frame_image"] = first_frame
     params["last_frame_image"] = last_frame
     params["source_video_version_id"] = source_version_id
+    # PR-04：入队即冻结角色卡快照（生成时 compose_prompt 所用的角色数据）——
+    # 之后修改角色卡不影响本任务的复现语义；完成后随版本存档（角色版本锁定）
+    params["characters_snapshot"] = json.dumps([
+        {k: c.get(k) for k in ("id", "name", "role", "appearance", "outfit",
+                               "lora", "expressions", "reference_images",
+                               "voice_id", "voice_name")}
+        for c in characters
+    ], ensure_ascii=False)
 
     # ---- P0-02：ComfyUI 备料先行，全部成功后才创建 job ----
     # 旧顺序先 create_job 再上传参考图：上传失败（HTTPException 400）不回滚，

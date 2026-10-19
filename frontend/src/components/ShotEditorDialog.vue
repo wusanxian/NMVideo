@@ -135,6 +135,28 @@
           </div>
         </section>
 
+        <!-- 相邻镜头衔接预览（PR-04 导演工作台） -->
+        <section class="form-section">
+          <h3>相邻镜头衔接</h3>
+          <p v-if="shot.mode === 'continuation' && shot.inheritance_stale"
+             class="hint-text" style="color: #f87171">
+            ⚠ 上游镜头已重新生成了新版本，本镜头的继承帧已过期——建议重新生成或更换续接来源
+          </p>
+          <div v-if="adjacentShots.length" class="adjacent-grid">
+            <div v-for="a in adjacentShots" :key="a.pos" class="adjacent-cell">
+              <div class="adj-title">
+                {{ a.pos === 'prev' ? '⬆ 上一镜头' : '⬇ 下一镜头' }}
+                <b>#{{ a.shot.order_index + 1 }} {{ a.shot.title || '未命名' }}</b>
+              </div>
+              <video v-if="a.shot.current_version && a.shot.current_version.video_url"
+                     :src="a.shot.current_version.video_url" controls muted
+                     preload="metadata"></video>
+              <p v-else class="hint-text">尚无采用版本</p>
+            </div>
+          </div>
+          <p v-else class="hint-text">本镜头是场景内第一个/最后一个镜头，无相邻镜头</p>
+        </section>
+
         <!-- TTS 配音 -->
         <section class="form-section">
           <h3>
@@ -232,9 +254,27 @@
         <!-- 版本 -->
         <section v-if="shot.versions && shot.versions.length" class="form-section">
           <h3>候选版本（{{ shot.versions.length }}）</h3>
+          <!-- A/B 对比区（PR-04：候选版本对比） -->
+          <div v-if="compareIds.length === 2" class="compare-area">
+            <div class="compare-head">
+              <b>版本对比</b>
+              <button class="btn" @click="compareIds = []">退出对比</button>
+            </div>
+            <div class="compare-grid">
+              <div v-for="vid in compareIds" :key="vid" class="compare-cell">
+                <video v-if="versionById(vid) && versionById(vid).video_url"
+                       :src="versionById(vid).video_url" controls muted
+                       preload="metadata"></video>
+                <div class="compare-label">
+                  v{{ versionById(vid) ? versionById(vid).version_no : '?' }}
+                  <span v-if="vid === shot.current_version_id" class="badge done">采用中</span>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="version-list">
             <div v-for="v in shot.versions" :key="v.id" class="version-item"
-                 :class="{ current: v.id === shot.current_version_id }">
+                 :class="{ current: v.id === shot.current_version_id, comparing: compareIds.includes(v.id) }">
               <video v-if="v.video_url" :src="v.video_url" controls preload="metadata" muted></video>
               <div class="version-info">
                 <div class="v-head">
@@ -247,14 +287,22 @@
                   {{ v.params ? JSON.parse(v.params).width : '' }}×{{ v.params ? JSON.parse(v.params).height : '' }} ·
                   {{ v.params ? JSON.parse(v.params).num_frames : '' }}帧
                 </div>
+                <div v-if="v.characters && v.characters.length" class="v-chars">
+                  🔒 角色快照：{{ v.characters.map(c => c.name + (c.outfit ? `（${c.outfit}）` : '')).join('、') }}
+                </div>
                 <div class="v-actions">
                   <button v-if="v.id !== shot.current_version_id" class="btn"
                           @click="$emit('adopt', v.id)">采用此版本</button>
+                  <button class="btn" :class="{ active: compareIds.includes(v.id) }"
+                          @click="toggleCompare(v.id)">
+                    {{ compareIds.includes(v.id) ? '✓ 已选对比' : '对比' }}
+                  </button>
                   <button class="btn danger" @click="$emit('delete-version', v.id)">删除</button>
                 </div>
               </div>
             </div>
           </div>
+          <p v-if="compareIds.length === 1" class="hint-text">已选 1 个版本，再选一个即可并排对比</p>
         </section>
       </div>
 
@@ -327,6 +375,29 @@ const genForm = reactive({
 })
 
 const canGenerate = computed(() => form.prompt.trim().length > 0)
+
+// ---- PR-04 导演工作台：相邻镜头衔接 + 候选版本对比 ----
+const adjacentShots = computed(() => {
+  const list = props.siblingShots || []
+  const i = list.findIndex((s) => s.id === props.shot.id)
+  const out = []
+  if (i > 0) out.push({ pos: 'prev', shot: list[i - 1] })
+  if (i >= 0 && i < list.length - 1) out.push({ pos: 'next', shot: list[i + 1] })
+  return out
+})
+
+const compareIds = ref([])
+const versionById = (vid) => (props.shot.versions || []).find((v) => v.id === vid) || null
+
+function toggleCompare(vid) {
+  const i = compareIds.value.indexOf(vid)
+  if (i >= 0) {
+    compareIds.value.splice(i, 1)
+  } else {
+    compareIds.value.push(vid)
+    if (compareIds.value.length > 2) compareIds.value.shift()
+  }
+}
 
 // ---------- LLM 提示词优化 ----------
 const polishing = ref(false)
@@ -580,6 +651,19 @@ function generate() {
 .range-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
 .range-label input { width: 100%; }
 .version-list { display: flex; flex-direction: column; gap: 12px; }
+/* ---- PR-04 相邻衔接与版本对比 ---- */
+.adjacent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.adjacent-cell { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--bg-card); }
+.adjacent-cell video { width: 100%; border-radius: 8px; background: #000; }
+.adj-title { font-size: 12.5px; margin-bottom: 6px; color: var(--text-dim); }
+.compare-area { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.compare-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.compare-cell video { width: 100%; border-radius: 8px; background: #000; }
+.compare-label { font-size: 12.5px; margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+.version-item.comparing { border-color: var(--accent); }
+.v-chars { font-size: 12px; color: var(--text-dim); }
+.btn.active { border-color: var(--accent); color: var(--accent); }
 .version-item {
   display: flex; gap: 14px; background: var(--bg-card);
   border: 1px solid var(--border); border-radius: 10px; padding: 12px;

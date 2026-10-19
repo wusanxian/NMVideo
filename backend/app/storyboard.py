@@ -548,31 +548,51 @@ def create_version(shot_id: str, job: dict, video_url: str = "",
     params = {
         k: job.get(k)
         for k in ("engine", "width", "height", "num_frames", "fps", "steps",
-                  "guidance", "seed", "preset", "preview", "hardware")
+                  "guidance", "seed", "preset", "preview", "hardware",
+                  "first_frame_image", "last_frame_image",
+                  "source_video_version_id")
         if job.get(k) is not None
     }
+    # PR-04：角色快照随版本存档（入队时冻结，锁定生成所用角色数据）
+    chars_snap = job.get("characters_snapshot") or "[]"
+    if not isinstance(chars_snap, str):
+        chars_snap = json.dumps(chars_snap, ensure_ascii=False)
     return db.insert_and_get(
         "shot_versions",
         ["id", "shot_id", "job_id", "version_no", "prompt", "negative_prompt",
          "engine", "params", "video_url", "poster_url", "seed", "status",
-         "created_at"],
+         "characters_snapshot", "created_at"],
         (vid, shot_id, job["id"], max_no + 1, job.get("prompt", ""),
          job.get("negative_prompt", "") or "", job.get("engine", ""),
          json.dumps(params, ensure_ascii=False), video_url, poster_url,
-         job.get("seed", -1), "candidate", _utcnow()),
+         job.get("seed", -1), "candidate", chars_snap, _utcnow()),
         vid,
     )
 
 
+def _decode_version(v: dict) -> None:
+    """解码版本附加 JSON：角色快照 → characters 列表（PR-04）。"""
+    try:
+        v["characters"] = json.loads(v.get("characters_snapshot") or "[]")
+    except (ValueError, TypeError):
+        v["characters"] = []
+
+
 def list_versions(shot_id: str) -> list:
-    return _rows(
+    rows = _rows(
         "SELECT * FROM shot_versions WHERE shot_id = ? ORDER BY version_no DESC",
         (shot_id,),
     )
+    for v in rows:
+        _decode_version(v)
+    return rows
 
 
 def get_version(version_id: str) -> Optional[dict]:
-    return _row("SELECT * FROM shot_versions WHERE id = ?", (version_id,))
+    v = _row("SELECT * FROM shot_versions WHERE id = ?", (version_id,))
+    if v:
+        _decode_version(v)
+    return v
 
 
 def adopt_version(shot_id: str, version_id: str) -> None:

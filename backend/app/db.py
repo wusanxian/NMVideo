@@ -328,6 +328,21 @@ class Database:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
             self._conn.commit()
 
+        # ---------- 第五批轻量迁移：角色快照冻结（PR-04 导演工作台） ----------
+        with self._lock:
+            # 入队时冻结生成所用角色卡（外貌/服装/LoRA/参考图/音色）：
+            # job 带快照入队，完成后落进 shot_versions——之后改角色卡
+            # 不影响已生成版本的复现语义（镜头锁定角色版本）
+            for table in ("jobs", "shot_versions"):
+                cols = {
+                    r["name"] for r in self._conn.execute(
+                        f"PRAGMA table_info({table})").fetchall()
+                }
+                if "characters_snapshot" not in cols:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN characters_snapshot TEXT DEFAULT '[]'")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()
