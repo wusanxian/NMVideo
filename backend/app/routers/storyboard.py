@@ -443,6 +443,31 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             raise HTTPException(
                 400, "工作流模板为空或缺少 prompt 节点图，请在 ComfyUI 设置里检查"
             )
+        # PR-03：模板声明了能力元数据（_meta）时，点击生成前即阻断——
+        # 不支持的输入模式 / 缺失的 ComfyUI 节点。无 _meta 的模板
+        # （默认模板/旧配置）零影响，行为与旧版完全一致。
+        from ..workflow_capabilities import (
+            capability_from_template,
+            check_missing_nodes,
+            mode_supported,
+        )
+
+        cap = capability_from_template(template)
+        if cap:
+            if not mode_supported(cap, mode):
+                raise HTTPException(
+                    400, f"当前工作流（{cap['name'] or '未命名'}）不支持「{mode}」"
+                         f"模式；声明支持：{'、'.join(cap['supports'])}。"
+                         "请在 ComfyUI 设置里改用匹配的模板"
+                )
+            if cap["required_nodes"]:
+                missing, probe_ok = check_missing_nodes(client, cap["required_nodes"])
+                if missing:
+                    raise HTTPException(
+                        400, f"当前工作流缺少 ComfyUI 节点：{'、'.join(missing)}。"
+                             "请安装对应自定义节点（可在「模型服务」页的工作流"
+                             "能力检查里查看详情）后重试"
+                    )
         template_map = template.get("_aivideo_map") or {}
         # PR-02：first_last 需要模板真实支持两张关键帧——尾帧节点未映射
         # 或首帧无任何可走节点时明确失败，不静默忽略（静默丢图会让用户

@@ -4,7 +4,13 @@
     "name": "MiniMax H3 · 文生视频",
     "description": "调用 MiniMax H3 视频模型生成（API 计费）。需要安装 MiniMax 自定义节点并填 API Key。",
     "requires": "ComfyUI-MiniMax 自定义节点",
-    "mode": "t2v"
+    "mode": "t2v",
+    "execution_kind": "paid_api",
+    "model_id": "minimax-h3",
+    "required_nodes": ["MiniMaxAPIConfig", "MiniMaxTextToVideo", "SaveVideo"],
+    "supports": ["t2v"],
+    "min_vram_gb": 0,
+    "vram_hint": "云端 API 计算：本地显存占用低；按 API 计费（不是免费本地模型）"
   },
   "prompt": {
     "1": {"class_type": "MiniMaxAPIConfig",

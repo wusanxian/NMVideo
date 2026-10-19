@@ -4,7 +4,13 @@
     "name": "AnimateDiff Evolved · 文生视频",
     "description": "本地 AnimateDiff 运动模块 + SD1.5/SDXL checkpoint，VHS_VideoCombine 直出 MP4。需 ComfyUI-AnimateDiff-Evolved。",
     "requires": "ComfyUI-AnimateDiff-Evolved + VideoHelperSuite",
-    "mode": "t2v"
+    "mode": "t2v",
+    "execution_kind": "local",
+    "model_id": "animatediff-evolved",
+    "required_nodes": ["ADE_AnimateDiffLoaderContext", "CheckpointLoaderSimple", "VHS_VideoCombine"],
+    "supports": ["t2v"],
+    "min_vram_gb": 4,
+    "vram_hint": "SD1.5 + AnimateDiff：4GB 显存可跑低分辨率；CPU 可用但极慢（256×256×8帧约 4 分钟）"
   },
   "prompt": {
     "1": {"class_type": "CheckpointLoaderSimple",

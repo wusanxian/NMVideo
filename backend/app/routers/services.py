@@ -185,6 +185,42 @@ def comfy_presets():
     return {"presets": list_presets()}
 
 
+@router.get("/comfy/capabilities")
+def comfy_capabilities():
+    """工作流能力中心（PR-03）：各模板/预设的能力自述 + 实时缺节点探测
+    + 本机 GPU 资源提示。ComfyUI 不可达时 node_probe_ok=False（如实报告
+    「无法探测」，不虚构结果）。"""
+    from .. import hw_probe
+    from ..workflow_capabilities import check_missing_nodes, load_all_capabilities
+
+    items = load_all_capabilities()
+    client = ComfyUIClient()
+    online = False
+    try:
+        online = client.is_available(timeout=2.5)
+    except Exception:
+        online = False
+    for item in items:
+        cap = item.get("capability")
+        missing, probe_ok = [], False
+        if cap and cap.get("required_nodes"):
+            if online:
+                missing, probe_ok = check_missing_nodes(client, cap["required_nodes"])
+        else:
+            probe_ok = True  # 无 required_nodes 声明：无需探测
+        item["missing_nodes"] = missing
+        item["node_probe_ok"] = probe_ok
+        item["node_probe_done"] = bool(online)
+    gpu = None
+    try:
+        hw = hw_probe.probe()
+        gpu = {"name": hw.gpu_name or "未检测到独显",
+               "vram_gb": round(hw.vram_gb or 0, 1)}
+    except Exception:
+        gpu = None
+    return {"probe_ok": online, "gpu": gpu, "items": items}
+
+
 @router.post("/comfy/presets/{preset_id}/apply")
 def comfy_apply_preset(preset_id: str):
     try:

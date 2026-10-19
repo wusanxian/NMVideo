@@ -26,6 +26,53 @@
       </p>
     </div>
 
+    <!-- 工作流能力中心（PR-03） -->
+    <div class="panel">
+      <div class="wf-head">
+        <h3 style="margin: 0">工作流能力检查</h3>
+        <button class="btn" @click="loadCapabilities">🔄 重新检查</button>
+      </div>
+      <p class="hint">
+        每个模板/预设自述其能力：本地免费还是付费 API、支持的输入模式、依赖的
+        ComfyUI 节点与显存建议。点击生成前会按这些声明提前阻断缺节点与不支持的输入。
+      </p>
+      <p v-if="capMsg" class="form-msg">{{ capMsg }}</p>
+      <div v-if="gpuInfo" class="hint" style="margin-top: 0">
+        本机 GPU：<b>{{ gpuInfo.name }}</b>
+        <template v-if="gpuInfo.vram_gb > 0"> · 显存 {{ gpuInfo.vram_gb }}GB</template>
+      </div>
+      <div class="cap-list">
+        <div v-for="it in capItems" :key="it.id" class="cap-item">
+          <div class="cap-row">
+            <b>{{ it.name }}</b>
+            <span v-if="it.capability" class="badge"
+                  :class="it.capability.execution_kind === 'paid_api' ? 'paid' : 'local'">
+              {{ it.capability.execution_label }}
+            </span>
+            <span v-else class="badge unknown">未声明能力</span>
+          </div>
+          <div v-if="it.capability" class="cap-detail">
+            <div v-if="it.capability.model_id" class="cap-line">模型：<code>{{ it.capability.model_id }}</code></div>
+            <div class="cap-line">支持输入：{{ it.capability.supports.join('、') }}</div>
+            <div v-if="it.capability.required_nodes.length" class="cap-line">
+              依赖节点：<code v-for="n in it.capability.required_nodes" :key="n" class="node-chip"
+                             :class="{ missing: isMissing(it, n) }">{{ n }}</code>
+            </div>
+            <div v-if="it.capability.vram_hint" class="cap-line dim">显存/资源：{{ it.capability.vram_hint }}</div>
+            <div v-if="missingCount(it) > 0" class="cap-line err">
+              ⚠ 缺失 {{ missingCount(it) }} 个节点：{{ it.missing_nodes.join('、') }} —— 生成会被阻断，请先在 ComfyUI 安装
+            </div>
+            <div v-else-if="it.node_probe_done && it.capability && it.capability.required_nodes.length"
+                 class="cap-line ok">✓ 依赖节点齐备</div>
+            <div v-else-if="!it.node_probe_done" class="cap-line dim">
+              （ComfyUI 未连接，无法探测节点——连接后点「重新检查」）
+            </div>
+          </div>
+          <div v-else class="cap-detail dim">未声明能力元数据：不参与生成前阻断（兼容旧模板）</div>
+        </div>
+      </div>
+    </div>
+
     <!-- 工作流模板 -->
     <div class="panel">
       <div class="wf-head">
@@ -89,6 +136,33 @@ const saving = ref(false)
 const wfMsg = ref('')
 const presets = ref([])
 const selectedPreset = ref('')
+
+// ---- 工作流能力中心（PR-03） ----
+const capItems = ref([])
+const capMsg = ref('')
+const gpuInfo = ref(null)
+
+function missingCount(it) {
+  return (it.missing_nodes || []).length
+}
+
+function isMissing(it, node) {
+  return (it.missing_nodes || []).includes(node)
+}
+
+async function loadCapabilities() {
+  capMsg.value = ''
+  try {
+    const r = await api.comfyCapabilities()
+    capItems.value = r.items || []
+    gpuInfo.value = r.gpu || null
+    if (!r.probe_ok) {
+      capMsg.value = 'ComfyUI 未连接：节点探测不可用，仅展示声明的能力'
+    }
+  } catch (e) {
+    capMsg.value = e.message
+  }
+}
 
 const presetDesc = computed(() => presets.value.find((p) => p.id === selectedPreset.value) || null)
 
@@ -172,6 +246,7 @@ onMounted(async () => {
   await checkStatus()
   await loadWorkflow()
   await loadPresets()
+  await loadCapabilities()
 })
 </script>
 
@@ -204,4 +279,24 @@ h4 { margin: 18px 0 10px; font-size: 13px; }
   width: 70px; background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: 12px;
 }
+/* ---- 能力中心（PR-03） ---- */
+.cap-list { display: grid; gap: 10px; }
+.cap-item {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+  background: var(--bg-card);
+}
+.cap-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.cap-detail { font-size: 12.5px; line-height: 1.8; }
+.cap-line.dim { color: var(--text-dim); }
+.cap-line.err { color: #f87171; }
+.cap-line.ok { color: #4ade80; }
+.node-chip { margin-right: 4px; display: inline-block; }
+.node-chip.missing { color: #f87171; border-color: #f87171; }
+.badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.badge.local { background: rgba(74, 222, 128, 0.14); color: #4ade80; }
+.badge.paid { background: rgba(251, 191, 36, 0.16); color: #fbbf24; }
+.badge.unknown { background: rgba(148, 163, 184, 0.14); color: var(--text-dim); }
 </style>

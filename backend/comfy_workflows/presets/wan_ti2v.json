@@ -4,7 +4,13 @@
     "name": "Wan 2.2 TI2V-5B · 文生视频",
     "description": "本地 Wan2.2-TI2V-5B：UNETLoader + 标准视频链路，VHS_VideoCombine 直出 MP4。需 ComfyUI-VideoHelperSuite。",
     "requires": "ComfyUI-VideoHelperSuite",
-    "mode": "t2v"
+    "mode": "t2v",
+    "execution_kind": "local",
+    "model_id": "wan2.2-ti2v-5b",
+    "required_nodes": ["UNETLoader", "CLIPLoader", "VAELoader", "EmptyHunyuanLatentVideo", "VHS_VideoCombine"],
+    "supports": ["t2v"],
+    "min_vram_gb": 8,
+    "vram_hint": "RTX 4060 8GB 可跑 480p 短片段；显存不足会走 offload，速度显著下降"
   },
   "prompt": {
     "1": {"class_type": "UNETLoader",

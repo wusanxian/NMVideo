@@ -286,6 +286,29 @@ class ComfyUIClient:
             raise ComfyUIError(f"queue 接口状态码 {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    def object_info(self, node_names: Optional[list] = None) -> dict:
+        """GET /object_info——ComfyUI 实际可用节点类型（PR-03 能力探测）。
+
+        node_names 提供时本地过滤只返回这些键（服务端无按名过滤参数）。
+        不可达 / 非 200 / 响应非 JSON → 抛 ComfyUIError，由调用方决定
+        是「能力查询如实报告不可探测」还是「生成前阻断」。
+        """
+        try:
+            r = requests.get(f"{self.base_url}/object_info", timeout=10)
+        except requests.RequestException as e:
+            raise ComfyUIError(f"object_info 请求失败: {e}") from e
+        if r.status_code != 200:
+            raise ComfyUIError(f"object_info 接口状态码 {r.status_code}")
+        try:
+            data = r.json()
+        except ValueError as e:
+            raise ComfyUIError(f"object_info 响应不是 JSON: {e}") from e
+        if not isinstance(data, dict):
+            raise ComfyUIError("object_info 响应不是节点字典")
+        if node_names:
+            return {k: data[k] for k in node_names if k in data}
+        return data
+
     def probe(self, prompt_id: str) -> str:
         """查询任务在 ComfyUI 侧的状态。
 

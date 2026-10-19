@@ -4,7 +4,13 @@
     "name": "MiniMax H3 · 图生视频",
     "description": "以参考图/首帧为条件生成视频（API 计费）。需要安装 MiniMax 自定义节点并填 API Key。",
     "requires": "ComfyUI-MiniMax 自定义节点",
-    "mode": "i2v"
+    "mode": "i2v",
+    "execution_kind": "paid_api",
+    "model_id": "minimax-h3",
+    "required_nodes": ["MiniMaxAPIConfig", "MiniMaxImageToVideo", "SaveVideo", "LoadImage"],
+    "supports": ["i2v"],
+    "min_vram_gb": 0,
+    "vram_hint": "云端 API 计算：本地显存占用低；按 API 计费（不是免费本地模型）"
   },
   "prompt": {
     "1": {"class_type": "MiniMaxAPIConfig",
