@@ -122,10 +122,16 @@ class ComfyUIClient:
         返回 {"name": ..., "subfolder": ..., "type": "input"}；
         工作流里引用时用 "subfolder/name"（LoadImage 的 image 输入约定）——
         ComfyUI 只能读自己 input 目录内的文件，本机路径对它没有意义。
+
+        name 为空时自动加 12 位 uuid 前缀（PR-02 素材事务：不同任务上传
+        同名文件——如各镜头都导出 frame_0001.png——共享一个 ComfyUI input
+        目录 + overwrite=true 会互相覆盖，导致工作流读到别人的图）。
+        显式传 name 时不改写（调用方自担唯一性）。
         """
         path = Path(path)
+        upload_name = name or f"{uuid.uuid4().hex[:12]}_{path.name}"
         with open(path, "rb") as f:
-            files = {"image": (name or path.name, f, "application/octet-stream")}
+            files = {"image": (upload_name, f, "application/octet-stream")}
             r = requests.post(
                 f"{self.base_url}/upload/image",
                 files=files, data={"overwrite": "true"}, timeout=120,
