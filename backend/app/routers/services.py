@@ -187,11 +187,16 @@ def comfy_presets():
 
 @router.get("/comfy/capabilities")
 def comfy_capabilities():
-    """工作流能力中心（PR-03）：各模板/预设的能力自述 + 实时缺节点探测
-    + 本机 GPU 资源提示。ComfyUI 不可达时 node_probe_ok=False（如实报告
-    「无法探测」，不虚构结果）。"""
+    """工作流能力中心（PR-03/PR-04）：各模板/预设的能力自述 + 实时缺节点
+    / 缺模型探测 + 本机 GPU 资源提示。ComfyUI 不可达时 node_probe_ok=False
+    （如实报告「无法探测」，不虚构结果）。"""
     from .. import hw_probe
-    from ..workflow_capabilities import check_missing_nodes, load_all_capabilities
+    from ..workflow_capabilities import (
+        _iter_loader_options,
+        check_missing_nodes,
+        load_all_capabilities,
+        missing_models_from_info,
+    )
 
     items = load_all_capabilities()
     client = ComfyUIClient()
@@ -200,17 +205,40 @@ def comfy_capabilities():
         online = client.is_available(timeout=2.5)
     except Exception:
         online = False
+    # 缺模型探测需要全量 object_info（各 loader 的选项清单）——所有条目共享
+    # 一次拉取；失败按「无法探测」处理，不虚构清单
+    full_info = None
+    if online and any(
+        (it.get("capability") or {}).get("required_models") for it in items
+    ):
+        try:
+            full_info = client.object_info()
+        except Exception:
+            full_info = None
+    info_usable = full_info is not None and bool(_iter_loader_options(full_info))
     for item in items:
         cap = item.get("capability")
         missing, probe_ok = [], False
+        missing_models, models_probe_ok = [], False
+        has_models = bool(cap and cap.get("required_models"))
         if cap and cap.get("required_nodes"):
             if online:
                 missing, probe_ok = check_missing_nodes(client, cap["required_nodes"])
         else:
             probe_ok = True  # 无 required_nodes 声明：无需探测
+        if has_models:
+            if online and info_usable:
+                missing_models, models_probe_ok = (
+                    missing_models_from_info(full_info, cap["required_models"]), True
+                )
+        else:
+            models_probe_ok = True
         item["missing_nodes"] = missing
         item["node_probe_ok"] = probe_ok
         item["node_probe_done"] = bool(online)
+        item["missing_models"] = missing_models
+        item["models_probe_ok"] = models_probe_ok
+        item["models_probe_done"] = bool(online and (info_usable or not has_models))
     gpu = None
     try:
         hw = hw_probe.probe()

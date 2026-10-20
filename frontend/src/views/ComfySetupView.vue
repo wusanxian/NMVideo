@@ -58,12 +58,25 @@
               依赖节点：<code v-for="n in it.capability.required_nodes" :key="n" class="node-chip"
                              :class="{ missing: isMissing(it, n) }">{{ n }}</code>
             </div>
+            <div v-if="it.capability.required_models && it.capability.required_models.length" class="cap-line">
+              依赖模型：<code v-for="m in it.capability.required_models" :key="m" class="node-chip"
+                             :class="{ missing: isMissingModel(it, m) }">{{ m }}</code>
+            </div>
             <div v-if="it.capability.vram_hint" class="cap-line dim">显存/资源：{{ it.capability.vram_hint }}</div>
             <div v-if="missingCount(it) > 0" class="cap-line err">
               ⚠ 缺失 {{ missingCount(it) }} 个节点：{{ it.missing_nodes.join('、') }} —— 生成会被阻断，请先在 ComfyUI 安装
             </div>
             <div v-else-if="it.node_probe_done && it.capability && it.capability.required_nodes.length"
                  class="cap-line ok">✓ 依赖节点齐备</div>
+            <div v-if="missingModelCount(it) > 0" class="cap-line err">
+              ⚠ 未安装 {{ missingModelCount(it) }} 个模型：{{ it.missing_models.join('、') }} —— 生成会被阻断，请放入 ComfyUI 对应 models/ 子目录
+            </div>
+            <div v-else-if="it.models_probe_done && it.capability && it.capability.required_models && it.capability.required_models.length"
+                 class="cap-line ok">✓ 依赖模型已安装</div>
+            <div v-else-if="!it.models_probe_done && it.capability && it.capability.required_models && it.capability.required_models.length"
+                 class="cap-line dim">
+              （ComfyUI 未连接，无法探测模型——连接后点「重新检查」）
+            </div>
             <div v-else-if="!it.node_probe_done" class="cap-line dim">
               （ComfyUI 未连接，无法探测节点——连接后点「重新检查」）
             </div>
@@ -148,6 +161,14 @@ function missingCount(it) {
 
 function isMissing(it, node) {
   return (it.missing_nodes || []).includes(node)
+}
+
+function missingModelCount(it) {
+  return (it.missing_models || []).length
+}
+
+function isMissingModel(it, model) {
+  return (it.missing_models || []).includes(model)
 }
 
 async function loadCapabilities() {

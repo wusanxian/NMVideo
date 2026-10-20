@@ -8,6 +8,7 @@
     "execution_kind": "local",
     "model_id": "animatediff-evolved",
     "required_nodes": ["ADE_AnimateDiffLoaderContext", "CheckpointLoaderSimple", "VHS_VideoCombine"],
+    "required_models": ["v1-5-pruned-emaonly.safetensors", "mm_sd_v15_v2.ckpt"],
     "supports": ["t2v"],
     "min_vram_gb": 4,
     "vram_hint": "SD1.5 + AnimateDiff：4GB 显存可跑低分辨率；CPU 可用但极慢（256×256×8帧约 4 分钟）"

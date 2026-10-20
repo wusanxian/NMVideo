@@ -272,3 +272,134 @@ def test_generate_no_meta_template_unaffected(client, fresh_db, monkeypatch):
     sid = _mk_shot(client, "cap-nometa")
     r = client.post(f"/api/shots/{sid}/generate", json={"engine": "comfyui"})
     assert r.status_code == 201, r.text
+
+
+# =====================================================================
+# PR-04 剩余：required_models 模型扫描
+# =====================================================================
+WAN_UNET = "wan2.2_ti2v_5B_fp16.safetensors"
+INFO_WITH_LOADERS = {
+    "UNETLoader": {"input": {"required": {
+        "unet_name": [["v1-5-pruned-emaonly.safetensors", WAN_UNET], {}]}}},
+    "CLIPLoader": {"input": {"required": {
+        "clip_name": [["umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}]}}},
+}
+INFO_NO_OPTIONS = {"SomeNode": {"input": {"required": {"seed": ["INT", {"default": 0}]}}}}
+
+
+def test_capability_includes_required_models():
+    from app.workflow_capabilities import capability_from_template
+
+    cap = capability_from_template({
+        "_meta": {"required_nodes": ["UNETLoader"],
+                  "required_models": [WAN_UNET, "wan2.2_vae.safetensors"]},
+    })
+    assert cap["required_models"] == [WAN_UNET, "wan2.2_vae.safetensors"]
+    assert capability_from_template({"_meta": {"name": "x"}})["required_models"] == []
+
+
+def test_check_missing_models_semantics(monkeypatch):
+    from app.workflow_capabilities import check_missing_models
+
+    c = ComfyUIClient()
+    monkeypatch.setattr(ComfyUIClient, "object_info",
+                        lambda self, node_names=None: INFO_WITH_LOADERS)
+    missing, ok = check_missing_models(c, [WAN_UNET])
+    assert ok and missing == [], "loader 选项里有 → 已安装"
+    missing, ok = check_missing_models(c, ["not_installed.safetensors"])
+    assert ok and missing == ["not_installed.safetensors"]
+    missing, ok = check_missing_models(c, [])
+    assert ok and missing == [], "未声明 → 不探测不阻断"
+    monkeypatch.setattr(ComfyUIClient, "object_info",
+                        lambda self, node_names=None: (_ for _ in ()).throw(
+                            ComfyUIError("offline")))
+    missing, ok = check_missing_models(c, [WAN_UNET])
+    assert ok is False and missing == [], "探测失败不虚构清单"
+    monkeypatch.setattr(ComfyUIClient, "object_info",
+                        lambda self, node_names=None: INFO_NO_OPTIONS)
+    missing, ok = check_missing_models(c, [WAN_UNET])
+    assert ok is False and missing == [], "响应无 loader 选项 → 探测不可信"
+
+
+def test_preset_meta_declares_required_models():
+    """内置预设声明 required_models（与 required_nodes 并存，不改旧字段）。"""
+    from app.workflow_capabilities import load_all_capabilities
+
+    items = {it["id"]: it for it in load_all_capabilities()}
+    wan_models = items["wan_ti2v"]["capability"]["required_models"]
+    assert WAN_UNET in wan_models
+    anime_models = items["anime_diff"]["capability"]["required_models"]
+    assert "mm_sd_v15_v2.ckpt" in anime_models
+    assert items["minimax_h3_t2v"]["capability"]["required_models"] == [], "付费 API 不声明本地模型"
+
+
+def test_capabilities_endpoint_reports_missing_models(client, monkeypatch):
+    import app.hw_probe as hw_mod
+
+    class _P:
+        gpu_name = "RTX 4060"
+        vram_gb = 8.0
+
+    monkeypatch.setattr(hw_mod, "probe", lambda: _P())
+    monkeypatch.setattr(ComfyUIClient, "is_available", lambda self, timeout=2.5: True)
+    # 模拟只装了 SD1.5 checkpoint 的 ComfyUI（缺 Wan 模型）
+    info_partial = {
+        "UNETLoader": {"input": {"required": {
+            "unet_name": [["v1-5-pruned-emaonly.safetensors"], {}]}}},
+        "CLIPLoader": {"input": {"required": {
+            "clip_name": [["umt5_xxl_fp8_e4m3fn_scaled.safetensors"], {}]}}},
+        "VAELoader": {"input": {"required": {
+            "vae_name": [["wan2.2_vae.safetensors"], {}]}}},
+    }
+    monkeypatch.setattr(ComfyUIClient, "object_info",
+                        lambda self, node_names=None: info_partial)
+    r = client.get("/api/comfy/capabilities")
+    assert r.status_code == 200, r.text
+    wan = next(it for it in r.json()["items"] if it["id"] == "wan_ti2v")
+    assert WAN_UNET in wan["missing_models"]
+    assert wan["models_probe_done"] is True
+    assert "umt5_xxl_fp8_e4m3fn_scaled.safetensors" not in wan["missing_models"]
+
+
+def test_generate_blocks_on_missing_required_model(client, fresh_db, monkeypatch):
+    """模板声明 required_models 且探测缺失 → 400 明示未装模型，不留 job。"""
+    import app.comfyui as comfyui_mod
+
+    tpl = {
+        "prompt": {"2": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}},
+        "_aivideo_map": {},
+        "_meta": {"name": "Wan 测试", "execution_kind": "local",
+                  "required_models": [WAN_UNET], "supports": ["t2v"]},
+    }
+    monkeypatch.setattr(comfyui_mod, "load_workflow_template", lambda: tpl)
+    monkeypatch.setattr(ComfyUIClient, "is_available", lambda self, timeout=2.5: True)
+    # 模拟未装 Wan 模型的 ComfyUI（只有 SD1.5 checkpoint）
+    monkeypatch.setattr(ComfyUIClient, "object_info",
+                        lambda self, node_names=None: {
+                            "UNETLoader": {"input": {"required": {
+                                "unet_name": [["v1-5-pruned-emaonly.safetensors"], {}]}}},
+                        })
+    sid = _mk_shot(client, "cap-model-missing")
+    before = len(fresh_db.list_jobs(limit=1000))
+    r = client.post(f"/api/shots/{sid}/generate", json={"engine": "comfyui"})
+    assert r.status_code == 400
+    assert WAN_UNET in r.json()["detail"]
+    assert len(fresh_db.list_jobs(limit=1000)) == before
+
+
+def test_generate_passes_when_models_installed(client, fresh_db, monkeypatch):
+    import app.comfyui as comfyui_mod
+
+    tpl = {
+        "prompt": {"2": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}}},
+        "_aivideo_map": {},
+        "_meta": {"name": "Wan 测试", "execution_kind": "local",
+                  "required_models": [WAN_UNET], "supports": ["t2v"]},
+    }
+    monkeypatch.setattr(comfyui_mod, "load_workflow_template", lambda: tpl)
+    monkeypatch.setattr(ComfyUIClient, "is_available", lambda self, timeout=2.5: True)
+    monkeypatch.setattr(ComfyUIClient, "object_info",
+                        lambda self, node_names=None: INFO_WITH_LOADERS)
+    sid = _mk_shot(client, "cap-model-ok")
+    r = client.post(f"/api/shots/{sid}/generate", json={"engine": "comfyui"})
+    assert r.status_code == 201, r.text

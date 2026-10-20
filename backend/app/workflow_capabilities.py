@@ -9,6 +9,8 @@ requires/mode 字段并存，只加字段不改旧值）::
         "execution_kind": "local" | "paid_api",      # 本地免费 / 云端付费 API
         "model_id": "minimax-h3" | "wan2.2-ti2v-5b" | ...
         "required_nodes": ["MiniMaxAPIConfig", ...], # 缺任一节点无法执行
+        "required_models": ["wan2.2_ti2v_5B_fp16.safetensors", ...],
+                                                     # 缺任一模型无法执行
         "supports": ["t2v", "i2v", "first_last"],    # 支持的输入模式
         "min_vram_gb": 8,                            # 0/缺省 = 不限（API 类）
         "vram_hint": "RTX 4060 8GB 可跑 480p; ...",  # 展示用资源提示
@@ -61,6 +63,7 @@ def capability_from_template(template: dict) -> Optional[dict]:
         "execution_label": _EXECUTION_LABELS[kind],
         "model_id": str(meta.get("model_id") or ""),
         "required_nodes": _norm_str_list(meta.get("required_nodes")),
+        "required_models": _norm_str_list(meta.get("required_models")),
         "supports": [m for m in supports if m in SUPPORTED_MODES] or list(SUPPORTED_MODES),
         "min_vram_gb": min_vram,
         "vram_hint": str(meta.get("vram_hint") or ""),
@@ -123,6 +126,68 @@ def check_missing_nodes(client, required_nodes: list) -> tuple:
         return [], False
     missing = [n for n in required if n not in (info or {})]
     return missing, True
+
+
+def _basename(value: str) -> str:
+    """模型文件名的规范化 basename（统一斜杠、小写，便于跨平台比较）。"""
+    v = str(value).replace("\\", "/")
+    return v.rsplit("/", 1)[-1].strip().lower()
+
+
+def _iter_loader_options(info: dict) -> set:
+    """从 /object_info 全量响应收集所有 loader 选项列表。
+
+    ComfyUI 对 CheckpointLoaderSimple / UNETLoader / VAELoader / LoraLoader
+    等模型选择输入，/object_info 里 spec[0] 是该输入的可选值清单
+    （即已安装到对应 models/ 子目录的文件名列表）。全部收集后与
+    required_models 做匹配，无需知道节点类型。
+    """
+    options: set = set()
+    for node in (info or {}).values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("input")
+        if not isinstance(inputs, dict):
+            continue
+        for section in ("required", "optional"):
+            sect = inputs.get(section)
+            if not isinstance(sect, dict):
+                continue
+            for spec in sect.values():
+                if isinstance(spec, (list, tuple)) and spec:
+                    first = spec[0]
+                    if isinstance(first, (list, tuple)):
+                        options.update(str(v) for v in first if str(v).strip())
+    return options
+
+
+def missing_models_from_info(info: Optional[dict], required_models: list) -> list:
+    """在已获取的 object_info 上比对模型清单（端点复用同一份探测结果）。"""
+    required = _norm_str_list(required_models)
+    if not required:
+        return []
+    options = {_basename(o) for o in _iter_loader_options(info)}
+    return [m for m in required if _basename(m) not in options]
+
+
+def check_missing_models(client, required_models: list) -> tuple:
+    """探测 ComfyUI 已安装模型，返回 (缺失模型列表, 探测是否成功)。
+
+    - required_models 为空 → ([], True)
+    - /object_info 不可达 → ([], False)（不阻断，与缺节点语义一致）
+    - 响应里没有任何 loader 选项 → 视为探测不可信 → ([], False)，
+      不虚构「已装齐」也不虚构「全缺」
+    - 匹配规则：basename 精确相等（required_models 应填完整文件名）
+    """
+    if not _norm_str_list(required_models):
+        return [], True
+    try:
+        info = client.object_info()
+    except Exception:
+        return [], False
+    if not _iter_loader_options(info):
+        return [], False
+    return missing_models_from_info(info, required_models), True
 
 
 def mode_supported(cap: Optional[dict], mode: str) -> bool:

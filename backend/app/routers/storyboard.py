@@ -456,6 +456,7 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
         # （默认模板/旧配置）零影响，行为与旧版完全一致。
         from ..workflow_capabilities import (
             capability_from_template,
+            check_missing_models,
             check_missing_nodes,
             mode_supported,
         )
@@ -475,6 +476,19 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
                         400, f"当前工作流缺少 ComfyUI 节点：{'、'.join(missing)}。"
                              "请安装对应自定义节点（可在「模型服务」页的工作流"
                              "能力检查里查看详情）后重试"
+                    )
+            # PR-04 剩余：声明的模型文件未安装 → 明确 400（不上传后静默失败）
+            if cap["required_models"]:
+                missing_models, models_ok = check_missing_models(
+                    client, cap["required_models"]
+                )
+                if missing_models:
+                    raise HTTPException(
+                        400, f"当前工作流需要以下模型但未安装："
+                             f"{'、'.join(missing_models)}。"
+                             "请下载并放入 ComfyUI 对应 models/ 子目录"
+                             "（可在「模型服务」页的工作流能力检查里查看详情）"
+                             "后重试"
                     )
         template_map = template.get("_aivideo_map") or {}
         # PR-02：first_last 需要模板真实支持两张关键帧——尾帧节点未映射
