@@ -9,9 +9,10 @@
     </header>
 
     <div class="stage-hint">
-      <b>第一期（PR-N01）已交付：</b>小说导入（TXT / Markdown，UTF-8 / GBK / BIG5）、
-      中文章节自动识别、章节查看 / 重命名 / 拆分 / 合并 / 重新识别、原文位置保留。
-      <span class="dim">故事分析（PR-N02）与自动分镜（PR-N03/N04）将在后续批次接入，所有 AI 草案均可编辑审核。</span>
+      <b>第一期已交付：</b>PR-N01 小说导入（TXT / Markdown，UTF-8 / GBK / BIG5）、中文章节自动识别、
+      章节查看 / 重命名 / 拆分 / 合并 / 重新识别、原文位置保留；
+      <b>PR-N02 故事圣经</b>：AI 分章节理解（人物 / 场景 / 事件 / 关系）、结构化设定可编辑、审核版本、定位原小说。
+      <span class="dim">分集剧本（PR-N03）与自动分镜（PR-N04）将在后续批次接入，所有 AI 草案均可编辑审核。</span>
     </div>
 
     <div v-if="loading" class="empty">加载中…</div>
@@ -37,59 +38,72 @@
         </div>
       </aside>
 
-      <!-- 章节管理 -->
+      <!-- 主区：章节管理 / 故事圣经 -->
       <section v-if="current" class="chapter-panel">
-        <header class="chapter-head">
-          <div>
-            <h2 style="margin: 0">{{ current.title }}</h2>
-            <div class="dim" style="font-size: 12px">
-              共 {{ chapters.length }} 章 · 原文 {{ fmtCount(current.char_count) }} 字 ·
-              点击章节查看原文；拆分/合并仅改章节边界，不回写正文
-            </div>
-          </div>
-          <div style="display: flex; gap: 8px">
-            <button class="btn" :disabled="reparsing" @click="reparse">
-              {{ reparsing ? '识别中…' : '🔄 重新识别章节' }}
-            </button>
-          </div>
-        </header>
+        <div class="tabs">
+          <button class="tab" :class="{ active: activeTab === 'chapters' }" @click="activeTab = 'chapters'">
+            📄 章节管理
+          </button>
+          <button class="tab" :class="{ active: activeTab === 'bible' }" @click="activeTab = 'bible'">
+            📖 故事圣经
+          </button>
+        </div>
 
-        <div class="chapter-list">
-          <div v-for="c in chapters" :key="c.id" class="chapter-row">
-            <div class="chapter-main">
-              <span class="seq">{{ c.seq }}</span>
-              <template v-if="editingId === c.id">
-                <input class="rename-input" v-model="editingTitle"
-                       @keyup.enter="saveRename(c)" @keyup.esc="editingId = ''" />
-                <button class="btn btn-primary btn-sm" @click="saveRename(c)">保存</button>
-                <button class="btn btn-sm" @click="editingId = ''">取消</button>
-              </template>
-              <template v-else>
-                <span class="chapter-title" @click="toggle(c.id)">{{ c.title }}</span>
-                <span class="dim ch-meta">{{ c.char_count }} 字 · 位置 [{{ c.start }}, {{ c.end }}]</span>
-              </template>
+        <template v-if="activeTab === 'chapters'">
+          <header class="chapter-head">
+            <div>
+              <h2 style="margin: 0">{{ current.title }}</h2>
+              <div class="dim" style="font-size: 12px">
+                共 {{ chapters.length }} 章 · 原文 {{ fmtCount(current.char_count) }} 字 ·
+                点击章节查看原文；拆分/合并仅改章节边界，不回写正文
+              </div>
             </div>
-            <div class="chapter-ops">
-              <button class="btn btn-sm" @click="startRename(c)">重命名</button>
-              <button class="btn btn-sm" @click="toggleSplit(c)">拆分</button>
-              <button class="btn btn-sm" :disabled="c.seq >= chapters.length"
-                      title="与下一章合并" @click="mergeNext(c)">合并下一章</button>
+            <div style="display: flex; gap: 8px">
+              <button class="btn" :disabled="reparsing" @click="reparse">
+                {{ reparsing ? '识别中…' : '🔄 重新识别章节' }}
+              </button>
             </div>
-          </div>
+          </header>
 
-          <!-- 章节内容 / 拆分输入 -->
-          <div v-for="c in chapters" :key="'d' + c.id">
-            <div v-if="openId === c.id" class="chapter-detail">
-              <pre class="chapter-content">{{ contentOf(c.id) || '加载中…' }}</pre>
-              <div v-if="splitId === c.id" class="split-bar">
-                <label>在本章第 <input type="number" class="num" v-model.number="splitOffset"
-                                      :min="1" :max="Math.max(1, c.char_count - 2)" /> 字处拆分
-                  （本章共 {{ c.char_count }} 字）</label>
-                <button class="btn btn-primary btn-sm" :disabled="!splitOffset" @click="doSplit(c)">拆分为（上）/（下）</button>
+          <div class="chapter-list">
+            <div v-for="c in chapters" :key="c.id" class="chapter-row">
+              <div class="chapter-main">
+                <span class="seq">{{ c.seq }}</span>
+                <template v-if="editingId === c.id">
+                  <input class="rename-input" v-model="editingTitle"
+                         @keyup.enter="saveRename(c)" @keyup.esc="editingId = ''" />
+                  <button class="btn btn-primary btn-sm" @click="saveRename(c)">保存</button>
+                  <button class="btn btn-sm" @click="editingId = ''">取消</button>
+                </template>
+                <template v-else>
+                  <span class="chapter-title" @click="toggle(c.id)">{{ c.title }}</span>
+                  <span class="dim ch-meta">{{ c.char_count }} 字 · 位置 [{{ c.start }}, {{ c.end }}]</span>
+                </template>
+              </div>
+              <div class="chapter-ops">
+                <button class="btn btn-sm" @click="startRename(c)">重命名</button>
+                <button class="btn btn-sm" @click="toggleSplit(c)">拆分</button>
+                <button class="btn btn-sm" :disabled="c.seq >= chapters.length"
+                        title="与下一章合并" @click="mergeNext(c)">合并下一章</button>
+              </div>
+            </div>
+
+            <!-- 章节内容 / 拆分输入 -->
+            <div v-for="c in chapters" :key="'d' + c.id">
+              <div v-if="openId === c.id" class="chapter-detail">
+                <pre class="chapter-content">{{ contentOf(c.id) || '加载中…' }}</pre>
+                <div v-if="splitId === c.id" class="split-bar">
+                  <label>在本章第 <input type="number" class="num" v-model.number="splitOffset"
+                                        :min="1" :max="Math.max(1, c.char_count - 2)" /> 字处拆分
+                    （本章共 {{ c.char_count }} 字）</label>
+                  <button class="btn btn-primary btn-sm" :disabled="!splitOffset" @click="doSplit(c)">拆分为（上）/（下）</button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        </template>
+
+        <NovelBiblePanel v-else :novel-id="currentId" :chapters="chapters" @locate="onLocate" />
       </section>
     </div>
 
@@ -132,10 +146,12 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import NovelBiblePanel from './NovelBiblePanel.vue'
 
 const novels = ref([])
 const loading = ref(true)
 const currentId = ref('')
+const activeTab = ref('chapters')
 const chapters = ref([])
 const openId = ref('')
 const splitId = ref('')
@@ -169,6 +185,7 @@ async function load() {
 
 async function select(id) {
   currentId.value = id
+  activeTab.value = 'chapters'
   openId.value = ''
   await loadChapters()
 }
@@ -296,12 +313,38 @@ function fmtCount(n) {
   return (n || 0).toLocaleString('zh-CN')
 }
 
+// 故事圣经实体章节定位：切回章节页签并展开对应章节原文
+async function onLocate(chapterId) {
+  activeTab.value = 'chapters'
+  await toggle(chapterId)
+}
+
 function fmtTime(iso) {
   return (iso || '').slice(5, 16).replace('T', ' ')
 }
 </script>
 
 <style scoped>
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border, #2a3345);
+}
+.tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text-dim, #9aa5b8);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text, #e5e9f0); }
+.tab.active {
+  color: var(--accent, #8b5cf6);
+  border-bottom-color: var(--accent, #8b5cf6);
+}
 .stage-hint {
   padding: 12px 16px;
   margin-bottom: 16px;

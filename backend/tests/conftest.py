@@ -19,7 +19,7 @@ import pytest  # noqa: E402
 
 from app.db import Database  # noqa: E402
 
-_PATCHED = ("app.storyboard", "app.assets", "app.tracks", "app.novel")
+_PATCHED = ("app.storyboard", "app.assets", "app.tracks", "app.novel", "app.novel_bible")
 
 
 @pytest.fixture()
@@ -27,6 +27,8 @@ def fresh_db(tmp_path):
     """每个测试一个独立 SQLite 文件；storyboard/assets/tracks 全部指向它。"""
     import app.db as db_module
     import app.assets  # noqa: F401
+    import app.novel  # noqa: F401
+    import app.novel_bible  # noqa: F401
     import app.storyboard  # noqa: F401
     import app.tracks  # noqa: F401
 

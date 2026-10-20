@@ -14,6 +14,7 @@ from .routers import assets as assets_router
 from .routers import engines as engines_router
 from .routers import jobs as jobs_router
 from .routers import novel as novel_router
+from .routers import novel_bible as novel_bible_routers
 from .routers import services as services_router
 from .routers import storyboard as storyboard_router
 from .config import FRONTEND_DIST, OUTPUTS_DIR
@@ -51,6 +52,8 @@ app.add_middleware(
 app.include_router(engines_router.router)
 app.include_router(jobs_router.router)
 app.include_router(novel_router.router)
+app.include_router(novel_bible_routers.router)
+app.include_router(novel_bible_routers.bible_router)
 app.include_router(storyboard_router.router)
 app.include_router(assets_router.router)
 app.include_router(services_router.router)

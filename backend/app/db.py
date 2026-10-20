@@ -42,6 +42,15 @@ _FK_TABLES = [
     ("subtitle_tracks", "projects", "project_id"),
     ("exports", "projects", "project_id"),
     ("novel_chapters", "novels", "novel_id"),
+    # PR-N02：故事圣经（圣经随小说删；版本/四类实体随圣经删；
+    # 章节分析只挂 novel_id——章节重识别不抹掉已有人工/LLM 分析成果）
+    ("novel_bibles", "novels", "novel_id"),
+    ("novel_bible_versions", "novel_bibles", "bible_id"),
+    ("novel_chapter_analyses", "novels", "novel_id"),
+    ("bible_characters", "novel_bibles", "bible_id"),
+    ("bible_scenes", "novel_bibles", "bible_id"),
+    ("bible_timeline", "novel_bibles", "bible_id"),
+    ("bible_relations", "novel_bibles", "bible_id"),
 ]
 
 
@@ -150,6 +159,101 @@ class Database:
                     "end" INTEGER NOT NULL,
                     char_count INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
+                );
+
+                -- PR-N02：故事圣经——AI 分章节理解的结构化沉淀（人物/场景/
+                -- 时间线/人物关系），是一切后续一致性的锚。所有 AI 草案可编辑、
+                -- 可审核、可保存版本；实体用 chapters 快照（chapter_id+title+
+                -- start/end）定位到原小说，章节被删改后仍可找回原文位置。
+                CREATE TABLE IF NOT EXISTS novel_bibles (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    version INTEGER NOT NULL DEFAULT 0,
+                    summary TEXT DEFAULT '',
+                    analysis_model TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_bible_versions (
+                    id TEXT PRIMARY KEY,
+                    bible_id TEXT NOT NULL REFERENCES novel_bibles(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                -- 章节分析：一章一行（UNIQUE 约束支撑重试/重分析 upsert）。
+                -- chapter_* 为分析时快照——章节后续被拆分/合并/重识别后，
+                -- 旧分析行仍带原文位置信息，不丢成果。
+                CREATE TABLE IF NOT EXISTS novel_chapter_analyses (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    chapter_id TEXT NOT NULL,
+                    chapter_title TEXT DEFAULT '',
+                    chapter_start INTEGER NOT NULL DEFAULT 0,
+                    chapter_end INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    summary TEXT DEFAULT '',
+                    data TEXT DEFAULT '{}',
+                    error TEXT DEFAULT '',
+                    model TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (novel_id, chapter_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS bible_characters (
+                    id TEXT PRIMARY KEY,
+                    bible_id TEXT NOT NULL REFERENCES novel_bibles(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    aliases TEXT DEFAULT '[]',
+                    role TEXT DEFAULT '',
+                    appearance TEXT DEFAULT '',
+                    clothing TEXT DEFAULT '',
+                    personality TEXT DEFAULT '',
+                    catchphrase TEXT DEFAULT '',
+                    chapters TEXT DEFAULT '[]',
+                    notes TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS bible_scenes (
+                    id TEXT PRIMARY KEY,
+                    bible_id TEXT NOT NULL REFERENCES novel_bibles(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    atmosphere TEXT DEFAULT '',
+                    chapters TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS bible_timeline (
+                    id TEXT PRIMARY KEY,
+                    bible_id TEXT NOT NULL REFERENCES novel_bibles(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL DEFAULT 0,
+                    title TEXT DEFAULT '',
+                    summary TEXT DEFAULT '',
+                    character_names TEXT DEFAULT '[]',
+                    chapters TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS bible_relations (
+                    id TEXT PRIMARY KEY,
+                    bible_id TEXT NOT NULL REFERENCES novel_bibles(id) ON DELETE CASCADE,
+                    from_character TEXT NOT NULL,
+                    to_character TEXT NOT NULL,
+                    relation_type TEXT DEFAULT '',
+                    description TEXT DEFAULT '',
+                    chapters TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS scenes (

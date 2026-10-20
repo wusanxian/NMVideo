@@ -164,4 +164,15 @@ export const api = {
   splitNovelChapter: (id, cid, offset) => request(`/novels/${id}/chapters/${cid}/split`, { method: 'POST', body: JSON.stringify({ offset }) }),
   mergeNovelChapters: (id, chapterId, nextChapterId) => request(`/novels/${id}/chapters/merge`, { method: 'POST', body: JSON.stringify({ chapter_id: chapterId, next_chapter_id: nextChapterId }) }),
   reparseNovel: (id) => request(`/novels/${id}/reparse`, { method: 'POST' }),
+
+  // ---------- 故事圣经（PR-N02：AI 章节分析 + 设定管理） ----------
+  novelAnalyzeStart: (id, body = {}) => request(`/novels/${id}/analyze`, { method: 'POST', body: JSON.stringify(body) }),
+  novelAnalyzeStatus: (id) => request(`/novels/${id}/analyze`),
+  novelBible: (id) => request(`/novels/${id}/bible`),
+  novelBibleGenerate: (id) => request(`/novels/${id}/bible/generate`, { method: 'POST' }),
+  novelBibleApprove: (id, note = '') => request(`/novels/${id}/bible/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  novelBibleVersion: (id, version) => request(`/novels/${id}/bible/versions/${version}`),
+  bibleEntityCreate: (id, kind, fields) => request(`/novels/${id}/bible/${kind}`, { method: 'POST', body: JSON.stringify(fields) }),
+  bibleEntityUpdate: (id, kind, eid, fields) => request(`/novels/${id}/bible/${kind}/${eid}`, { method: 'PUT', body: JSON.stringify(fields) }),
+  bibleEntityDelete: (id, kind, eid) => request(`/novels/${id}/bible/${kind}/${eid}`, { method: 'DELETE' }),
 }
