@@ -83,6 +83,7 @@ const showOfflineCard = computed(() => !backendOnline.value)
 // ---------- 侧栏导航（按创作流：作品 → 剧本 → 资产 → 生成 → 剪辑 → 声音 → 设置） ----------
 const pid = computed(() => projectStore.currentProjectId)
 const navItems = computed(() => [
+  { icon: '📚', label: '小说改编', to: '/novel', route: '/novel' },
   { icon: '🗂', label: '我的作品', to: '/projects', route: '/projects' },
   { icon: '📖', label: '剧本与分镜', tab: 'shots', needsProject: true },
   { icon: '🎭', label: '角色与场景', tab: 'assets', needsProject: true },

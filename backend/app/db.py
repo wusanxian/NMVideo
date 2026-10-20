@@ -41,6 +41,7 @@ _FK_TABLES = [
     ("audio_tracks", "projects", "project_id"),
     ("subtitle_tracks", "projects", "project_id"),
     ("exports", "projects", "project_id"),
+    ("novel_chapters", "novels", "novel_id"),
 ]
 
 
@@ -121,6 +122,34 @@ class Database:
                     fps INTEGER NOT NULL DEFAULT 24,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                );
+
+                -- PR-N01：小说改编流水线（前期制作）——原文导入与章节管理。
+                -- content 存全文（SQLite TEXT 可承载 MB 级文本），章节按
+                -- start/end 偏移切片，保证「保留原文位置」且拆分/合并不回写正文
+                CREATE TABLE IF NOT EXISTS novels (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    author TEXT DEFAULT '',
+                    source_filename TEXT DEFAULT '',
+                    content TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    encoding TEXT DEFAULT 'utf-8',
+                    char_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'imported',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_chapters (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    start INTEGER NOT NULL,
+                    "end" INTEGER NOT NULL,
+                    char_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS scenes (

@@ -19,7 +19,7 @@ import pytest  # noqa: E402
 
 from app.db import Database  # noqa: E402
 
-_PATCHED = ("app.storyboard", "app.assets", "app.tracks")
+_PATCHED = ("app.storyboard", "app.assets", "app.tracks", "app.novel")
 
 
 @pytest.fixture()

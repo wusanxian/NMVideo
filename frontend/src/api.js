@@ -126,8 +126,7 @@ export const api = {
   applyComfyPreset: (id) => request(`/comfy/presets/${id}/apply`, { method: 'POST' }),
   comfyCapabilities: () => request('/comfy/capabilities'),
 
-  // ---------- 模型服务（LLM / 图像生成 / 服务配置） ----------
-  servicesStatus: () => request('/services/status'),
+  // ---------- 模型服务（LLM / 图像生成 / 服务配置） ----------  servicesStatus: () => request('/services/status'),
   servicesConfig: () => request('/services/config'),
   saveLlmConfig: (data) => request('/services/llm', { method: 'PUT', body: JSON.stringify(data) }),
   saveImagegenConfig: (data) => request('/services/imagegen', { method: 'PUT', body: JSON.stringify(data) }),
@@ -139,4 +138,30 @@ export const api = {
   llmPolish: (data) => request('/llm/polish', { method: 'POST', body: JSON.stringify(data) }),
   llmDialogue: (data) => request('/llm/dialogue', { method: 'POST', body: JSON.stringify(data) }),
   imagegenGenerate: (data) => request('/imagegen/generate', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ---------- 小说改编（PR-N01：导入与章节管理） ----------
+  novels: () => request('/novels'),
+  importNovel: (file, extra = {}) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    for (const [k, v] of Object.entries(extra)) if (v) fd.append(k, v)
+    return fetch('/api/novels', { method: 'POST', body: fd }).then(async (resp) => {
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) {
+        const err = new Error(data.detail || `导入失败 ${resp.status}`)
+        err.status = resp.status
+        throw err
+      }
+      return data
+    })
+  },
+  getNovel: (id) => request(`/novels/${id}`),
+  updateNovel: (id, data) => request(`/novels/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteNovel: (id) => request(`/novels/${id}`, { method: 'DELETE' }),
+  novelChapters: (id) => request(`/novels/${id}/chapters`),
+  novelChapter: (id, cid) => request(`/novels/${id}/chapters/${cid}`),
+  updateNovelChapter: (id, cid, data) => request(`/novels/${id}/chapters/${cid}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  splitNovelChapter: (id, cid, offset) => request(`/novels/${id}/chapters/${cid}/split`, { method: 'POST', body: JSON.stringify({ offset }) }),
+  mergeNovelChapters: (id, chapterId, nextChapterId) => request(`/novels/${id}/chapters/merge`, { method: 'POST', body: JSON.stringify({ chapter_id: chapterId, next_chapter_id: nextChapterId }) }),
+  reparseNovel: (id) => request(`/novels/${id}/reparse`, { method: 'POST' }),
 }
