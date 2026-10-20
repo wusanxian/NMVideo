@@ -113,7 +113,7 @@ export const api = {
   reorderTimeline: (pid, ids) => request(`/projects/${pid}/timeline/reorder`, { method: 'POST', body: JSON.stringify({ ids }) }),
   removeTimelineItem: (id) => request(`/timeline/${id}`, { method: 'DELETE' }),
 
-  createExport: (pid) => request(`/projects/${pid}/export`, { method: 'POST' }),
+  createExport: (pid, params = {}) => request(`/projects/${pid}/export`, { method: 'POST', body: JSON.stringify(params) }),
   listExports: (pid) => request(`/projects/${pid}/exports`),
   getExport: (id) => request(`/exports/${id}`),
 

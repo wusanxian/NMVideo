@@ -142,13 +142,19 @@ def run_export(export_id: str) -> None:
 
         EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
+        # PR-06：帧率参数化——导出记录冻结所选帧率；旧记录（fps=0）
+        # 回落项目帧率，再回落 24（与主流视频帧率一致）
+        fps = int(exp.get("fps") or 0)
+        if fps <= 0:
+            proj = sb.get_project(project_id) or {}
+            fps = int(proj.get("fps") or 0) or 24
         raw_video = tmp_dir / "concat.mp4"
         concat_videos(
             seg_inputs,
             raw_video,
             width=w,
             height=h,
-            fps=16,
+            fps=fps,
             on_progress=lambda p, s: sb.update_export(
                 export_id, progress=round(0.02 + p * 0.5, 4), stage=s
             ),

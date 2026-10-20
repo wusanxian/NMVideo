@@ -35,6 +35,12 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    fps: Optional[int] = Field(None, ge=8, le=60)
+
+
+class ExportCreate(BaseModel):
+    """导出参数（PR-06：帧率可选；不传用项目帧率，旧项目回落 24）"""
+    fps: Optional[int] = Field(None, ge=8, le=60)
 
 
 class ScriptImport(BaseModel):
@@ -705,10 +711,11 @@ def remove_timeline_item(item_id: str):
 # Export
 # =====================================================================
 @router.post("/projects/{project_id}/export", status_code=201)
-def create_export(project_id: str):
+def create_export(project_id: str, body: ExportCreate = None):
     if not sb.get_project(project_id):
         raise HTTPException(404, "项目不存在")
-    exp = sb.create_export(project_id)
+    fps = body.fps if body else None
+    exp = sb.create_export(project_id, fps=fps)
     start_export(exp["id"])
     return exp
 

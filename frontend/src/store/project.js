@@ -152,8 +152,8 @@ export const useProjectStore = defineStore('project', {
     },
 
     // ---------- 导出 ----------
-    async createExport() {
-      const exp = await api.createExport(this.current.id)
+    async createExport(params = {}) {
+      const exp = await api.createExport(this.current.id, params)
       return exp
     },
     async pollExport(id) {

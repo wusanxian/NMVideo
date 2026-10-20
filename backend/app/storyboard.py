@@ -115,8 +115,8 @@ def create_project(name: str, description: str = "") -> dict:
     now = _utcnow()
     return db.insert_and_get(
         "projects",
-        ["id", "name", "description", "created_at", "updated_at"],
-        (pid, name.strip() or "未命名项目", description.strip(), now, now),
+        ["id", "name", "description", "fps", "created_at", "updated_at"],
+        (pid, name.strip() or "未命名项目", description.strip(), 24, now, now),
         pid,
     )
 
@@ -146,7 +146,7 @@ def get_project(project_id: str) -> Optional[dict]:
 
 
 def update_project(project_id: str, **fields) -> Optional[dict]:
-    allowed = {"name", "description", "script", "status"}
+    allowed = {"name", "description", "script", "status", "fps"}
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields:
         return get_project(project_id)
@@ -1194,12 +1194,21 @@ def remove_timeline_item(item_id: str) -> None:
 # =====================================================================
 # Exports
 # =====================================================================
-def create_export(project_id: str) -> dict:
+def create_export(project_id: str, fps: int = None) -> dict:
+    """创建导出记录（PR-06：帧率参数化）。
+
+    fps=None → 取项目 fps；仍无效回落 24。落库冻结（运行中改项目
+    帧率不影响进行中的导出，与镜头参数冻结语义一致）。
+    """
     eid = _new_id("exp")
+    if not fps:
+        proj = get_project(project_id) or {}
+        fps = proj.get("fps") or 24
+    fps = int(fps)
     return db.insert_and_get(
         "exports",
-        ["id", "project_id", "status", "created_at"],
-        (eid, project_id, "pending", _utcnow()),
+        ["id", "project_id", "status", "fps", "created_at"],
+        (eid, project_id, "pending", fps, _utcnow()),
         eid,
     )
 

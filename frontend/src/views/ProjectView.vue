@@ -216,6 +216,11 @@
           <h3 style="margin: 0">多轨时间线</h3>
           <div style="display: flex; gap: 8px">
             <button class="btn" @click="syncTimeline">🔄 同步已通过镜头</button>
+            <select v-model.number="exportFps" style="width: 110px" title="导出帧率">
+              <option :value="16">16 fps</option>
+              <option :value="24">24 fps</option>
+              <option :value="30">30 fps</option>
+            </select>
             <button class="btn btn-primary" :disabled="!timeline.length || exporting" @click="startExport">
               🎞 导出 MP4（混音+字幕）
             </button>
@@ -510,6 +515,7 @@ const previewItem = ref(null)
 const exporting = ref(false)
 const exportJob = ref(null)
 const exportHistory = ref([])
+const exportFps = ref(24)
 const musicTracks = ref([])
 const sfxTracks = ref([])
 const subtitles = ref([])
@@ -951,7 +957,7 @@ async function downloadSrt() {
 async function startExport() {
   exporting.value = true
   try {
-    exportJob.value = await store.createExport()
+    exportJob.value = await store.createExport({ fps: exportFps.value })
     exportTimer = setInterval(async () => {
       exportJob.value = await store.pollExport(exportJob.value.id)
       if (exportJob.value.status === 'done' || exportJob.value.status === 'failed') {

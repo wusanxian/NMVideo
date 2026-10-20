@@ -110,6 +110,7 @@ class Database:
                     description TEXT DEFAULT '',
                     script TEXT DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'draft',
+                    fps INTEGER NOT NULL DEFAULT 24,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -181,6 +182,7 @@ class Database:
                     stage TEXT DEFAULT '',
                     error TEXT DEFAULT '',
                     file_url TEXT DEFAULT '',
+                    fps INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     finished_at TEXT
                 );
@@ -341,6 +343,22 @@ class Database:
                 if "characters_snapshot" not in cols:
                     self._conn.execute(
                         f"ALTER TABLE {table} ADD COLUMN characters_snapshot TEXT DEFAULT '[]'")
+            self._conn.commit()
+
+        # ---------- 第六批轻量迁移：导出帧率参数化（PR-06） ----------
+        with self._lock:
+            proj_cols2 = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(projects)").fetchall()
+            }
+            # 项目级帧率（旧库默认 24，与主流视频帧率一致；历史行为 concat 固定 16）
+            if "fps" not in proj_cols2:
+                self._conn.execute("ALTER TABLE projects ADD COLUMN fps INTEGER DEFAULT 24")
+            exp_cols = {
+                r["name"] for r in self._conn.execute("PRAGMA table_info(exports)").fetchall()
+            }
+            # 导出记录冻结当时所选帧率（0 = 旧记录，运行时回落项目帧率再回落 24）
+            if "fps" not in exp_cols:
+                self._conn.execute("ALTER TABLE exports ADD COLUMN fps INTEGER DEFAULT 0")
             self._conn.commit()
 
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
