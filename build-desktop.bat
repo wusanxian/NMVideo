@@ -5,7 +5,7 @@ REM  流程：前端 dist -> launcher exe -> Electron NSIS 安装包
 REM  产出：desktop/dist/AI动画导演工作台-<版本>-Setup.exe + latest.yml
 REM ============================================================
 setlocal
-cd /d %~dp0..
+cd /d "%~dp0"
 
 REM 宿主是 Electron 应用时（如 IDE 桌面版）会带 ELECTRON_RUN_AS_NODE，
 REM 会把 electron.exe 降级成纯 Node，构建/启动前必须清除
@@ -14,7 +14,7 @@ set "ELECTRON_RUN_AS_NODE="
 REM 构建工具镜像（GitHub 不通时走 npmmirror）
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 
-set NODE=C:\Users\23350\.workbuddy\binaries\node\versions\22.22.2-6\node.exe
+set "NODE=node"
 set PY=backend\.venv\Scripts\python.exe
 set ELEC_VER=37.10.3
 
@@ -45,14 +45,7 @@ echo [4/4] Electron 打包...
 REM 本地验证用 --publish never；发布到 GitHub Releases 改成 build-desktop-release.bat
 call npx electron-builder --win --publish never || goto :err
 
-REM electron-builder 的 latest.yml 用 npm name 拼安装包名，实际文件名却用 productName，
-REM 两者不一致会导致自动更新找不到文件——统一重命名为 latest.yml 内的名字
-for /f "tokens=2 delims= " %%p in ('findstr /b "path:" desktop\dist\latest.yml') do set UPDATENAME=%%p
-if defined UPDATENAME (
-    for %%f in ("desktop\dist\* Setup *.exe") do move /y "%%f" "desktop\dist\%UPDATENAME%" >nul
-    for %%f in ("desktop\dist\* Setup *.exe.blockmap") do move /y "%%f" "desktop\dist\%UPDATENAME%.blockmap" >nul
-    echo [OK] 安装包已重命名为 %UPDATENAME%
-)
+REM 安装包命名由 electron-builder.yml 的 artifactName 统一管理。
 
 echo.
 echo [OK] 构建完成：desktop\dist\ 下有安装包与 latest.yml

@@ -4,7 +4,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 const EVENTS = new Set([
   'win:maximized', 'backend:log', 'backend:state', 'backend:ready',
-  'backend:error', 'backend:offline', 'backend:port', 'backend:tick',
+  'backend:error', 'backend:offline', 'backend:stopped', 'backend:port', 'backend:tick',
   'update:checking', 'update:available', 'update:none', 'update:progress',
   'update:downloaded', 'update:error',
 ])
@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('desk', {
   relaunch: () => ipcRenderer.invoke('app:relaunch'),
   backendStatus: () => ipcRenderer.invoke('backend:status'),
   retryBackend: () => ipcRenderer.invoke('backend:retry'),
+  startBackend: () => ipcRenderer.invoke('backend:start'),
+  stopBackend: () => ipcRenderer.invoke('backend:stop'),
   hardware: () => ipcRenderer.invoke('backend:hardware'),
 
   // 更新

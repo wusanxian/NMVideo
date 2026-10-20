@@ -509,14 +509,18 @@ def _graph_sha256(graph: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def build_snapshot_payload(graph: dict, job_id: str = "") -> dict:
+def build_snapshot_payload(graph: dict, job_id: str = "", *, template: dict = None) -> dict:
     """构造带 schema_version + sha256 的快照载荷（PR-06：不可变工作流）。"""
-    return {
+    payload = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "job_id": job_id,
         "graph": graph,
         "sha256": _graph_sha256(graph),
     }
+    if template is not None:
+        payload["template"] = template
+        payload["template_sha256"] = _graph_sha256(template)
+    return payload
 
 
 def verify_snapshot_payload(data: dict, path) -> dict:
@@ -554,6 +558,8 @@ def verify_snapshot_payload(data: dict, path) -> dict:
                 f"记录值 {str(digest)[:12]}… ≠ 实际 {actual[:12]}…）。"
                 "为保证输出可复现，请人工处理后重试；系统不会静默改用当前模板"
             )
+    if "template" in data and data.get("template_sha256") != _graph_sha256(data["template"]):
+        raise ComfyUIError(f"工作流模板快照校验失败: {path}，请人工处理后重试")
     return graph
 
 
@@ -566,12 +572,17 @@ def extract_output_files(entry: dict) -> list:
         for kind in ("videos", "gifs", "images"):
             for f in node_out.get(kind) or []:
                 if isinstance(f, dict) and f.get("filename"):
+                    # ComfyUI V3 PreviewVideo（FreeVideo 使用）把 MP4 放在 images 字段。
+                    # 按真实扩展名分类，不能把原生视频当成 PNG 帧序列处理。
+                    suffix = Path(f["filename"]).suffix.lower()
+                    actual_kind = ("videos" if suffix in {".mp4", ".mov", ".webm", ".mkv", ".m4v", ".avi"}
+                                   else "gifs" if suffix == ".gif" else kind)
                     files.append(
                         {
                             "filename": f["filename"],
                             "subfolder": f.get("subfolder", ""),
                             "type": f.get("type", "output"),
-                            "kind": kind,
+                            "kind": actual_kind,
                         }
                     )
     return files

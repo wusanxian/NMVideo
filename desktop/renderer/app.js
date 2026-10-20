@@ -43,6 +43,12 @@
       system: '系统管理', checkUpdate: '检查更新', waitingBackend: '正在等待本地服务…',
       disconnected: '连接暂不可用，正在自动重连。可重试或打开系统管理查看终端日志。',
       hardware: '检测 GPU', detecting: '检测中…',
+      startService: '开启服务', stopService: '关闭服务',
+      serviceStarting: '服务启动中', serviceOnline: '服务已开启',
+      serviceStopping: '正在关闭服务', serviceStopped: '服务已关闭',
+      serviceIdle: '已释放本软件的后台占用，需要时点击“开启服务”。',
+      serviceExternal: '外部服务 · 原窗口关闭',
+      serviceHint: '不用生成时可关闭本地服务，释放本软件的内存与显存。独立启动的 ComfyUI 需在原窗口关闭。',
     },
     en: {
       appName: 'AI Anime Director Studio',
@@ -72,6 +78,12 @@
       system: 'System', checkUpdate: 'Check Updates', waitingBackend: 'Waiting for local service…',
       disconnected: 'Connection unavailable. Reconnecting automatically. Retry or open System to inspect logs.',
       hardware: 'Detect GPU', detecting: 'Detecting…',
+      startService: 'Start service', stopService: 'Stop service',
+      serviceStarting: 'Service starting', serviceOnline: 'Service running',
+      serviceStopping: 'Stopping service', serviceStopped: 'Service stopped',
+      serviceIdle: 'Background resources released. Start the service when needed.',
+      serviceExternal: 'External service · stop in its launcher',
+      serviceHint: 'Stop the local service to release its RAM and GPU memory. Close independently launched ComfyUI in its own window.',
     },
   }
   let lang = localStorage.getItem('aivideo.lang') || 'zh'
@@ -92,6 +104,9 @@
     loadedOrigin: '',
     loadFailed: false,
     online: false,
+    serviceEnabled: true,
+    serviceOwned: false,
+    controlBusy: false,
     route: localStorage.getItem('aivideo.desktopRoute') || '/',
   }
 
@@ -128,6 +143,9 @@
     serviceTimer: $('#service-timer'),
     connectionCard: $('#connection-card'),
     connectionMessage: $('#connection-message'),
+    serviceStatus: $('#service-status'),
+    serviceStart: $('#service-start-btn'), serviceStop: $('#service-stop-btn'),
+    serviceMessage: $('#service-message'),
   }
 
   // ---------------- 渲染 ----------------
@@ -156,6 +174,7 @@
     preparing: 'statusPreparing', python: 'statusPython', torch: 'statusTorch',
     deps: 'statusDeps', models: 'statusModels', starting: 'statusStarting',
     ready: 'statusReady', error: 'statusError',
+    stopping: 'serviceStopping', stopped: 'serviceStopped',
   }
 
   /** 双卡同步：boot 视图英雄卡 + 系统面板服务卡渲染同一份状态 */
@@ -169,18 +188,29 @@
       const bar = card.querySelector('.progress-bar')
       if (icon) icon.textContent = s === 'ready' ? '✓' : (s === 'error' ? '⚠' : 'F')
       if (text) text.textContent = stateText
-      if (desc) desc.textContent = state.online ? t('workspaceSubReady') : t('disconnected')
+      if (desc) desc.textContent = s === 'stopped' ? t('serviceIdle') : (state.online ? t('workspaceSubReady') : t('disconnected'))
       if (bar) bar.style.width = Math.round(state.progress * 100) + '%'
       card.classList.toggle('done', s === 'ready')
       card.classList.toggle('error', s === 'error')
     }
     el.openAppBtn.disabled = !state.online
-    el.actionBtn.textContent = s === 'error' ? t('retry') : stateText
-    el.actionBtn.classList.toggle('busy', s !== 'ready' && s !== 'error')
-    el.workspaceSub.textContent = s === 'ready' ? t('workspaceSubReady') : t('workspaceSub')
+    el.openAppBtn.style.display = s === 'stopped' ? 'none' : ''
+    el.actionBtn.textContent = s === 'stopped' ? t('startService') : (s === 'error' ? t('retry') : stateText)
+    el.actionBtn.classList.toggle('primary', s === 'stopped')
+    el.actionBtn.classList.toggle('ghost', s !== 'stopped')
+    el.actionBtn.disabled = state.controlBusy || s === 'stopping'
+    el.actionBtn.classList.toggle('busy', !['ready', 'error', 'stopped'].includes(s))
+    el.workspaceSub.textContent = s === 'stopped' ? t('serviceIdle') : (s === 'ready' ? t('workspaceSubReady') : t('workspaceSub'))
     el.openAppBtn.classList.toggle('pulse', s === 'ready')
     // 服务计时器：启动/重连期间显示已耗时，就绪后隐藏
-    el.serviceTimer.style.display = s === 'ready' ? 'none' : ''
+    el.serviceTimer.style.display = ['ready', 'stopped', 'stopping'].includes(s) ? 'none' : ''
+    el.serviceStatus.textContent = t(s === 'stopped' ? 'serviceStopped' : s === 'stopping' ? 'serviceStopping'
+      : state.online ? (state.serviceOwned ? 'serviceOnline' : 'serviceExternal') : 'serviceStarting')
+    el.serviceStatus.classList.toggle('online', state.online)
+    el.serviceStatus.classList.toggle('stopped', s === 'stopped')
+    el.serviceStart.disabled = state.controlBusy || s === 'stopping' || (state.serviceEnabled && s !== 'error')
+    el.serviceStop.disabled = state.controlBusy || s === 'stopping' || !state.serviceEnabled || (state.online && !state.serviceOwned)
+    el.serviceStop.title = state.online && !state.serviceOwned ? t('serviceExternal') : t('serviceHint')
   }
 
   function renderTerminal() {
@@ -238,6 +268,7 @@
       // Keep the guest alive while system management is open; never reset a healthy guest.
       const route = /^\/(?!\/)[^\\]*$/.test(state.route) ? state.route : '/'
       el.webview.src = state.appUrl + route
+      if (!el.webview.isConnected) el.webviewWrap.appendChild(el.webview)
       state.loadedOrigin = state.appUrl
       state.loadFailed = false
     }
@@ -260,6 +291,7 @@
   }
 
   function backendReady(url) {
+    state.serviceEnabled = true
     const wasOnline = state.online
     state.online = true
     state.appUrl = url
@@ -271,11 +303,57 @@
     if (!state.loadedOrigin || (!wasOnline && state.view === 'app')) setView('app')
   }
 
+  function backendStopped() {
+    state.serviceEnabled = false
+    state.serviceOwned = false
+    state.online = false
+    state.bootState = 'stopped'
+    state.progress = 0
+    state.loadedOrigin = ''
+    state.loadFailed = false
+    // 销毁工作台 guest，停止页面轮询；再次开启时按保存的路由重建。
+    el.webview.remove()
+    showConnection(false)
+    setView('boot')
+    setPanel(false)
+    renderProgress()
+  }
+
+  async function changeService(enable) {
+    if (state.controlBusy) return
+    state.controlBusy = true
+    el.serviceMessage.hidden = true
+    renderProgress()
+    try {
+      const result = await (enable ? window.desk.startBackend() : window.desk.stopBackend())
+      if (result?.cancelled) return
+      const status = await window.desk.backendStatus()
+      state.serviceOwned = Boolean(status.owned)
+      if (status.enabled === false) backendStopped()
+      else if (status.online) backendReady(`http://127.0.0.1:${status.port}`)
+      else if (enable && state.bootState !== 'error') {
+        state.serviceEnabled = true
+        state.bootState = 'starting'
+        state.progress = 0.04
+      }
+    } catch (error) {
+      el.serviceMessage.textContent = String(error.message || error)
+      el.serviceMessage.hidden = false
+    } finally {
+      state.controlBusy = false
+      renderProgress()
+    }
+  }
+
+  el.serviceStart.addEventListener('click', () => changeService(true))
+  el.serviceStop.addEventListener('click', () => changeService(false))
+
   async function retryBackend() {
     try {
       await window.desk.retryBackend()
       const status = await window.desk.backendStatus()
       if (status.online) {
+        state.serviceOwned = Boolean(status.owned)
         backendReady(`http://127.0.0.1:${status.port}`)
         if (state.loadFailed) setView('app')
       }
@@ -310,6 +388,7 @@
   el.webview.addEventListener('did-navigate', rememberRoute)
   el.webview.addEventListener('did-navigate-in-page', rememberRoute)
   el.webview.addEventListener('did-fail-load', event => {
+    if (!state.serviceEnabled) return
     if (event.isMainFrame === false || event.errorCode === -3) return
     state.loadFailed = true
     showConnection(true)
@@ -317,6 +396,7 @@
     renderTerminal()
   })
   el.webview.addEventListener('render-process-gone', () => {
+    if (!state.serviceEnabled) return
     state.loadFailed = true
     showConnection(true)
   })
@@ -367,6 +447,7 @@
     if (state.online && state.bootState === 'ready') setView('app')
   })
   el.actionBtn.addEventListener('click', () => {
+    if (state.bootState === 'stopped') changeService(true)
     if (state.bootState === 'error') retryBackend()
   })
   el.backBtn.addEventListener('click', () => setView('boot'))
@@ -399,15 +480,20 @@
     if (state.logs.length > 4000) state.logs.splice(0, state.logs.length - 4000)
     renderTerminal()
   })
-  window.desk.on('backend:state', ({ state: s, progress }) => {
+  window.desk.on('backend:state', ({ state: s, progress, owned }) => {
+    if (typeof owned === 'boolean') state.serviceOwned = owned
+    if (!state.serviceEnabled && s !== 'stopped' && s !== 'stopping') state.serviceEnabled = true
     state.bootState = s
     if (typeof progress === 'number') state.progress = progress
     renderProgress()
   })
-  window.desk.on('backend:ready', ({ url }) => {
+  window.desk.on('backend:ready', ({ url, owned }) => {
+    state.serviceOwned = Boolean(owned)
     backendReady(url)
   })
+  window.desk.on('backend:stopped', backendStopped)
   window.desk.on('backend:offline', () => {
+    if (!state.serviceEnabled) return
     state.online = false
     state.bootState = 'starting'
     renderProgress()
@@ -425,7 +511,7 @@
     const total = Number(seconds) || 0
     el.serviceTimer.textContent =
       String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0')
-    el.serviceTimer.style.display = state.bootState === 'ready' ? 'none' : ''
+    el.serviceTimer.style.display = ['ready', 'stopped', 'stopping'].includes(state.bootState) ? 'none' : ''
   })
 
   // ---------------- 更新事件 ----------------
@@ -453,7 +539,10 @@
       }
       el.versionTag.textContent = 'v' + (await window.desk.version())
       const status = await window.desk.backendStatus()
-      if (status.online) backendReady(`http://127.0.0.1:${status.port}`)
+      state.serviceOwned = Boolean(status.owned)
+      if (status.enabled === false) backendStopped()
+      else if (status.online) backendReady(`http://127.0.0.1:${status.port}`)
+      else renderProgress()
     } catch { /* ignore */ }
     // 手动检查一次更新（设置页可见反馈）
     setTimeout(() => window.desk.checkUpdate(), 1500)

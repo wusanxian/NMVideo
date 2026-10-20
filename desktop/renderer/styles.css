@@ -64,6 +64,16 @@ body { display: flex; flex-direction: column; }
   cursor: pointer;
 }
 .lang-btn:hover { color: var(--text); border-color: var(--accent); }
+.lang-btn:disabled { opacity: 0.4; cursor: default; }
+.lang-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.service-controls { display: flex; align-items: center; gap: 6px; }
+.service-status { max-width: 140px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--text-dim); margin-right: 4px; }
+.service-status.online { color: var(--green); }
+.service-status.stopped { color: var(--text-dim); }
+#service-stop-btn:not(:disabled):hover { color: var(--red); border-color: var(--red); }
+.service-message { padding: 8px 16px; font-size: 12px; color: var(--yellow); background: var(--bg-card); border-bottom: 1px solid var(--border); }
+.service-message[hidden] { display: none; }
+.service-hint { margin-top: 10px; font-size: 12px; color: var(--text-dim); line-height: 1.7; }
 
 .win-buttons { display: flex; height: var(--titlebar-h); }
 .win-btn {

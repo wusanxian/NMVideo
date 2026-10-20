@@ -67,3 +67,6 @@ pnpm-debug.log*
 desktop.ini
 ehthumbs.db
 ~$*
+
+# 工具/IDE 分析产物
+.brooks-lint-history.json

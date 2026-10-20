@@ -27,6 +27,8 @@ function makeDesk() {
   const calls = []
   const desk = {
     statusOnline: false,
+    serviceEnabled: true,
+    serviceOwned: true,
     calls,
     on(channel, cb) {
       if (!listeners.has(channel)) listeners.set(channel, [])
@@ -37,8 +39,10 @@ function makeDesk() {
     },
     async paths() { return { runtime: 'D:/rt', launcher: 'l.exe', userData: 'ud', logs: 'lg' } },
     async version() { return '9.9.9' },
-    async backendStatus() { return { online: desk.statusOnline, port: 8000 } },
+    async backendStatus() { return { online: desk.statusOnline, port: 8000, enabled: desk.serviceEnabled, owned: desk.serviceOwned } },
     async retryBackend() { return { online: true, port: 8000 } },
+    async startBackend() { calls.push('startBackend'); desk.serviceEnabled = true; return { online: false } },
+    async stopBackend() { calls.push('stopBackend'); desk.statusOnline = false; desk.serviceEnabled = false; return { online: false } },
     async checkUpdate() { calls.push('checkUpdate') },
     async hardware() { return { gpu_name: 'Fake', vram_gb: 8, ram_gb: 32, device: 'cuda' } },
     async minimize() {}, async toggleMaximize() { return false }, async close() {},
@@ -244,4 +248,62 @@ test('comfy nav item opens ComfyUI through the preload bridge', async (t) => {
   t.after(() => dom.window.close())
   doc.querySelector('.nav-item[data-action="comfy"]').click()
   assert.deepEqual(desk.calls, ['openComfyUI'])
+})
+
+test('stop releases the guest and restart restores the previous project route', async t => {
+  const { dom, desk, doc } = await loadShell('/projects/42?tab=timeline')
+  t.after(() => dom.window.close())
+  desk.emit('backend:ready', { url: 'http://127.0.0.1:8000', owned: true })
+  assert.equal(doc.querySelector('#service-stop-btn').disabled, false)
+  doc.querySelector('#service-stop-btn').click()
+  await flush()
+  assert.deepEqual(desk.calls, ['stopBackend'])
+  assert.equal(doc.querySelector('#service-status').textContent, '服务已关闭')
+  assert.equal(doc.querySelector('#app-webview'), null, 'guest removed to stop frontend polling')
+  assert.equal(doc.querySelector('#service-start-btn').disabled, false)
+  assert.equal(doc.querySelector('#service-stop-btn').disabled, true)
+  assert.equal(doc.querySelector('#service-timer').style.display, 'none')
+  desk.emit('backend:offline', {})
+  assert.equal(doc.querySelector('#service-status').textContent, '服务已关闭', 'no reconnect during manual stop')
+  doc.querySelector('#service-start-btn').click()
+  await flush()
+  assert.deepEqual(desk.calls, ['stopBackend', 'startBackend'])
+  desk.emit('backend:ready', { url: 'http://127.0.0.1:8001', owned: true })
+  assert.equal(doc.querySelector('#app-webview').src, 'http://127.0.0.1:8001/projects/42?tab=timeline')
+  assert.equal(doc.body.classList.contains('workspace-open'), true)
+})
+
+test('cancelled stop keeps the workspace and duplicate clicks cannot submit twice', async t => {
+  const { dom, desk, doc } = await loadShell()
+  t.after(() => dom.window.close())
+  desk.statusOnline = true
+  desk.emit('backend:ready', { url: 'http://127.0.0.1:8000', owned: true })
+  let finish
+  let calls = 0
+  desk.stopBackend = () => { calls++; return new Promise(resolve => { finish = resolve }) }
+  doc.querySelector('#service-stop-btn').click()
+  doc.querySelector('#service-stop-btn').click()
+  assert.equal(calls, 1)
+  assert.equal(doc.querySelector('#service-stop-btn').disabled, true)
+  finish({ cancelled: true })
+  await flush()
+  assert.ok(doc.querySelector('#app-webview'))
+  assert.equal(doc.body.classList.contains('workspace-open'), true)
+  assert.equal(doc.querySelector('#service-stop-btn').disabled, false)
+})
+
+test('external service is labelled and stop errors stay visible without a false stopped state', async t => {
+  const { dom, desk, doc } = await loadShell()
+  t.after(() => dom.window.close())
+  desk.emit('backend:ready', { url: 'http://127.0.0.1:8000', owned: false })
+  assert.equal(doc.querySelector('#service-status').textContent, '外部服务 · 原窗口关闭')
+  assert.equal(doc.querySelector('#service-stop-btn').disabled, true)
+  desk.emit('backend:ready', { url: 'http://127.0.0.1:8000', owned: true })
+  desk.stopBackend = async () => { throw new Error('关闭失败：Access denied') }
+  doc.querySelector('#service-stop-btn').click()
+  await flush()
+  assert.equal(doc.querySelector('#service-message').hidden, false)
+  assert.match(doc.querySelector('#service-message').textContent, /Access denied/)
+  assert.equal(doc.querySelector('#service-status').textContent, '服务已开启')
+  assert.ok(doc.querySelector('#app-webview'))
 })

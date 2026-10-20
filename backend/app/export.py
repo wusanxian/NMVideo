@@ -7,6 +7,7 @@
   4. 最终封装 MP4（faststart）
 """
 import shutil
+import json
 import subprocess
 import threading
 from pathlib import Path
@@ -16,7 +17,7 @@ from . import storyboard as sb
 from . import tracks
 from .config import OUTPUTS_DIR
 from .managed_paths import MEDIA_SUFFIXES, resolve_managed_asset
-from .video import concat_videos, get_ffmpeg, probe_duration
+from .video import concat_videos, get_ffmpeg, has_audio_stream, probe_duration
 
 EXPORTS_DIR = OUTPUTS_DIR / "exports"
 
@@ -36,34 +37,48 @@ def _exists(url: str) -> bool:
     return p is not None and p.is_file()
 
 
-def _mix_audio(project_id: str, layout: list, out_wav: Path) -> bool:
-    """对白 + 音乐 + 音效混音为单条 WAV。没有音频源返回 False。"""
+def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> bool:
+    """视频原声 + 对白 + 音乐 + 音效；统一按冻结时间线裁剪、落位和补静音。"""
     ffmpeg = get_ffmpeg()
+    duration = max((float(it.get("end_s") or 0) for it in layout), default=0)
+    if duration <= 0:
+        return False
 
-    # 收集音频源：[(path, start_s, end_s(裁剪), volume)]
+    # (path, timeline_start, source_trim_in, duration, volume)
     sources: list = []
+
+    def add_source(path, start, trim_in=0.0, trim_out=0.0, volume=1.0, length=None):
+        start, trim_in = float(start), max(float(trim_in), 0.0)
+        # 负起点意味着只取进入时间线范围后的那一段声音。
+        seek = trim_in + max(-start, 0.0)
+        start = max(start, 0.0)
+        available = duration - start
+        if trim_out > 0:
+            available = min(available, trim_out - seek)
+        if length is not None:
+            available = min(available, length)
+        if available > 0 and volume != 0:
+            sources.append((path, start, seek, available, volume))
+
     for it in layout:
-        for v in tracks.list_voices_of_shot(it["shot_id"]):
+        video_path = _url_to_path(it.get("video_url") or "")
+        if video_path and has_audio_stream(video_path):
+            add_source(video_path, it["start_s"], it.get("trim_in_eff") or 0.0,
+                       length=it["end_s"] - it["start_s"])
+        voices = ([v for v in manifest["voices"] if v["shot_id"] == it["shot_id"]]
+                  if manifest is not None else tracks.list_voices_of_shot(it["shot_id"]))
+        for v in voices:
             audio_path = _url_to_path(v.get("audio_url") or "")
             if audio_path:
                 # 配音落在片段起点；超出片段长度的部分由 atrim 裁掉
-                sources.append((
-                    audio_path,
-                    it["start_s"], it["end_s"],
-                    1.0,
-                ))
-    for t in tracks.list_audio_tracks(project_id):
+                add_source(audio_path, it["start_s"], length=it["end_s"] - it["start_s"])
+    for t in (manifest["audio_tracks"] if manifest is not None else tracks.list_audio_tracks(project_id)):
         track_path = _url_to_path(t.get("audio_url") or "")
         if track_path:
             start = float(t.get("start_s") or 0)
             t_in = float(t.get("trim_in_s") or 0)
             t_out = float(t.get("trim_out_s") or 0)
-            sources.append((
-                track_path,
-                start, (start + t_out) if t_out > 0 else None,
-                float(t.get("volume", 0.8) or 0.8),
-                t_in,
-            ))
+            add_source(track_path, start, t_in, t_out, float(t.get("volume", 0.8)))
     if not sources:
         return False
 
@@ -73,31 +88,29 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path) -> bool:
 
     filters = []
     labels = []
-    for i, s in enumerate(sources):
-        path, start, end, volume = s[0], s[1], s[2], s[3]
-        t_in = s[4] if len(s) > 4 else 0.0
+    for i, (path, start, t_in, length, volume) in enumerate(sources):
         chain = f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo"
-        if t_in > 0:
-            chain += f",atrim=start={t_in:.3f},asetpts=PTS-STARTPTS"
-        if end is not None:
-            chain += f",atrim=end={max(end - start, 0.1):.3f},asetpts=PTS-STARTPTS"
-        chain += f",volume={volume:.2f},adelay={int(start * 1000)}|{int(start * 1000)}"
+        chain += f",atrim=start={t_in:.6f}:duration={length:.6f},asetpts=PTS-STARTPTS"
+        # 裁剪后 adelay 的前导静音可能没有 PTS，按样本重新计时再交给 amix。
+        chain += (f",volume={volume:.2f},adelay={int(start * 1000)}|{int(start * 1000)}"
+                  ",asetpts=N/SR/TB")
         chain += f"[a{i}]"
         filters.append(chain)
         labels.append(f"[a{i}]")
-    mix = "".join(labels) + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0[mix]"
+    mix = ("".join(labels) + f"amix=inputs={len(labels)}:duration=longest:dropout_transition=0:normalize=0"
+           f",apad=whole_dur={duration:.6f},atrim=duration={duration:.6f}[mix]")
     filters.append(mix)
 
-    cmd += ["-filter_complex", ";".join(filters), "-map", "[mix]",
+    cmd += ["-filter_complex", ";".join(filters), "-map", "[mix]", "-t", f"{duration:.6f}",
             "-c:a", "pcm_s16le", str(out_wav)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"混音失败: {proc.stderr[-500:]}")
     return out_wav.exists()
 
 
-def _subtitle_path(project_id: str, tmp_dir: Path) -> Optional[Path]:
-    items = tracks.list_subtitles(project_id)
+def _subtitle_path(project_id: str, tmp_dir: Path, manifest=None) -> Optional[Path]:
+    items = manifest["subtitles"] if manifest is not None else tracks.list_subtitles(project_id)
     if not any((i.get("text") or "").strip() for i in items):
         return None
     srt = tmp_dir / "subtitles.srt"
@@ -114,7 +127,10 @@ def run_export(export_id: str) -> None:
     tmp_dir = EXPORTS_DIR / f".tmp_{export_id}"
     try:
         sb.update_export(export_id, status="running", stage="准备片段", progress=0.02)
-        layout = sb.timeline_layout(project_id)
+        manifest = json.loads(exp["manifest"]) if exp.get("manifest") else None
+        if manifest is not None and manifest.get("schema_version") != 1:
+            raise ValueError("导出清单版本不受支持")
+        layout = sb.layout_from_items(manifest["items"]) if manifest is not None else sb.timeline_layout(project_id)
         if not layout:
             raise ValueError("时间线为空：请先在时间线页添加镜头")
 
@@ -164,15 +180,17 @@ def run_export(export_id: str) -> None:
         mixed_wav = tmp_dir / "mix.wav"
         has_audio = False
         try:
-            has_audio = _mix_audio(project_id, layout, mixed_wav)
+            has_audio = (_mix_audio(project_id, layout, mixed_wav, manifest) if manifest is not None
+                         else _mix_audio(project_id, layout, mixed_wav))
         except Exception as e:
-            # 混音失败不阻断导出（视频轨本身有效）
-            print(f"[export] 混音失败，导出无音频版本: {e}")
+            # 请求包含音轨时，不能把混音失败当作无声导出成功。
+            raise RuntimeError(f"混音失败，请检查音频素材后重试：{e}") from e
         sb.update_export(export_id, progress=0.58,
                          stage="混音完成" if has_audio else "无音频轨")
 
         # ---------- 字幕 ----------
-        srt = _subtitle_path(project_id, tmp_dir)
+        srt = (_subtitle_path(project_id, tmp_dir, manifest) if manifest is not None
+               else _subtitle_path(project_id, tmp_dir))
         out_path = EXPORTS_DIR / f"{export_id}.mp4"
         _final_mux(raw_video, mixed_wav if has_audio else None, srt, out_path,
                    on_progress=lambda p, s: sb.update_export(
@@ -198,6 +216,7 @@ def _final_mux(video: Path, audio: Optional[Path], srt: Optional[Path],
                out_path: Path, on_progress=None) -> None:
     """视频 + 混音 + 字幕 最终封装。字幕优先烧录，失败退软字幕。"""
     ffmpeg = get_ffmpeg()
+    duration = probe_duration(video)
 
     def _run(burn: bool) -> subprocess.CompletedProcess:
         cmd = [ffmpeg, "-y", "-i", str(video)]
@@ -229,8 +248,11 @@ def _final_mux(video: Path, audio: Optional[Path], srt: Optional[Path],
             cmd += ["-an"]
         if srt_idx is not None:
             cmd += ["-map", f"{srt_idx}:0", "-c:s", "mov_text"]
+        if duration > 0:
+            # 以实际拼接视频为最终边界，长音乐/字幕不能拉长成片；短音乐也不能截短。
+            cmd += ["-t", f"{duration:.6f}"]
         cmd += ["-movflags", "+faststart", str(out_path)]
-        return subprocess.run(cmd, capture_output=True, text=True)
+        return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     if srt:
         proc = _run(burn=True)

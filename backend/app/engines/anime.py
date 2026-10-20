@@ -43,6 +43,10 @@ class AnimeEngine(BaseEngine):
     _dtype = None
     _load_lock = threading.Lock()
 
+    def unload(self):
+        from .local_runtime import unload_pipeline
+        unload_pipeline(self)
+
     # ---------- 模型加载（懒加载 + 单例缓存） ----------
     def _get_pipe(self, on_progress):
         with self._load_lock:

@@ -35,7 +35,7 @@ def frames_to_video(frames_dir: Path, out_path: Path, fps: int, metadata: dict =
         # comment 标签写 JSON（ffmpeg -metadata 传，特殊字符安全）
         cmd += ["-metadata", f"comment={json.dumps(metadata, ensure_ascii=False)}"]
     cmd += [str(out_path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg 合成失败: {proc.stderr[-800:]}")
     return out_path
@@ -46,14 +46,19 @@ def read_video_metadata(video_path: Path) -> dict:
     ffmpeg = get_ffmpeg()
     proc = subprocess.run(
         [ffmpeg, "-i", str(video_path), "-f", "ffmetadata", "-"],
-        capture_output=True, text=True,
+        capture_output=True,
     )
-    for line in proc.stdout.splitlines():
-        if line.startswith("comment="):
-            try:
-                return json.loads(line[len("comment="):])
-            except (ValueError, TypeError):
-                return {}
+    if proc.returncode != 0:
+        raise RuntimeError(f"读取视频参数失败: {proc.stderr.decode('utf-8', errors='replace')[-500:]}")
+    text = proc.stdout.decode("utf-8")
+    match = re.search(r"(?m)^comment=((?:\\[\s\S]|[^\\\n])*)", text)
+    if match:
+        value = re.sub(r"\\([\s\S])", r"\1", match.group(1))
+        try:
+            data = json.loads(value)
+            return data if isinstance(data, dict) else {}
+        except (ValueError, TypeError):
+            return {}
     return {}
 
 
@@ -75,7 +80,7 @@ def remux_video(src_path: Path, out_path: Path, metadata: dict = None) -> Path:
     if src_path.suffix.lower() in (".mp4", ".mov", ".m4v"):
         cmd = [ffmpeg, "-y", "-i", str(src_path), "-c", "copy",
                "-movflags", "+faststart", *meta_args, str(out_path)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
             return out_path
         out_path.unlink(missing_ok=True)  # remux 失败：转码兜底
@@ -83,7 +88,7 @@ def remux_video(src_path: Path, out_path: Path, metadata: dict = None) -> Path:
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
            *meta_args, str(out_path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
         raise RuntimeError(f"视频归档失败: {proc.stderr[-500:]}")
     return out_path
@@ -95,7 +100,7 @@ def extract_first_frame(video_path: Path, out_path: Path) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [ffmpeg, "-y", "-i", str(video_path),
            "-frames:v", "1", "-update", "1", str(out_path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
         raise RuntimeError(f"海报帧抽取失败: {proc.stderr[-300:]}")
     return out_path
@@ -106,7 +111,7 @@ def probe_duration(video_path: Path) -> float:
     ffmpeg = get_ffmpeg()
     proc = subprocess.run(
         [ffmpeg, "-i", str(video_path), "-f", "ffmetadata", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", proc.stderr)
     if not m:
@@ -120,12 +125,21 @@ def probe_resolution(video_path: Path) -> tuple:
     ffmpeg = get_ffmpeg()
     proc = subprocess.run(
         [ffmpeg, "-i", str(video_path), "-f", "ffmetadata", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     m = re.search(r"Video:.*?,\s*(\d{2,5})x(\d{2,5})", proc.stderr)
     if not m:
         return (0, 0)
     return (int(m.group(1)), int(m.group(2)))
+
+
+def has_audio_stream(media_path: Path) -> bool:
+    """检测视频是否包含原声音轨，供导出混音使用（静音片段不创建无效输入）。"""
+    proc = subprocess.run(
+        [get_ffmpeg(), "-i", str(media_path), "-f", "ffmetadata", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    return bool(re.search(r"Stream .*Audio:", proc.stderr))
 
 
 def extract_last_frame(video_path: Path, out_path: Path) -> Path:
@@ -150,7 +164,7 @@ def extract_last_frame(video_path: Path, out_path: Path) -> Path:
     for seek in candidates:
         cmd = [ffmpeg, "-y", *seek, "-i", str(video_path),
                "-frames:v", "1", "-update", "1", str(out_path)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
             return out_path
         last_err = proc.stderr[-200:]
@@ -196,6 +210,8 @@ def concat_videos(
             vf = [
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease",
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+                # 给 fps 滤镜补一个尾帧，再按输出时长截断，防止缩放后每段丢末帧而累积声画错位。
+                f"tpad=stop_mode=clone:stop_duration={1 / fps:.6f}",
                 f"fps={fps}",
                 "format=yuv420p",
             ]
@@ -205,13 +221,14 @@ def concat_videos(
             seg = tmp_dir / f"seg_{i:03d}.mp4"
             cmd = [
                 ffmpeg, "-y",
-                "-ss", f"{t_in:.3f}", "-t", f"{seg_dur:.3f}",
+                "-ss", f"{t_in:.3f}",
                 "-i", str(src),
+                "-t", f"{seg_dur:.3f}",
                 "-vf", ",".join(vf),
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-an", str(seg),
             ]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
             if proc.returncode != 0:
                 raise RuntimeError(f"片段 {i} 处理失败: {proc.stderr[-400:]}")
             segments.append(seg)
@@ -230,7 +247,7 @@ def concat_videos(
                 "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                 str(out_path),
             ],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if proc.returncode != 0:
             raise RuntimeError(f"拼接失败: {proc.stderr[-500:]}")

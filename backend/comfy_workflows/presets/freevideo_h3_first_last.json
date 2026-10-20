@@ -1,0 +1,108 @@
+{
+  "_meta": {
+    "name": "FreeVideo H3 本地 · 首尾帧",
+    "description": "两张图片分别连接官方 FreeVideo 的首帧与尾帧输入；需要先安装 FreeVideo，尚待实机出片验证。",
+    "requires": "FlashML-org/FreeVideo ComfyUI extension",
+    "mode": "first_last",
+    "execution_kind": "local",
+    "model_id": "vdn-minimax-h3",
+    "required_nodes": [
+      "FreeVideoGenerate",
+      "LoadImage"
+    ],
+    "supports": [
+      "first_last"
+    ],
+    "min_vram_gb": 8,
+    "vram_hint": "FreeVideo manages runtime resources; official minimum: 8GB VRAM / 16GB RAM. Reference conditioning is experimental.",
+    "native_preview": true,
+    "character_images": true,
+    "character_lora": true,
+    "source": "https://github.com/FlashML-org/FreeVideo/blob/main/freevideo_engine/comfy_nodes.py",
+    "schema_checked_on": "2026-10-20"
+  },
+  "prompt": {
+    "1": {
+      "class_type": "FreeVideoGenerate",
+      "inputs": {
+        "text": "A cinematic scene",
+        "width": 832,
+        "height": 480,
+        "seconds": 3.75,
+        "seed": 42,
+        "two_pass": true,
+        "base_steps": 8,
+        "refine_steps": 3,
+        "preview": false,
+        "refine_from": "",
+        "frames": 90,
+        "first": [
+          "2",
+          0
+        ],
+        "last": [
+          "3",
+          0
+        ]
+      }
+    },
+    "2": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": ""
+      }
+    },
+    "3": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": ""
+      }
+    }
+  },
+  "_aivideo_map": {
+    "prompt": {
+      "node": "1",
+      "input": "text"
+    },
+    "width": {
+      "node": "1",
+      "input": "width"
+    },
+    "height": {
+      "node": "1",
+      "input": "height"
+    },
+    "seconds": {
+      "node": "1",
+      "input": "seconds"
+    },
+    "num_frames": {
+      "node": "1",
+      "input": "frames"
+    },
+    "seed": {
+      "node": "1",
+      "input": "seed"
+    },
+    "steps": {
+      "node": "1",
+      "input": "base_steps"
+    },
+    "preview": {
+      "node": "1",
+      "input": "preview"
+    },
+    "refine_from": {
+      "node": "1",
+      "input": "refine_from"
+    },
+    "first_frame_image": {
+      "node": "2",
+      "input": "image"
+    },
+    "last_frame_image": {
+      "node": "3",
+      "input": "image"
+    }
+  }
+}

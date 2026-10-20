@@ -20,6 +20,8 @@ class HardwareProfile:
     vram_gb: float = 0.0
     compute_cap: str = ""          # sm_86 / sm_89 / sm_120 ...
     ram_gb: float = 0.0
+    free_vram_gb: Optional[float] = None
+    available_ram_gb: Optional[float] = None
     disk_free_gb: float = 0.0
     torch_cuda_available: bool = False
 
@@ -39,6 +41,8 @@ class HardwareProfile:
             "vram_gb": round(self.vram_gb, 1),
             "compute_cap": self.compute_cap,
             "ram_gb": round(self.ram_gb, 1),
+            "free_vram_gb": round(self.free_vram_gb, 1) if self.free_vram_gb is not None else None,
+            "available_ram_gb": round(self.available_ram_gb, 1) if self.available_ram_gb is not None else None,
             "disk_free_gb": round(self.disk_free_gb, 1),
             "device": self.device,
             "model_id": self.model_id,
@@ -127,6 +131,11 @@ def probe() -> HardwareProfile:
         p.gpu_name, p.vram_gb = gpu
 
     p.ram_gb = _query_ram()
+    try:
+        import psutil
+        p.available_ram_gb = psutil.virtual_memory().available / 2**30
+    except (ImportError, OSError):
+        pass
     p.disk_free_gb = _query_disk()
     p.compute_cap = _compute_cap_from_torch()
 
@@ -134,6 +143,11 @@ def probe() -> HardwareProfile:
     try:
         import torch
         p.torch_cuda_available = torch.cuda.is_available()
+        if p.torch_cuda_available:
+            try:
+                p.free_vram_gb = torch.cuda.mem_get_info()[0] / 2**30
+            except Exception:
+                pass  # 无法测量剩余显存不等于 CUDA 不可用
     except Exception:
         p.torch_cuda_available = False
 
@@ -145,7 +159,7 @@ def probe() -> HardwareProfile:
         p.model_id = "ti2v-5b"
         p.quant = "none"
         p.offload = "none"
-        p.dtype = "bf16"
+        p.dtype = "fp32"
         p.vae_tiling = True
         p.est_minutes_per_5s = 0.0
         p.notes.append("未检测到可用的 NVIDIA 显卡：Wan 2.2 可在 CPU 上运行但极慢（小时级），建议使用 AnimeDiff 引擎。")
@@ -173,9 +187,10 @@ def probe() -> HardwareProfile:
         p.quant = "none"
 
     # ---- offload 策略：核心低显存机制 ----
-    if p.vram_gb >= 24:
+    available_vram = p.free_vram_gb if p.free_vram_gb is not None else p.vram_gb
+    if available_vram >= 24:
         p.offload = "none" if p.model_id == "ti2v-5b" else "model"
-    elif p.vram_gb >= 12:
+    elif available_vram >= 12:
         p.offload = "model"      # 层组卸载，速度损失小
     else:
         p.offload = "sequential"  # 逐层流式卸载，8GB 可跑，速度换显存

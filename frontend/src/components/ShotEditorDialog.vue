@@ -79,15 +79,18 @@
           <h3>生成模式</h3>
           <div class="mode-cards">
             <div v-for="m in MODES" :key="m.id" class="mode-card"
-                 :class="{ active: form.mode === m.id }" @click="form.mode = m.id">
+                 :class="{ active: form.mode === m.id, disabled: !modeSupported(m.id) }"
+                 :aria-disabled="!modeSupported(m.id)"
+                 @click="modeSupported(m.id) && (form.mode = m.id)">
               <div class="mc-name">{{ m.name }}</div>
               <div class="mc-desc">{{ m.desc }}</div>
             </div>
           </div>
+          <p v-if="!modeSupported(form.mode)" class="comfy-hint">当前引擎不支持此模式，请选择 ComfyUI 或切换到文生视频。</p>
 
           <!-- 图生视频：参考图/首帧（沿用既有单图链路） -->
           <div v-if="form.mode === 'i2v'" class="field" style="margin-top: 12px">
-            <label>参考图 / 首帧（本地引擎将仅记录，实际图生视频走 ComfyUI 工作流）</label>
+            <label>参考图 / 首帧（需要工作流支持图片条件）</label>
             <div class="ref-input-row">
               <input type="text" v-model="form.reference_image" placeholder="/outputs/xxx.png 或 http://..." />
               <label class="btn upload-btn">
@@ -130,7 +133,7 @@
             </select>
             <p class="hint-text">
               续接会把来源镜头的<b>末帧</b>作为本镜头首帧参考注入工作流；
-              本地引擎（AnimeDiff）会退化为「同场景衔接提示词」，完整续接请用 ComfyUI。
+              请使用支持图片条件的 ComfyUI 工作流；本地文生视频引擎不支持此模式。
             </p>
           </div>
         </section>
@@ -207,10 +210,14 @@
             </div>
           </div>
 
-          <div v-if="genForm.engine === 'wan22'" class="chips" style="margin-top: 12px">
+          <div v-if="genForm.engine !== 'anime'" class="chips" style="margin-top: 12px">
             <span v-for="q in presets" :key="q.id" class="chip"
                   :class="{ active: genForm.preset === q.id }" @click="applyPreset(q)">{{ q.name }}</span>
           </div>
+          <label v-if="genForm.engine !== 'anime'" class="check-line">
+            <input type="checkbox" v-model="genForm.preview" />
+            先生成预览，满意后在画廊生成高清候选（FreeVideo 可继续二采）
+          </label>
 
           <div class="param-grid" style="margin-top: 12px">
             <div class="field">
@@ -249,6 +256,11 @@
             将按 <b>ComfyUI 工作流模板</b> 的节点映射注入以上参数与参考图；
             模板可在「ComfyUI 设置」中粘贴你自己导出的工作流。
           </p>
+          <div v-if="genForm.engine === 'comfyui'" class="field">
+            <label><input type="checkbox" v-model="genForm.use_character_images" /> 本次使用角色参考图（FreeVideo 首尾帧/图生模式需关闭）</label>
+            <label><input type="checkbox" v-model="genForm.use_character_lora" /> 本次使用角色 LoRA</label>
+            <p class="hint-text">自动角色视觉条件仅在 FreeVideo 本地预设中生效；其他模板需自行配置。</p>
+          </div>
         </section>
 
         <!-- 版本 -->
@@ -371,10 +383,18 @@ const genForm = reactive({
   engine: 'anime',
   width: 512, height: 512,
   num_frames: 16, fps: 8, steps: 25, guidance: 7.5,
-  seed: -1, preset: '',
+  seed: -1, preset: '', preview: false,
+  use_character_images: true, use_character_lora: true,
 })
 
-const canGenerate = computed(() => form.prompt.trim().length > 0)
+function modeSupported(mode) {
+  const engine = props.engines.find((item) => item.id === genForm.engine)
+  const modes = engine?.supported_modes || (genForm.engine === 'comfyui'
+    ? ['t2v', 'i2v', 'first_last', 'continuation'] : ['t2v'])
+  return modes.includes(mode)
+}
+
+const canGenerate = computed(() => form.prompt.trim().length > 0 && modeSupported(form.mode))
 
 // ---- PR-04 导演工作台：相邻镜头衔接 + 候选版本对比 ----
 const adjacentShots = computed(() => {

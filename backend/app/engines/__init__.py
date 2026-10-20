@@ -33,7 +33,15 @@ def list_engines() -> list:
                     "note": c.meta.note,
                 }
             )
+    for item in out:
+        item["supported_modes"] = list(ENGINES[item["id"]].meta.supported_modes)
     return out
+
+
+def validate_engine_mode(engine_id: str, mode: str) -> None:
+    engine = get_engine(engine_id)
+    if mode not in engine.meta.supported_modes:
+        raise ValueError(f"{engine.meta.name} 不支持「{mode}」模式；请改用支持图片条件的 ComfyUI 工作流")
 
 
 __all__ = [

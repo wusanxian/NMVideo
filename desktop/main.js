@@ -56,6 +56,7 @@ let healthTimer = null
 let bootSeconds = 0
 let bootTimer = null
 let backend = null
+let stopRequest = null
 
 async function openExternal(url) {
   if (!isExternalURL(url)) return
@@ -157,6 +158,7 @@ function logLine(line, stream = 'stdout') {
   const text = String(line).replace(/\x1b\[[0-9;]*m/g, '') // 去 ANSI 颜色码（双保险）
   if (!text.trim()) return
   send('backend:log', { text, stream, ts: Date.now() })
+  if (backend && !backend.enabled) return
 
   const m = text.match(/^\[AIVIDEO\]\s+STATE=(\w+)/)
   if (m) {
@@ -186,7 +188,7 @@ function spawnLauncher() {
   const portFile = path.join(app.getPath('temp'), `aivideo-port-${process.pid}.txt`)
   try { fs.unlinkSync(portFile) } catch { /* 首次不存在 */ }
 
-  send('backend:state', { state: 'preparing', progress: STAGE_PROGRESS.preparing })
+  send('backend:state', { state: 'preparing', progress: STAGE_PROGRESS.preparing, owned: true })
   send('backend:log', { text: `$ ${LAUNCHER_EXE} --yes --no-browser --plain --port-file ${portFile}`, stream: 'meta', ts: Date.now() })
 
   launcherProc = spawn(exe, ['--yes', '--no-browser', '--plain', '--port-file', portFile], {
@@ -195,6 +197,7 @@ function spawnLauncher() {
     // launcher 及其子进程（pip/uvicorn/下载脚本）输出统一 UTF-8，终端面板按 UTF-8 解码
     env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
   })
+  const child = launcherProc
   try {
     fs.writeFileSync(path.join(app.getPath('userData'), 'owned-service.json'), JSON.stringify({
       ownerPid: process.pid, launcherPid: launcherProc.pid, executable: exe, startedAt: new Date().toISOString(),
@@ -203,15 +206,18 @@ function spawnLauncher() {
 
   for (const stream of ['stdout', 'stderr']) {
     require('readline').createInterface({ input: launcherProc[stream] })
-      .on('line', line => logLine(line, stream))
+      .on('line', line => { if (launcherProc === child) logLine(line, stream) })
   }
-  launcherProc.on('error', (e) => send('backend:error', { text: `启动器进程错误: ${e.message}` }))
+  launcherProc.on('error', (e) => {
+    if (launcherProc === child && backend?.enabled) send('backend:error', { text: `启动器进程错误: ${e.message}` })
+  })
   launcherProc.on('exit', (code) => {
     send('backend:log', { text: `启动器退出（code=${code}）`, stream: 'meta', ts: Date.now() })
+    if (launcherProc !== child) return
     launcherProc = null
     try { fs.unlinkSync(path.join(app.getPath('userData'), 'owned-service.json')) } catch {}
     // 用户手动关窗口导致的退出不报错；异常退出提示
-    if (code !== 0 && code !== null && !quitting) {
+    if (code !== 0 && code !== null && !quitting && backend?.enabled) {
       send('backend:error', { text: `后端进程异常退出（code=${code}），请把终端日志反馈给开发者` })
     }
   })
@@ -221,6 +227,7 @@ function spawnLauncher() {
 }
 
 async function pollHealth() {
+  if (!backend?.enabled || backend.stopping || backend.closed) return
   // 端口文件优先（launcher 可能顺延了端口）
   try {
     const pf = path.join(app.getPath('temp'), `aivideo-port-${process.pid}.txt`)
@@ -236,10 +243,10 @@ async function pollHealth() {
 }
 
 function finishBoot() {
-  if (readyNotified) return
+  if (readyNotified || !backend?.enabled || backend.stopping) return
   readyNotified = true
   console.log(`[desktop] backend ready at http://127.0.0.1:${launcherPort}`)
-  send('backend:ready', { port: launcherPort, url: `http://127.0.0.1:${launcherPort}` })
+  send('backend:ready', { ...backend.status(), url: `http://127.0.0.1:${launcherPort}` })
 }
 
 /** 杀 launcher 进程树（uvicorn 子进程一起杀，否则留孤儿占端口） */
@@ -247,24 +254,60 @@ function killLauncherTree() {
   if (backend) backend.close()
 }
 
+function watchBackend() {
+  if (!healthTimer) healthTimer = setInterval(() => pollHealth().catch(() => {}), 2000)
+  if (!bootTimer) bootTimer = setInterval(() => {
+    if (backend?.enabled && !backend.online) send('backend:tick', { seconds: ++bootSeconds })
+  }, 1000)
+}
+
 function startBackend() {
-  if (backend) return
-  backend = new BackendService({
+  if (!backend) backend = new BackendService({
     launch: spawnLauncher,
     changed: (online) => {
       if (online) finishBoot()
-      else {
+      else if (backend.enabled) {
         readyNotified = false
         send('backend:offline', { text: '本地服务已断开，正在等待重连；可在系统管理中重试。' })
       }
     },
-    stop: pid => execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {}),
+    stop: pid => new Promise((resolve, reject) => {
+      execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 15000 }, error => error ? reject(error) : resolve())
+    }),
   })
-  backend.check(true).catch(e => send('backend:error', { text: e.message }))
-  healthTimer = setInterval(() => pollHealth().catch(() => {}), 2000)
-  bootTimer = setInterval(() => {
-    if (!backend.online) send('backend:tick', { seconds: ++bootSeconds })
-  }, 1000)
+  watchBackend()
+  return backend.enable().catch(e => send('backend:error', { text: e.message }))
+}
+
+async function stopBackend() {
+  if (!backend || !backend.enabled) return backend?.status()
+  // 先等当前探测结束，避免把尚未识别的外部服务当作已经停止。
+  if (!backend.child) await backend.check()
+  if (backend.online && !backend.child) throw new Error('当前连接的是从其他窗口启动的服务，请到原启动窗口关闭。')
+  if (backend.child) {
+    const { response } = await dialog.showMessageBox(mainWin, {
+      type: 'question', title: '关闭本地服务', message: '关闭服务并释放后台占用？',
+      detail: '请先保存编辑内容。进行中的生成、导出或安装会中断；已保存的作品会保留，之后可点击“开启服务”继续使用。独立启动的 ComfyUI 需在原窗口关闭。',
+      buttons: ['保持运行', '关闭服务'], defaultId: 0, cancelId: 0,
+    })
+    if (response !== 1) return { ...backend.status(), cancelled: true }
+  }
+  send('backend:state', { state: 'stopping', progress: 0 })
+  clearInterval(healthTimer)
+  clearInterval(bootTimer)
+  healthTimer = bootTimer = null
+  try {
+    await backend.disable()
+    readyNotified = false
+    bootSeconds = 0
+    const status = backend.status()
+    send('backend:stopped', status)
+    return status
+  } catch (error) {
+    watchBackend()
+    send('backend:state', { state: backend.online ? 'ready' : 'starting', progress: backend.online ? 1 : 0 })
+    throw error
+  }
 }
 
 // ---------- 自动更新 ----------
@@ -290,8 +333,20 @@ function handle(channel, handler) {
     return handler(event, ...args)
   })
 }
-handle('backend:status', () => ({ online: backend?.online || false, port: launcherPort }))
-handle('backend:retry', () => backend?.check(true))
+handle('backend:status', () => backend?.status() || { online: false, port: launcherPort, enabled: true, owned: false })
+handle('backend:start', () => {
+  if (stopRequest) return stopRequest
+  bootSeconds = 0
+  return startBackend()
+})
+handle('backend:stop', () => {
+  if (!stopRequest) stopRequest = stopBackend().finally(() => { stopRequest = null })
+  return stopRequest
+})
+handle('backend:retry', () => {
+  if (stopRequest) return stopRequest
+  return startBackend()
+})
 handle('backend:hardware', async () => {
   if (!backend?.online) throw new Error('本地服务尚未连接，请重试连接后检测。')
   const response = await fetch(`http://127.0.0.1:${launcherPort}/api/hardware`, { signal: AbortSignal.timeout(20000), redirect: 'error' })

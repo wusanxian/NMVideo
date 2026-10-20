@@ -54,6 +54,7 @@
           <div v-if="it.capability" class="cap-detail">
             <div v-if="it.capability.model_id" class="cap-line">模型：<code>{{ it.capability.model_id }}</code></div>
             <div class="cap-line">支持输入：{{ it.capability.supports.join('、') }}</div>
+            <div v-if="it.capability.native_preview" class="cap-line">预览支持原生二采；角色参考图属于实验能力，生成后请检查一致性。</div>
             <div v-if="it.capability.required_nodes.length" class="cap-line">
               依赖节点：<code v-for="n in it.capability.required_nodes" :key="n" class="node-chip"
                              :class="{ missing: isMissing(it, n) }">{{ n }}</code>
@@ -148,6 +149,7 @@ const editableMap = reactive({})
 const saving = ref(false)
 const wfMsg = ref('')
 const presets = ref([])
+const workflowMeta = ref(null)
 const selectedPreset = ref('')
 
 // ---- 工作流能力中心（PR-03） ----
@@ -230,6 +232,7 @@ async function loadWorkflow() {
 }
 
 function renderWorkflow(wf) {
+  workflowMeta.value = wf._meta || null
   const map = wf._aivideo_map || {}
   workflowText.value = JSON.stringify(wf.prompt || {}, null, 2)
   Object.keys(editableMap).forEach((k) => delete editableMap[k])
@@ -247,7 +250,7 @@ async function saveWorkflow() {
     for (const [k, v] of Object.entries(editableMap)) {
       if (v.node && v.input) map[k] = { node: v.node, input: v.input }
     }
-    const saved = await api.saveComfyWorkflow({ prompt, _aivideo_map: map })
+    const saved = await api.saveComfyWorkflow({ prompt, _aivideo_map: map, _meta: workflowMeta.value })
     renderWorkflow(saved)
     wfMsg.value = '已保存'
   } catch (e) {

@@ -85,3 +85,97 @@ test('health probe rejects generic HTML, invalid JSON and error responses', asyn
   status = 500
   assert.equal(await probeBackend(port), false)
 })
+
+function child(pid) { return Object.assign(new EventEmitter(), { pid, exitCode: null }) }
+
+test('manual stop releases owned service, stays stopped during polling and can start again', async () => {
+  const children = [child(2001), child(2002)]
+  let launches = 0
+  let online = false
+  let probes = 0
+  const stopped = []
+  const service = new BackendService({
+    probe: async () => { probes++; return online },
+    launch: () => children[launches++], changed() {},
+    stop: async pid => { stopped.push(pid); online = false },
+  })
+  await service.enable()
+  online = true
+  await service.check()
+  assert.equal(service.status().owned, true)
+  await service.disable()
+  const probesAtStop = probes
+  await service.check(true)
+  await service.check()
+  assert.equal(probes, probesAtStop, 'no polling while intentionally stopped')
+  assert.deepEqual(stopped, [2001])
+  assert.equal(service.status().enabled, false)
+  assert.equal(service.status().online, false)
+  await service.enable()
+  assert.equal(launches, 2)
+  assert.equal(service.child.pid, 2002)
+  // 旧进程的迟到退出事件不能清除新进程的归属。
+  children[0].emit('exit', 1)
+  assert.equal(service.child.pid, 2002)
+  service.close()
+})
+
+test('stop invalidates an in-flight health response without launching or reconnecting', async () => {
+  let finish
+  let changed = 0
+  const service = new BackendService({ probe: () => new Promise(resolve => { finish = resolve }),
+    launch: () => assert.fail('stale probe must not launch'), changed: () => { changed++ }, stop() {} })
+  const checking = service.check(true)
+  await service.disable()
+  finish(true)
+  await checking
+  assert.equal(service.online, false)
+  assert.equal(changed, 0)
+  assert.equal(service.enabled, false)
+  service.close()
+})
+
+test('repeated stop is one operation and restart waits until termination finishes', async () => {
+  let finish
+  let stops = 0
+  let launches = 0
+  const service = new BackendService({ probe: async () => false, changed() {},
+    launch: () => child(++launches), stop: () => { stops++; return new Promise(resolve => { finish = resolve }) } })
+  await service.enable()
+  const stopping = service.disable()
+  const repeated = service.disable()
+  assert.equal(stopping, repeated)
+  const restarting = service.enable()
+  assert.equal(service.stopping, true)
+  assert.equal(launches, 1)
+  finish()
+  await Promise.all([stopping, restarting])
+  assert.equal(stops, 1)
+  assert.equal(launches, 2)
+  service.stop = () => {}
+  service.close()
+})
+
+test('failed termination preserves ownership and allows retry instead of claiming resources released', async () => {
+  const service = new BackendService({ probe: async () => false, changed() {},
+    launch: () => child(2003), stop: async () => { throw new Error('Access denied') } })
+  await service.enable()
+  await assert.rejects(service.disable(), /Access denied/)
+  assert.equal(service.enabled, true)
+  assert.equal(service.status().owned, true)
+  assert.equal(service.stopping, false)
+  service.stop = () => {}
+  await service.disable()
+  assert.equal(service.status().owned, false)
+  service.close()
+})
+
+test('manual stop refuses to terminate an externally started service', async () => {
+  const service = new BackendService({ probe: async () => true, changed() {},
+    launch: () => assert.fail(), stop: () => assert.fail('external process must survive') })
+  await service.enable()
+  await assert.rejects(service.disable(), /其他窗口/)
+  assert.equal(service.online, true)
+  assert.equal(service.enabled, true)
+  service.close()
+})

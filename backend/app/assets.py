@@ -117,8 +117,6 @@ def update_character(character_id: str, **fields) -> Optional[dict]:
 def delete_character(character_id: str) -> None:
     _write("DELETE FROM characters WHERE id = ?", (character_id,))
     # 从所有分镜的关联里摘除
-    from . import storyboard as sb
-
     for shot in _rows("SELECT id, character_ids FROM shots"):
         try:
             ids = json.loads(shot["character_ids"] or "[]")

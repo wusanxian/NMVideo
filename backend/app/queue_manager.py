@@ -1,5 +1,6 @@
 """任务队列：单 worker 顺序执行，SQLite 持久化，支持取消与进度回调"""
 import asyncio
+import json
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -42,17 +43,17 @@ class JobQueue:
         原来 `list_jobs(limit=1000)` 一次截断，超量任务在重启恢复时被静默
         遗漏（既不重跑也不标失败，成为永久 pending 僵尸）。
         """
-        offset = 0
+        cursor = None
         while True:
             batch = db_module.db.list_jobs(
-                limit=self._RECOVER_PAGE, status=status, order=order, offset=offset
+                limit=self._RECOVER_PAGE, status=status, order=order, after=cursor
             )
             if not batch:
                 return
             yield from batch
             if len(batch) < self._RECOVER_PAGE:
                 return
-            offset += self._RECOVER_PAGE
+            cursor = (batch[-1]["created_at"], batch[-1]["id"])
 
     def _recover_stale_jobs(self):
         """崩溃恢复（重启后重启队列，而不是一刀切标失败）：
@@ -90,7 +91,7 @@ class JobQueue:
             shot_id = job.get("shot_id") or ""
             prompt_id = job.get("prompt_id") or ""
             if job.get("engine") == "comfyui" and prompt_id:
-                state = self._probe_comfy_job(prompt_id)
+                state = self._probe_comfy_job(prompt_id, self._comfy_url(job))
                 if state in ("done", "running", "queued"):
                     # ComfyUI 侧任务仍在（或已完成）：重新入队，worker 走
                     # resume 路径（resume_prompt_id）直接等待/下载
@@ -138,7 +139,7 @@ class JobQueue:
             shot_id = job.get("shot_id") or ""
             prompt_id = job.get("prompt_id") or ""
             if job.get("engine") == "comfyui" and prompt_id:
-                state = self._probe_comfy_job(prompt_id)
+                state = self._probe_comfy_job(prompt_id, self._comfy_url(job))
                 if state in ("done", "running", "queued"):
                     db_module.db.update_job(
                         job["id"], status="running",
@@ -191,7 +192,7 @@ class JobQueue:
             print(f"[queue] 重新入队 {pending_count} 个未执行任务")
 
     @staticmethod
-    def _probe_comfy_job(prompt_id: str) -> str:
+    def _probe_comfy_job(prompt_id: str, base_url: str = "") -> str:
         """重启恢复探测：ComfyUI 侧任务状态。
 
         done/running/queued/error/lost/temporarily_unavailable。
@@ -201,9 +202,20 @@ class JobQueue:
         try:
             from .comfyui import ComfyUIClient
 
-            return ComfyUIClient().probe(prompt_id)
+            return ComfyUIClient(base_url or None).probe(prompt_id)
         except Exception:
             return "temporarily_unavailable"
+
+    @staticmethod
+    def _comfy_url(job: dict) -> str:
+        from .comfyui import ComfyUIClient
+        url = job.get("comfy_url") or ""
+        if not url:
+            # 旧任务没有地址可追溯，只在首次恢复时取当前设置并落库。
+            url = ComfyUIClient().base_url
+            db_module.db.update_job(job["id"], comfy_url=url)
+            job["comfy_url"] = url
+        return url
 
     def stop(self):
         if self._task is not None:
@@ -213,7 +225,11 @@ class JobQueue:
 
     # ---------- 外部操作 ----------
     async def submit(self, params: dict) -> str:
-        job = db_module.db.create_job(params)
+        from .generation import prepare_comfy_workflow, persist_prepared_job
+        graph, template = None, None
+        if params["engine"] == "comfyui":
+            graph, template = prepare_comfy_workflow(params, output_dir=OUTPUTS_DIR)
+        job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR, graph=graph, template=template)
         await self._queue.put(job["id"])
         return job["id"]
 
@@ -233,15 +249,7 @@ class JobQueue:
         self._cancelled.add(job_id)
         if job["status"] in ("pending", "needs_attention"):
             # 还没开始跑（或待核查未入队）：直接标记取消，worker 取到后会跳过
-            db_module.db.update_job(
-                job_id, status="cancelled", stage="已取消", finished_at=_utcnow()
-            )
-            if job["status"] == "needs_attention":
-                # 待核查任务镜头还挂在 generating 上：清理联动，回草稿
-                shot_id = job.get("shot_id") or ""
-                if shot_id and sb.get_shot(shot_id):
-                    sb.update_shot(shot_id, job_id="", note="已取消")
-                    sb.set_shot_status(shot_id, "draft", review_stage="")
+            db_module.db.cancel_job(job_id, statuses=("pending", "needs_attention"))
 
     # ---------- worker ----------
     async def _worker(self):
@@ -250,6 +258,7 @@ class JobQueue:
             try:
                 if job_id in self._cancelled:
                     # 排队阶段已被取消
+                    db_module.db.cancel_job(job_id)
                     self._cancelled.discard(job_id)
                     continue
                 await self._run_job(job_id)
@@ -263,7 +272,11 @@ class JobQueue:
 
     async def _run_job(self, job_id: str):
         job = db_module.db.get_job(job_id)
-        if not job:
+        if not job or job["status"] not in ("pending", "running"):
+            return
+
+        # 首次 await 前认领任务，避免释放旧模型时取消 pending 又被改回 running。
+        if not db_module.db.claim_job(job_id):
             return
 
         # 分镜工作台联动：该 job 若由分镜发起，全程同步镜头状态
@@ -271,10 +284,18 @@ class JobQueue:
 
         # 引擎实例缓存（模型常驻内存，切任务不重载）
         engine_id = job["engine"]
+        engine_key = (engine_id, self._comfy_url(job)) if engine_id == "comfyui" else engine_id
         try:
-            if engine_id not in self._engine_instances:
-                self._engine_instances[engine_id] = get_engine(engine_id)()
-            engine = self._engine_instances[engine_id]
+            for cached_id, cached in list(self._engine_instances.items()):
+                if cached_id != engine_key and hasattr(cached, "unload"):
+                    await asyncio.get_running_loop().run_in_executor(self._executor, cached.unload)
+                    del self._engine_instances[cached_id]
+            if engine_key not in self._engine_instances:
+                engine = get_engine(engine_id)()
+                if engine_id == "comfyui" and hasattr(engine, "bind_server"):
+                    engine.bind_server(engine_key[1])
+                self._engine_instances[engine_key] = engine
+            engine = self._engine_instances[engine_key]
         except Exception as e:
             db_module.db.update_job(
                 job_id, status="failed", error=f"引擎加载失败: {e}",
@@ -285,7 +306,6 @@ class JobQueue:
                 sb.set_shot_status(shot_id, "rework", review_stage="")
             return
 
-        db_module.db.update_job(job_id, status="running", stage="准备中", progress=0.0)
         started = time.time()
 
         if shot_id and sb.get_shot(shot_id):
@@ -325,6 +345,8 @@ class JobQueue:
             resume_client_id = job.get("client_id") or ""
             workflow_snapshot = job.get("workflow_snapshot") or ""
         try:
+            if is_cancelled():
+                raise GenerationCancelled()
             frame_paths = await loop.run_in_executor(
                 self._executor,
                 lambda: engine.generate(
@@ -349,17 +371,13 @@ class JobQueue:
                     resume_client_id=resume_client_id,
                 ),
             )
+            if is_cancelled():
+                raise GenerationCancelled()
         except GenerationCancelled:
-            db_module.db.update_job(
-                job_id, status="cancelled", stage="已取消", finished_at=_utcnow()
-            )
+            note = ("已取消（ComfyUI 任务可能仍在远端执行）"
+                    if engine_id == "comfyui" else "已取消")
+            db_module.db.cancel_job(job_id, note=note)
             self._cancelled.discard(job_id)
-            if shot_id and sb.get_shot(shot_id):
-                # HF-06：ComfyUI 取消不再全局打断，远端任务可能仍在执行
-                note = ("已取消（ComfyUI 任务可能仍在远端执行）"
-                        if engine_id == "comfyui" else "已取消")
-                sb.update_shot(shot_id, job_id="", note=note)
-                sb.set_shot_status(shot_id, "draft", review_stage="")
             return
         except Exception as e:
             db_module.db.update_job(
@@ -380,8 +398,12 @@ class JobQueue:
         # 2C：ComfyUI 原生视频原样归档——remux（-c copy 码流原样 + 元数据），
         # 免抽帧重编码；没有原生视频才走帧序列合成（本地引擎/图片序列输出）
         native_video = getattr(engine, "last_native_video", "") or ""
+        native_output = getattr(engine, "last_output_file", None)
+        if native_output:
+            db_module.db.update_job(job_id, native_output=json.dumps(native_output))
         final_path = OUTPUTS_DIR / f"{job_id}.mp4"
         metadata = self._job_metadata(job, engine)
+        db_module.db.update_job(job_id, hardware=metadata["hardware"])
         if native_video and Path(native_video).is_file():
             native_path = Path(native_video)
             db_module.db.update_job(job_id, stage="归档原片", progress=0.92)
@@ -473,7 +495,8 @@ class JobQueue:
     @staticmethod
     def _job_metadata(job: dict, engine) -> dict:
         """嵌入 MP4 的生成参数（FreeVideo 式视频自带工作流）"""
-        hw = hw_probe.probe().to_dict()
+        profile = getattr(engine, "_profile", None)
+        hw = profile.to_dict() if profile is not None else hw_probe.probe().to_dict()
         return {
             "app": "aivideo",
             "engine": job["engine"],
@@ -488,7 +511,12 @@ class JobQueue:
             "seed": job["seed"],
             "preset": job.get("preset") or "",
             "preview": bool(job.get("preview")),
-            "hardware": f"{hw['gpu_name']} | {hw['quant']} | {hw['offload']}",
+            "preview_kind": job.get("preview_kind") or "rerun",
+            "parent_job_id": job.get("parent_job_id") or "",
+            "generation_inputs": json.loads(job.get("generation_inputs") or "[]"),
+            "characters": json.loads(job.get("characters_snapshot") or "[]"),
+            "hardware": ("ComfyUI 外部执行，资源由服务端管理" if job["engine"] == "comfyui"
+                         else f"{hw['gpu_name']} | {hw['quant']} | {hw['offload']}"),
         }
 
 

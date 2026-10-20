@@ -352,6 +352,14 @@ def test_remux_video_copy_preserves_stream_and_metadata(tmp_path):
 
     assert out.is_file()
     assert read_video_metadata(out) == meta, "元数据未随 remux 写入"
+
+
+def test_metadata_roundtrip_preserves_chinese_and_ffmetadata_escapes(tmp_path):
+    src = _tiny_mp4(tmp_path / "src.mp4")
+    out = tmp_path / "escaped.mp4"
+    metadata = {"prompt": "中文 = 分号; #井号 \\ 路径\n下一行", "seed": 93}
+    remux_video(src, out, metadata=metadata)
+    assert read_video_metadata(out) == metadata
     assert probe_resolution(out) == (64, 64)
     # copy 分支产物与源同码流：体积应接近（远小于重编码差异量级）
     assert out.stat().st_size >= src.stat().st_size * 0.5

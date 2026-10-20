@@ -58,6 +58,7 @@ def test_run_export_passes_frozen_fps_to_concat(fresh_db, tmp_path, monkeypatch)
 
     project = sb.create_project("fps-worker")
     exp = sb.create_export(project["id"], fps=30)
+    sb.update_export(exp["id"], manifest="")  # 此用例仅检查兼容旧导出的帧率传递
 
     fake_video = tmp_path / "seg.mp4"
     fake_video.write_bytes(b"\x00\x00")
@@ -98,7 +99,7 @@ def test_run_export_legacy_row_falls_back_to_project_fps(fresh_db, tmp_path, mon
 
     project = sb.create_project("fps-legacy")  # fps=24
     exp = sb.create_export(project["id"])
-    sb.update_export(exp["id"], fps=0)  # 模拟迁移前的旧记录
+    sb.update_export(exp["id"], fps=0, manifest="")  # 模拟迁移前的旧记录
 
     fake_video = tmp_path / "seg.mp4"
     fake_video.write_bytes(b"\x00\x00")

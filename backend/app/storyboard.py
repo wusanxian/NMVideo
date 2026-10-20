@@ -247,13 +247,15 @@ def create_shot(scene_id: str, **fields) -> dict:
         "shots",
         ["id", "scene_id", "title", "dialogue", "shot_size", "camera_movement",
          "duration_s", "prompt", "negative_prompt", "reference_image",
+         "first_frame_image", "last_frame_image",
          "character_ids", "mode", "continue_from", "order_index",
          "created_at", "updated_at"],
         (sid, scene_id, fields.get("title", ""),
          fields.get("dialogue", ""), fields.get("shot_size", "中景"),
          fields.get("camera_movement", "固定"), float(fields.get("duration_s", 3)),
          fields.get("prompt", ""), fields.get("negative_prompt", ""),
-         fields.get("reference_image", ""), json.dumps(fields.get("character_ids") or []),
+         fields.get("reference_image", ""), fields.get("first_frame_image", ""),
+         fields.get("last_frame_image", ""), json.dumps(fields.get("character_ids") or []),
          fields.get("mode", "t2v"), fields.get("continue_from", ""),
          fields.get("order_index", max_order + 1), now, now),
         sid,
@@ -550,7 +552,9 @@ def create_version(shot_id: str, job: dict, video_url: str = "",
         for k in ("engine", "width", "height", "num_frames", "fps", "steps",
                   "guidance", "seed", "preset", "preview", "hardware",
                   "first_frame_image", "last_frame_image",
-                  "source_video_version_id")
+                  "source_video_version_id", "parent_job_id", "generation_target",
+                  "mode", "reference_image", "continue_from", "workflow_snapshot", "generation_inputs", "preview_kind",
+                  "use_character_images", "use_character_lora")
         if job.get(k) is not None
     }
     # PR-04：角色快照随版本存档（入队时冻结，锁定生成所用角色数据）
@@ -1122,10 +1126,13 @@ def timeline_layout(project_id: str) -> list:
 
     供字幕自动生成、配音对齐、导出混音共用同一套时间基准。
     """
+    return layout_from_items(list_timeline(project_id))
+
+
+def layout_from_items(items: list) -> list:
     from .managed_paths import VIDEO_SUFFIXES, resolve_managed_asset
     from .video import probe_duration
-
-    items = list_timeline(project_id)
+    items = [dict(item) for item in items]
     t = 0.0
     for it in items:
         dur = 0.0
@@ -1205,10 +1212,12 @@ def create_export(project_id: str, fps: int = None) -> dict:
         proj = get_project(project_id) or {}
         fps = proj.get("fps") or 24
     fps = int(fps)
+    from .export_manifest import capture
+    manifest = json.dumps(capture(db, project_id, fps), ensure_ascii=False)
     return db.insert_and_get(
         "exports",
-        ["id", "project_id", "status", "fps", "created_at"],
-        (eid, project_id, "pending", fps, _utcnow()),
+        ["id", "project_id", "status", "fps", "manifest", "created_at"],
+        (eid, project_id, "pending", fps, manifest, _utcnow()),
         eid,
     )
 

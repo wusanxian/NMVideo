@@ -1,6 +1,7 @@
 """分镜工作台 REST API：项目 / 场景 / 分镜 / 版本 / 时间线 / 导出 / ComfyUI"""
 import json
 import random
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +17,10 @@ from ..comfyui import (
     save_workflow_template,
 )
 from ..config import OUTPUTS_DIR
-from ..engines import ENGINES
+from ..engines import ENGINES, validate_engine_mode
+from ..quality import normalize_generation
+from ..generation import prepare_comfy_workflow, persist_prepared_job
+from .. import db as db_module
 from ..export import start_export
 from ..queue_manager import job_queue
 
@@ -107,6 +111,8 @@ class ShotGenerate(BaseModel):
     seed: int = -1
     preset: str = ""
     preview: bool = False
+    use_character_images: bool = True
+    use_character_lora: bool = True
     mode: str = Field("t2v", pattern="^(t2v|i2v|first_last|continuation)$")
     continue_from: str = ""
 
@@ -133,7 +139,8 @@ class TimelineUpdate(BaseModel):
 
 class WorkflowUpdate(BaseModel):
     prompt: dict
-    _aivideo_map: Optional[dict] = None
+    mapping: Optional[dict] = Field(None, alias="_aivideo_map")
+    meta: Optional[dict] = Field(None, alias="_meta")
 
 
 # =====================================================================
@@ -338,9 +345,14 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     reference_image = (shot.get("reference_image") or "").strip()
     first_frame = (shot.get("first_frame_image") or "").strip()
     last_frame = (shot.get("last_frame_image") or "").strip()
-    continue_from = (shot.get("continue_from") or "").strip()
+    continue_from = (data.continue_from if "continue_from" in data.model_fields_set else shot.get("continue_from") or "").strip()
     source_version_id = (shot.get("source_video_version_id") or "").strip()
-    mode = data.mode or shot.get("mode") or "t2v"
+    mode = data.mode if "mode" in data.model_fields_set else (shot.get("mode") or "t2v")
+    try:
+        validate_engine_mode(data.engine, mode)
+        params = normalize_generation(data.model_dump(), data.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     # 兼容旧数据：i2v / first_last 未设独立首帧时，reference_image 充当首帧
     # （旧 first_last 只有一张参考图，行为不变；新 UI 两个独立输入）
@@ -376,7 +388,7 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             raise HTTPException(400, f"上一镜头视频缺失或不受管: {src_ver['video_url']}")
         refs_dir = OUTPUTS_DIR / "refs"
         refs_dir.mkdir(parents=True, exist_ok=True)
-        frame_path = refs_dir / f"{shot_id}_from_{src_shot['id']}.png"
+        frame_path = refs_dir / f"{shot_id}_from_{src_ver['id']}_{uuid.uuid4().hex[:12]}.png"
         try:
             extract_last_frame(src_path, frame_path)
         except Exception as e:
@@ -404,19 +416,9 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
         prompt = (prompt + " || continuous shot, seamless continuation, "
                   "same character and scene as the previous shot").strip(" |")
 
-    if data.engine == "comfyui":
-        client = ComfyUIClient()
-        if not client.is_available():
-            raise HTTPException(
-                400,
-                f"连不上 ComfyUI 服务器（{client.base_url}）：请先在 ComfyUI 设置里"
-                "确认地址并启动 ComfyUI",
-            )
+    if params["seed"] < 0:
+        params["seed"] = random.randint(0, 2**31 - 1)
 
-    if data.seed < 0:
-        data.seed = random.randint(0, 2**31 - 1)
-
-    params = data.model_dump()
     params["prompt"] = prompt
     params["negative_prompt"] = shot.get("negative_prompt") or ""
     params["shot_id"] = shot_id
@@ -437,161 +439,19 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
         for c in characters
     ], ensure_ascii=False)
 
-    # ---- P0-02：ComfyUI 备料先行，全部成功后才创建 job ----
-    # 旧顺序先 create_job 再上传参考图：上传失败（HTTPException 400）不回滚，
-    # 留下无 prompt_id 的 pending 僵尸任务，重启后还会被恢复器捡起来重跑。
-    # 现在模板加载/参考图上传/工作流构建/预检都在建 job 前完成，
-    # 任一失败 → 400 且 DB 不落任何可执行任务。
-    graph = None
-    if data.engine == "comfyui":
-        from ..comfyui import (
-            build_snapshot_payload,
-            build_shot_workflow,
-            load_workflow_template,
-            upload_reference_image,
-        )
-
-        template = load_workflow_template()
-        prompt_graph = template.get("prompt")
-        if not isinstance(prompt_graph, dict) or not prompt_graph:
-            raise HTTPException(
-                400, "工作流模板为空或缺少 prompt 节点图，请在 ComfyUI 设置里检查"
-            )
-        # PR-03：模板声明了能力元数据（_meta）时，点击生成前即阻断——
-        # 不支持的输入模式 / 缺失的 ComfyUI 节点。无 _meta 的模板
-        # （默认模板/旧配置）零影响，行为与旧版完全一致。
-        from ..workflow_capabilities import (
-            capability_from_template,
-            check_missing_models,
-            check_missing_nodes,
-            mode_supported,
-        )
-
-        cap = capability_from_template(template)
-        if cap:
-            if not mode_supported(cap, mode):
-                raise HTTPException(
-                    400, f"当前工作流（{cap['name'] or '未命名'}）不支持「{mode}」"
-                         f"模式；声明支持：{'、'.join(cap['supports'])}。"
-                         "请在 ComfyUI 设置里改用匹配的模板"
-                )
-            if cap["required_nodes"]:
-                missing, probe_ok = check_missing_nodes(client, cap["required_nodes"])
-                if missing:
-                    raise HTTPException(
-                        400, f"当前工作流缺少 ComfyUI 节点：{'、'.join(missing)}。"
-                             "请安装对应自定义节点（可在「模型服务」页的工作流"
-                             "能力检查里查看详情）后重试"
-                    )
-            # PR-04 剩余：声明的模型文件未安装 → 明确 400（不上传后静默失败）
-            if cap["required_models"]:
-                missing_models, models_ok = check_missing_models(
-                    client, cap["required_models"]
-                )
-                if missing_models:
-                    raise HTTPException(
-                        400, f"当前工作流需要以下模型但未安装："
-                             f"{'、'.join(missing_models)}。"
-                             "请下载并放入 ComfyUI 对应 models/ 子目录"
-                             "（可在「模型服务」页的工作流能力检查里查看详情）"
-                             "后重试"
-                    )
-        template_map = template.get("_aivideo_map") or {}
-        # PR-02：first_last 需要模板真实支持两张关键帧——尾帧节点未映射
-        # 或首帧无任何可走节点时明确失败，不静默忽略（静默丢图会让用户
-        # 以为尾帧生效了）
-        if mode == "first_last":
-            if not template_map.get("last_frame_image"):
-                raise HTTPException(
-                    400, "当前工作流模板未映射尾帧节点（_aivideo_map 缺 "
-                         "last_frame_image），无法执行首尾帧模式；请在 ComfyUI "
-                         "设置里改用支持首尾帧的模板"
-                )
-            if not template_map.get("first_frame_image") and not template_map.get(
-                "reference_image"
-            ):
-                raise HTTPException(
-                    400, "当前工作流模板未映射首帧节点（_aivideo_map 缺 "
-                         "first_frame_image / reference_image），无法执行首尾帧模式"
-                )
-        # 图片路由：
-        # - t2v：无图
-        # - i2v：沿用既有链路 reference_image（行为不变）
-        # - continuation：来源末帧走 reference_image；模板另映射了
-        #   first_frame_image 时同值注入（映射哪个用哪个）
-        # - first_last：首帧优先走 first_frame_image 专用节点；模板只映射
-        #   reference_image 时兼容旧式单节点模板（首帧经 reference_image 注入）；
-        #   尾帧走 last_frame_image 专用节点
-        ref_for_graph = reference_image
-        first_for_graph = ""
-        last_for_graph = ""
-        if mode == "first_last":
-            if template_map.get("first_frame_image"):
-                first_for_graph = first_frame
-            else:
-                ref_for_graph = first_frame  # 旧式模板：首帧经参考图节点
-            last_for_graph = last_frame
-        elif mode == "continuation":
-            first_for_graph = first_frame
-        # 2C：工作流消费图片时，上传到 ComfyUI input 目录并用返回名注入
-        # （LoadImage 只能引用 input 目录内的文件，本机路径对 ComfyUI 无意义）
-        if ref_for_graph and template_map.get("reference_image"):
-            try:
-                ref_for_graph = upload_reference_image(client, ref_for_graph)
-            except Exception as e:
-                raise HTTPException(400, f"参考图上传 ComfyUI 失败: {e}")
-        for label, value, mapped_key in (
-            ("首帧", first_for_graph, "first_frame_image"),
-            ("尾帧", last_for_graph, "last_frame_image"),
-        ):
-            if not value or not template_map.get(mapped_key):
-                continue
-            try:
-                uploaded = upload_reference_image(client, value)
-            except Exception as e:
-                raise HTTPException(400, f"{label}图片上传 ComfyUI 失败: {e}")
-            if mapped_key == "first_frame_image":
-                first_for_graph = uploaded
-            else:
-                last_for_graph = uploaded
-        graph = build_shot_workflow({
-            "prompt": params["prompt"],
-            "negative_prompt": params["negative_prompt"],
-            "width": params["width"], "height": params["height"],
-            "num_frames": params["num_frames"], "seed": params["seed"],
-            "steps": params["steps"], "guidance": params["guidance"],
-            "reference_image": ref_for_graph,
-            "first_frame_image": first_for_graph,
-            "last_frame_image": last_for_graph,
-        }, template=template)
-        if not graph:
-            raise HTTPException(
-                400, "工作流模板为空或缺少 prompt 节点图，请在 ComfyUI 设置里检查"
-            )
-
-    from .. import db as db_module
-
-    job = db_module.db.create_job(params)
+    graph, template = None, None
+    try:
+        if data.engine == "comfyui":
+            graph, template = prepare_comfy_workflow(params, output_dir=OUTPUTS_DIR)
+        job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR,
+                                   graph=graph, template=template)
+    except (ValueError, ComfyUIError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(500, "工作流快照保存失败，未创建生成任务") from exc
     job_id = job["id"]
-    # 2B：ComfyUI 入队即固化工作流快照——排队期间用户在设置里改模板，
-    # 不影响已排队任务（执行时优先读快照；快照写盘失败不阻断，执行时兜底重建）
-    # PR-06：快照带 schema_version + 节点图 sha256，执行时校验，损坏/版本
-    # 不符明确失败，不静默替换
-    if graph is not None:
-        try:
-            snap_dir = OUTPUTS_DIR / "workflows"
-            snap_dir.mkdir(parents=True, exist_ok=True)
-            snap = snap_dir / f"{job_id}.json"
-            snap.write_text(
-                json.dumps(build_snapshot_payload(graph, job_id),
-                           ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            db_module.db.update_job(job_id, workflow_snapshot=str(snap))
-        except Exception as e:
-            print(f"[storyboard] ComfyUI 工作流快照写入失败（执行时兜底）: {e}")
-    await job_queue.enqueue(job_id)
     sb.set_shot_status(shot_id, "queued", job_id=job_id, review_stage="generation")
+    await job_queue.enqueue(job_id)
     return db_module.db.get_job(job_id)
 
 
@@ -715,7 +575,10 @@ def create_export(project_id: str, body: ExportCreate = None):
     if not sb.get_project(project_id):
         raise HTTPException(404, "项目不存在")
     fps = body.fps if body else None
-    exp = sb.create_export(project_id, fps=fps)
+    try:
+        exp = sb.create_export(project_id, fps=fps)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, f"无法准备导出素材：{exc}") from exc
     start_export(exp["id"])
     return exp
 
@@ -763,8 +626,10 @@ def get_workflow():
 @router.put("/comfy/workflow")
 def put_workflow(data: WorkflowUpdate):
     payload = {"prompt": data.prompt}
-    if data._aivideo_map is not None:
-        payload["_aivideo_map"] = data._aivideo_map
+    if data.mapping is not None:
+        payload["_aivideo_map"] = data.mapping
+    if data.meta is not None:
+        payload["_meta"] = data.meta
     try:
         return save_workflow_template(payload)
     except ComfyUIError as e:

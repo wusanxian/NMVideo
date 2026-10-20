@@ -11,9 +11,12 @@ from .. import db as db_module
 from .. import storyboard as sb
 from ..config import OUTPUTS_DIR
 from ..engines import ENGINES
-from ..quality import PREVIEW_OVERRIDE, QUALITY_PRESETS, apply_preset
+from ..generation import prepare_comfy_workflow, persist_prepared_job
+from ..comfyui import ComfyUIError
+from ..quality import normalize_generation
 from ..queue_manager import job_queue
 from ..video import read_video_metadata
+from ..upgrades import prepare_upgrade
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -34,38 +37,62 @@ class JobCreate(BaseModel):
     preview: bool = False  # 两遍采样第一遍：半分辨率快速预览
 
 
+class JobUpgrade(BaseModel):
+    preset: str = ""
+
+
 @router.post("", status_code=201)
 async def create_job(data: JobCreate):
     if data.engine not in ENGINES:
         raise HTTPException(status_code=400, detail=f"未知引擎: {data.engine}")
-    params = data.model_dump()                          # 默认值
-    explicit = data.model_dump(exclude_unset=True)      # 用户显式传入的字段
-
-    # 质量档位 → 具体参数（档位覆盖默认值）
-    preset_id = params.get("preset") or explicit.get("preset")
-    if preset_id:
-        if preset_id not in QUALITY_PRESETS:
-            raise HTTPException(status_code=400, detail=f"未知档位: {preset_id}")
-        params = apply_preset(params, preset_id)
-
-    # 显式传入的参数再覆盖档位
-    for k, v in explicit.items():
-        if k != "preset":
-            params[k] = v
-
-    # 预览模式：强制轻量预览参数（两遍采样第一遍）
-    if params.get("preview"):
-        params.update(PREVIEW_OVERRIDE)
+    try:
+        params = normalize_generation(data.model_dump(), data.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     if params["seed"] < 0:
         params["seed"] = random.randint(0, 2**31 - 1)
-    job_id = await job_queue.submit(params)
-    return db_module.db.get_job(job_id)
+    graph, template = None, None
+    try:
+        if params["engine"] == "comfyui":
+            graph, template = prepare_comfy_workflow(params, output_dir=OUTPUTS_DIR)
+        job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR, graph=graph, template=template)
+    except (ValueError, ComfyUIError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(500, "工作流快照保存失败，未创建生成任务") from exc
+    await job_queue.enqueue(job["id"])
+    return job
 
 
 @router.get("")
 def list_jobs(status: Optional[str] = None, limit: int = 100):
     return db_module.db.list_jobs(limit=limit, status=status)
+
+
+@router.post("/{job_id}/upgrade", status_code=201)
+async def upgrade_job(job_id: str, data: JobUpgrade = None):
+    source = db_module.db.get_job(job_id)
+    if not source:
+        raise HTTPException(404, "原任务不存在")
+    shot_id = source.get("shot_id") or ""
+    if shot_id:
+        shot = sb.get_shot(shot_id)
+        if not shot:
+            raise HTTPException(409, "原镜头已删除，无法创建镜头候选")
+        if shot["status"] in ("queued", "generating"):
+            raise HTTPException(409, "该镜头已有生成任务，请等待完成")
+    try:
+        params, graph, template = prepare_upgrade(source, data.preset if data else "", output_dir=OUTPUTS_DIR)
+        job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR, graph=graph, template=template)
+    except (ValueError, ComfyUIError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(500, "升级快照保存失败，未创建生成任务") from exc
+    if shot_id:
+        sb.set_shot_status(shot_id, "queued", job_id=job["id"], review_stage="generation")
+    await job_queue.enqueue(job["id"])
+    return job
 
 
 @router.get("/{job_id}")
@@ -127,6 +154,14 @@ def delete_job(job_id: str):
                        "请先删除对应镜头版本或时间线片段",
             "references": refs,
         })
+    if job["status"] == "running":
+        raise HTTPException(409, "任务正在执行，请先取消并等待停止后再删除")
+    if job["status"] in ("pending", "needs_attention"):
+        job_queue.cancel(job_id)
+        # 与 worker 认领竞争时，等待它结束，不能删掉执行中的目录和数据库行。
+        latest = db_module.db.get_job(job_id)
+        if latest and latest["status"] == "running":
+            raise HTTPException(409, "任务正在停止，请等待停止后再删除")
     shutil.rmtree(OUTPUTS_DIR / job_id, ignore_errors=True)
     (OUTPUTS_DIR / f"{job_id}.mp4").unlink(missing_ok=True)
     db_module.db.delete_job(job_id)

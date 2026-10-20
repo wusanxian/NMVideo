@@ -51,6 +51,7 @@ class ComfyEngine(BaseEngine):
         description="提交到本机/局域网 ComfyUI 服务器执行自定义工作流（进度实时推送）",
         status="ready",
         note="",
+        supported_modes=("t2v", "i2v", "first_last", "continuation"),
     )
 
     def __init__(self):
@@ -61,6 +62,12 @@ class ComfyEngine(BaseEngine):
         # 2C：最近一次产出的原生视频路径（worker remux 原样归档；
         # 为空表示走帧序列合成）
         self.last_native_video = ""
+        self.last_output_file = None
+
+    def bind_server(self, base_url: str) -> None:
+        """队列按任务保存的地址建立缓存，所有 HTTP/WS/下载使用同一服务。"""
+        self.client.base_url = base_url
+        self._avail_cache = (0.0, False)
 
     def is_available_cached(self, ttl: float = 10.0) -> bool:
         import time
@@ -112,6 +119,7 @@ class ComfyEngine(BaseEngine):
         # 归档，导致视频串片。失败/取消同样不带旧值进入下一轮。
         self.last_prompt_id = ""
         self.last_native_video = ""
+        self.last_output_file = None
         if not self.client.is_available():
             raise ComfyUIError(
                 f"连不上 ComfyUI 服务器（{self.client.base_url}）："
@@ -179,6 +187,7 @@ class ComfyEngine(BaseEngine):
         frames_dir.mkdir(parents=True, exist_ok=True)
 
         if videos:
+            self.last_output_file = dict(videos[0])
             # 2C：原生视频原样归档——下载后交队列 remux（-c copy 码流原样 +
             # 元数据），不抽帧不重编码；返回空帧列表即通知队列走直通分支
             v = videos[0]
@@ -251,7 +260,7 @@ class ComfyEngine(BaseEngine):
                     )
                 # PR-06：schema_version/sha256 统一校验（旧快照无元数据仍放行）
                 return verify_snapshot_payload(data, p)
-            # 快照文件不存在（老任务/被清理）→ 走下面的模板兜底并补写
+            raise ComfyUIError(f"工作流快照缺失: {p}；请恢复快照后重试，系统不会改用当前模板")
         template = load_workflow_template()
         inject = dict(inject)
         # 2C/PR-02：兜底路径现场上传——各图片键只有模板映射了对应节点才传

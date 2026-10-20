@@ -64,14 +64,9 @@ def get_voice(voice_id: str) -> Optional[dict]:
 
 
 def delete_voice(voice_id: str) -> None:
-    v = get_voice(voice_id)
+    # 删除轨道只移除引用。素材可被其他项目、音轨、视频或导出共用，
+    # 在完整资产回收机制建立前保留文件，避免检查引用与 unlink 之间的竞争。
     _write("DELETE FROM shot_voices WHERE id = ?", (voice_id,))
-    if v and v.get("audio_url"):
-        from .managed_paths import AUDIO_SUFFIXES, resolve_managed_asset
-
-        p = resolve_managed_asset(v["audio_url"], allowed_types=AUDIO_SUFFIXES)
-        if p:
-            p.unlink(missing_ok=True)
 
 
 # =====================================================================
@@ -122,14 +117,8 @@ def update_audio_track(track_id: str, **fields) -> Optional[dict]:
 
 
 def delete_audio_track(track_id: str) -> None:
-    t = _row("SELECT * FROM audio_tracks WHERE id = ?", (track_id,))
+    # 与对白轨一致：解除引用不等于销毁共享素材。
     _write("DELETE FROM audio_tracks WHERE id = ?", (track_id,))
-    if t and t.get("audio_url"):
-        from .managed_paths import AUDIO_SUFFIXES, resolve_managed_asset
-
-        p = resolve_managed_asset(t["audio_url"], allowed_types=AUDIO_SUFFIXES)
-        if p:
-            p.unlink(missing_ok=True)
 
 
 # =====================================================================

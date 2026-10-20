@@ -44,8 +44,8 @@
       </div>
 
       <!-- 质量档位（Wan 引擎专属：档位参数按 Wan 2.2 尺寸设计） -->
-      <div v-if="form.engine === 'wan22'" class="field">
-        <label>质量档位（FreeVideo 式四档，自动映射分辨率/帧数/步数）</label>
+      <div v-if="form.engine !== 'anime'" class="field">
+        <label>质量目标（具体参数按引擎与工作流能力调整）</label>
         <div class="quality-cards">
           <div
             v-for="q in qualityPresets"
@@ -61,7 +61,7 @@
         </div>
         <label class="check-line">
           <input type="checkbox" v-model="form.preview" />
-          <span>先出预览（两遍采样：半分辨率快速看构图，满意后去画廊点「升级渲染」）</span>
+          <span>先出预览，满意后到画廊生成高清候选；FreeVideo 原生预览支持继续二采。</span>
         </label>
       </div>
       <div v-else class="anime-tip">
@@ -239,7 +239,7 @@ function setSize(w, h) {
 watch(
   () => form.engine,
   (e) => {
-    if (e !== 'wan22') {
+    if (e === 'anime') {
       form.preset = ''
       form.preview = false
     }

@@ -245,6 +245,8 @@ def test_continuation_records_source_version(client, fresh_db, tmp_path,
     client.patch(f"/api/shots/{dst['id']}", json={"prompt": GOOD_PROMPT})
     src_ver_id = _mk_source_version(fresh_db, tmp_path, sb.get_shot(sid))
     _patch_comfy_available(monkeypatch)
+    _patch_template(monkeypatch, ref_node="9")
+    _patch_uploads(monkeypatch)
 
     # 抽帧不必真跑 ffmpeg：替换为写假 PNG
     def fake_extract(src_path, frame_path):
@@ -284,6 +286,8 @@ def test_inheritance_stale_after_source_changes(client, fresh_db, tmp_path,
     sb.update_shot(dst["id"], mode="continuation", continue_from=sid,
                    source_video_version_id=src_ver_id)
     _patch_comfy_available(monkeypatch)
+    _patch_template(monkeypatch, ref_node="9")
+    _patch_uploads(monkeypatch)
 
     def fake_extract(src_path, frame_path):
         Path(frame_path).write_bytes(b"\x89PNG fake")

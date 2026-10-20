@@ -3,6 +3,7 @@
 档位映射到具体生成参数。两遍采样：预览固定走「轻量」档，
 满意后用同 seed 升级到目标档位（画廊「升级渲染」按钮）。
 """
+import json
 
 QUALITY_PRESETS = {
     "lite": {
@@ -52,3 +53,36 @@ def apply_preset(job_params: dict, preset_id: str) -> dict:
 
 def list_presets() -> list:
     return [{"id": k, **v} for k, v in QUALITY_PRESETS.items()]
+
+
+def normalize_generation(defaults: dict, explicit: dict) -> dict:
+    """两个生成入口共用：显式值 > 档位 > 默认值，预览最后覆盖。
+
+    在提交前执行引擎的尺寸约束，使存档参数与实际执行一致。
+    """
+    params = dict(defaults)
+    preset = params.get("preset") or ""
+    if preset:
+        if preset not in QUALITY_PRESETS:
+            raise ValueError(f"未知档位: {preset}")
+        params = apply_preset(params, preset)
+    params.update(explicit)
+    if params.get("preview"):
+        target_params = {**params, "preview": False}
+        target = normalize_generation(target_params, target_params)
+        params["generation_target"] = json.dumps({
+            key: target[key] for key in ("width", "height", "num_frames", "fps", "steps", "guidance")
+        })
+        params.update(PREVIEW_OVERRIDE)
+    engine = params.get("engine")
+    if engine == "anime":
+        if params["num_frames"] > 32 or params["width"] * params["height"] > 640 * 640:
+            raise ValueError("AnimeDiff 建议不超过 32 帧、640×640 像素；请降低参数或改用 Wan/ComfyUI")
+        params["num_frames"] = max(8, params["num_frames"] // 2 * 2)
+        for key in ("width", "height"):
+            params[key] = max(256, params[key] // 8 * 8)
+    elif engine == "wan22":
+        params["num_frames"] = 4 * ((params["num_frames"] - 1) // 4) + 1
+        for key in ("width", "height"):
+            params[key] = max(128, params[key] // 16 * 16)
+    return params

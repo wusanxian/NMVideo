@@ -95,6 +95,14 @@ class Database:
                 ("prompt_id", "TEXT DEFAULT ''"),        # ComfyUI prompt_id（2B：持久化，重启恢复用）
                 ("workflow_snapshot", "TEXT DEFAULT ''"),  # ComfyUI 工作流快照路径（2B：入队即固化）
                 ("client_id", "TEXT DEFAULT ''"),        # ComfyUI 提交 client_id（P0-01：与 prompt_id 同时落库，恢复可续 WS）
+                ("generation_target", "TEXT DEFAULT '{}'"),
+                ("parent_job_id", "TEXT DEFAULT ''"),
+                ("preview_kind", "TEXT DEFAULT 'rerun'"),
+                ("native_output", "TEXT DEFAULT '{}'"),
+                ("generation_inputs", "TEXT DEFAULT '[]'"),
+                ("comfy_url", "TEXT DEFAULT ''"),  # 每个任务固定其执行服务，设置切换不迁移旧任务
+                ("use_character_images", "INTEGER DEFAULT 1"),
+                ("use_character_lora", "INTEGER DEFAULT 1"),
             ):
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
@@ -359,6 +367,8 @@ class Database:
             # 导出记录冻结当时所选帧率（0 = 旧记录，运行时回落项目帧率再回落 24）
             if "fps" not in exp_cols:
                 self._conn.execute("ALTER TABLE exports ADD COLUMN fps INTEGER DEFAULT 0")
+            if "manifest" not in exp_cols:
+                self._conn.execute("ALTER TABLE exports ADD COLUMN manifest TEXT DEFAULT ''")
             self._conn.commit()
 
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
@@ -551,8 +561,8 @@ class Database:
             self._conn.commit()
         return {"backup": str(dest), "removed": removed, "total": sum(removed.values())}
 
-    def create_job(self, params: dict) -> dict:
-        job_id = uuid.uuid4().hex[:8]
+    def create_job(self, params: dict, *, job_id: str = None) -> dict:
+        job_id = job_id or uuid.uuid4().hex[:8]
         row = {
             "id": job_id,
             "status": "pending",
@@ -577,15 +587,52 @@ class Database:
             row = cur.fetchone()
         return dict(row) if row else None
 
+    def claim_job(self, job_id: str) -> bool:
+        """与取消互斥认领；已取消的排队记录不可复活。running 用于重启续跑。"""
+        with self.transaction() as conn:
+            result = conn.execute(
+                "UPDATE jobs SET status='running', stage='准备中', progress=0"
+                " WHERE id=? AND status IN ('pending', 'running')", (job_id,),
+            )
+            return result.rowcount == 1
+
+    def cancel_job(self, job_id: str, *, note: str = "已取消",
+                   statuses=("pending", "running", "needs_attention")) -> bool:
+        """同一事务取消任务并解除它仍持有的镜头；旧任务不能释放新任务的占用。"""
+        with self.transaction() as conn:
+            job = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if not job or job["status"] not in statuses:
+                return False
+            now = _utcnow()
+            conn.execute(
+                "UPDATE jobs SET status='cancelled', stage='已取消', finished_at=? WHERE id=?",
+                (now, job_id),
+            )
+            if job["shot_id"]:
+                conn.execute(
+                    "UPDATE shots SET job_id='', status='draft', review_stage='', note=?, updated_at=?"
+                    " WHERE id=? AND job_id=?",
+                    (note, now, job["shot_id"], job_id),
+                )
+        return True
+
     def list_jobs(self, limit: int = 100, status: Optional[str] = None,
-                  order: str = "desc", offset: int = 0) -> list:
+                  order: str = "desc", offset: int = 0, after: Optional[tuple] = None) -> list:
         sql = "SELECT * FROM jobs"
         args: list = []
+        conditions = []
         if status:
-            sql += " WHERE status = ?"
+            conditions.append("status = ?")
             args.append(status)
-        # HF-04：offset 支持分页（重启恢复 >1000 条不再截断丢任务）
-        sql += f" ORDER BY created_at {'ASC' if order == 'asc' else 'DESC'} LIMIT ? OFFSET ?"
+        direction = "ASC" if order == "asc" else "DESC"
+        if after is not None:
+            operator = ">" if order == "asc" else "<"
+            conditions.append(f"(created_at, id) {operator} (?, ?)")
+            args.extend(after)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        # 唯一 id 消除同一秒内的排序歧义；恢复时使用游标，状态变化不会跳行。
+        sql += f" ORDER BY created_at {direction}, id {direction} LIMIT ? OFFSET ?"
         args += [limit, offset]
         with self._lock:
             cur = self._conn.execute(sql, tuple(args))

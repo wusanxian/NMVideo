@@ -67,6 +67,9 @@ def capability_from_template(template: dict) -> Optional[dict]:
         "supports": [m for m in supports if m in SUPPORTED_MODES] or list(SUPPORTED_MODES),
         "min_vram_gb": min_vram,
         "vram_hint": str(meta.get("vram_hint") or ""),
+        "native_preview": bool(meta.get("native_preview")),
+        "character_images": bool(meta.get("character_images")),
+        "character_lora": bool(meta.get("character_lora")),
     }
 
 

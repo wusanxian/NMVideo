@@ -28,11 +28,11 @@ extraResources:
 electronDist: electron-dist
 
 win:
+  artifactName: aivideo-desktop-setup-${version}.${ext}
   target:
     - target: nsis
       arch: x64
-  # 不自定义 artifactName：保持默认 setup 名，与 latest.yml 内的 path 一致
-  # （不一致会导致自动更新找不到安装包）
+  # 固定安装包命名，使本地文件与 latest.yml 一致，避免构建后再重命名。
   # 无框窗口，图标用资源里的
   icon: build/icon.png
   # 不签名也不编辑 exe 资源：本机构建无需 winCodeSign（其 7z 内含 macOS symlink，

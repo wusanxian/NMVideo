@@ -43,6 +43,10 @@ class WanEngine(BaseEngine):
     _profile: hw_probe.HardwareProfile = None
     _load_lock = threading.Lock()
 
+    def unload(self):
+        from .local_runtime import unload_pipeline
+        unload_pipeline(self)
+
     # ---------- 动态状态（模型是否已下载 + 硬件是否支持） ----------
     def describe(self) -> dict:
         profile = hw_probe.probe()
@@ -91,7 +95,7 @@ class WanEngine(BaseEngine):
             # ---- 量化（仅 CUDA；CPU 上 fp32/bf16 已是甜点） ----
             if profile.device == "cuda" and profile.quant in ("fp8", "int8"):
                 on_progress(0.30, f"量化权重（{profile.quant}，约 1-2 分钟）")
-                self._quantize(pipe, profile.quant)
+                profile.quant = self._quantize(pipe, profile.quant)
 
             # ---- Offload 链：核心低显存机制 ----
             if profile.offload == "sequential":
@@ -153,8 +157,10 @@ class WanEngine(BaseEngine):
 
             for t in targets:
                 quantize_(t, cfg, filter_fn=_filt)
+            return mode
         except Exception as e:  # 量化失败不阻断，退回 bf16
             print(f"[wan] 量化跳过（{mode}）：{e}")
+            return "partial_or_failed"
 
     # ---------- 生成 ----------
     def generate(self, *, prompt, negative_prompt, width, height, num_frames,

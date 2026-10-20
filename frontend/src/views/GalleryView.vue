@@ -7,6 +7,7 @@
       </div>
       <button class="btn" @click="store.fetch()">刷新</button>
     </header>
+    <p v-if="error" role="alert" class="form-msg">{{ error }}</p>
 
     <div v-if="!store.done.length" class="empty">
       还没有作品，去 <router-link to="/generate">生成页</router-link> 创作第一个视频
@@ -18,14 +19,17 @@
         <div class="gallery-info">
           <div class="g-prompt">{{ job.prompt }}</div>
           <div class="g-params">
-            {{ job.width }}×{{ job.height }} · {{ job.num_frames }} 帧 · {{ job.fps }}fps · {{ job.steps }} 步 · seed {{ job.seed }}
+            {{ job.preview_kind === 'native' ? '目标 ' : '' }}{{ job.width }}×{{ job.height }} · {{ job.num_frames }} 帧 · {{ job.fps }}fps · {{ job.steps }} 步 · seed {{ job.seed }}
             <span v-if="job.preset" class="g-tag">{{ presetName(job.preset) }}</span>
             <span v-if="job.preview" class="g-tag g-tag-preview">预览</span>
             <span v-if="job.elapsed_s" class="g-tag">耗时 {{ formatElapsed(job.elapsed_s) }}</span>
           </div>
           <div class="gallery-actions">
             <button class="btn" @click="reuse(job)">复用参数</button>
-            <button v-if="job.preview" class="btn btn-primary" @click="upgrade(job)">⬆ 升级渲染</button>
+            <button v-if="job.preview" class="btn btn-primary" :disabled="upgrading === job.id" @click="upgrade(job)">
+              {{ upgrading === job.id ? '提交中…' : (job.preview_kind === 'native' ? '继续二采' : '⬆ 生成高清候选') }}
+            </button>
+            <span v-if="job.parent_job_id" class="g-tag">来源预览 {{ job.parent_job_id }}</span>
             <a class="btn" :href="job.video_url" download>下载</a>
             <button class="btn btn-danger" @click="store.remove(job.id)">删除</button>
           </div>
@@ -44,6 +48,8 @@ import { useJobsStore } from '../store/jobs'
 const router = useRouter()
 const store = useJobsStore()
 const qualityPresets = ref([])
+const upgrading = ref('')
+const error = ref('')
 
 function presetName(id) {
   const p = qualityPresets.value.find((q) => q.id === id)
@@ -74,18 +80,20 @@ function reuse(job) {
   router.push('/generate')
 }
 
-// 升级渲染：预览 → 全质量（保留 seed，关预览，用原档位）
-function upgrade(job) {
-  const params = {
-    engine: job.engine,
-    prompt: job.prompt,
-    negative_prompt: job.negative_prompt,
-    preset: job.preset || '',
-    seed: job.seed,
-    preview: false,
+// 由后端沿用来源任务的镜头、角色、素材及工作流，生成新的高清候选。
+async function upgrade(job) {
+  if (upgrading.value) return
+  upgrading.value = job.id
+  error.value = ''
+  try {
+    await api.upgradeJob(job.id)
+    await store.fetch()
+    router.push('/queue')
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    upgrading.value = ''
   }
-  localStorage.setItem('aivideo:reuse', JSON.stringify(params))
-  router.push('/generate')
 }
 
 onMounted(async () => {

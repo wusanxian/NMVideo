@@ -12,6 +12,7 @@ class EngineMeta:
     description: str
     status: str = "ready"  # ready / unavailable
     note: str = ""
+    supported_modes: tuple = ("t2v",)
 
 
 class EngineUnavailable(Exception):

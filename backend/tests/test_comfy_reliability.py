@@ -415,6 +415,7 @@ def test_queue_cancel_marks_cancelled(fresh_db, fake_engine_env, monkeypatch):
 
     _use_engine(monkeypatch, _CancelEngine())
     job = _mk_job(fresh_db, shot["id"])
+    sb.update_shot(shot["id"], job_id=job["id"])
     asyncio.run(qm.job_queue._run_job(job["id"]))
 
     done = fresh_db.get_job(job["id"])
@@ -437,7 +438,7 @@ def _stale_running_job(fresh_db, shot_id="", prompt_id=""):
 def test_recover_comfy_running_job_reenqueues(fresh_db, monkeypatch):
     """重启恢复：ComfyUI 侧仍在 → 重新入队（resume），镜头保持 generating。"""
     proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_x")
-    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job", staticmethod(lambda pid: "running"))
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job", staticmethod(lambda pid, base_url="": "running"))
     qm.job_queue._recover_stale_jobs()
     assert not qm.job_queue._queue.empty(), "可恢复的 ComfyUI 任务未重新入队"
     assert qm.job_queue._queue.get_nowait() == job["id"]
@@ -448,7 +449,7 @@ def test_recover_comfy_running_job_reenqueues(fresh_db, monkeypatch):
 def test_recover_comfy_lost_job_fails(fresh_db, monkeypatch):
     """重启恢复：ComfyUI 历史与队列都没有 → 标中断失败，镜头打回重做。"""
     proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_gone")
-    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job", staticmethod(lambda pid: "lost"))
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job", staticmethod(lambda pid, base_url="": "lost"))
     qm.job_queue._recover_stale_jobs()
     done = fresh_db.get_job(job["id"])
     assert done["status"] == "failed" and "中断" in (done["error"] or "")
@@ -459,7 +460,7 @@ def test_recover_comfy_lost_job_fails(fresh_db, monkeypatch):
 def test_recover_comfy_error_job_fails(fresh_db, monkeypatch):
     """重启恢复：ComfyUI 侧已失败 → 明确告知重启前已失败。"""
     proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_err")
-    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job", staticmethod(lambda pid: "error"))
+    monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job", staticmethod(lambda pid, base_url="": "error"))
     qm.job_queue._recover_stale_jobs()
     done = fresh_db.get_job(job["id"])
     assert done["status"] == "failed" and "重启前已执行失败" in (done["error"] or "")
@@ -606,7 +607,7 @@ def test_restart_reconcile_resume_completes(fresh_db, fake_engine_env, monkeypat
 
     # 重启：ComfyUI 侧任务还在跑 → 重新入队
     monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
-                        staticmethod(lambda pid: "running"))
+                        staticmethod(lambda pid, base_url="": "running"))
     qm.job_queue._recover_stale_jobs()
     assert qm.job_queue._queue.get_nowait() == job["id"], "可恢复任务未重新入队"
 
@@ -894,7 +895,7 @@ def test_recover_comfy_unavailable_marks_needs_attention(fresh_db, monkeypatch):
     # 崩溃前镜头已由 worker 置 generating（真实场景的持久化状态）
     sb.set_shot_status(shot["id"], "generating", review_stage="generation")
     monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
-                        staticmethod(lambda pid: "temporarily_unavailable"))
+                        staticmethod(lambda pid, base_url="": "temporarily_unavailable"))
     qm.job_queue._recover_stale_jobs()
 
     done = fresh_db.get_job(job["id"])
@@ -911,7 +912,7 @@ def test_recover_needs_attention_resumes_when_back(fresh_db, monkeypatch):
     proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_back")
     fresh_db.update_job(job["id"], status="needs_attention")
     monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
-                        staticmethod(lambda pid: "running"))
+                        staticmethod(lambda pid, base_url="": "running"))
     qm.job_queue._recover_stale_jobs()
 
     done = fresh_db.get_job(job["id"])
@@ -927,7 +928,7 @@ def test_recover_needs_attention_stays_when_still_unavailable(fresh_db, monkeypa
     proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_still")
     fresh_db.update_job(job["id"], status="needs_attention")
     monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
-                        staticmethod(lambda pid: "temporarily_unavailable"))
+                        staticmethod(lambda pid, base_url="": "temporarily_unavailable"))
     qm.job_queue._recover_stale_jobs()
 
     assert fresh_db.get_job(job["id"])["status"] == "needs_attention"
@@ -939,7 +940,7 @@ def test_recover_needs_attention_confirmed_lost_fails(fresh_db, monkeypatch):
     proj, shot, job = _stale_running_job(fresh_db, prompt_id="pid_gone2")
     fresh_db.update_job(job["id"], status="needs_attention")
     monkeypatch.setattr(qm.JobQueue, "_probe_comfy_job",
-                        staticmethod(lambda pid: "lost"))
+                        staticmethod(lambda pid, base_url="": "lost"))
     qm.job_queue._recover_stale_jobs()
 
     done = fresh_db.get_job(job["id"])
