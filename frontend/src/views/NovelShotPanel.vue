@@ -50,6 +50,55 @@
         已审核（v{{ plan.version }}）——改动任意镜头后自动回草稿态，版本历史保留；交接后项目分镜按当前审核态重建。
       </div>
 
+      <!-- 提交批次（PR-N05：预览转正与安全提交） -->
+      <section v-if="plan.project" class="submit-sec">
+        <div class="submit-bar">
+          <b>🎬 生成批次</b>
+          <select v-model="submitForm.kind" class="sel">
+            <option value="preview">预览（低质量快速）</option>
+            <option value="final">正式（需逐镜已采用版本）</option>
+          </select>
+          <select v-if="submitForm.kind === 'final'" v-model="submitForm.quality" class="sel">
+            <option value="draft">草稿档</option>
+            <option value="standard">标准档</option>
+            <option value="high">精细档</option>
+          </select>
+          <select v-model="submitForm.engine" class="sel" title="AnimeDiff 仅支持文生视频；续接/图生视频请用 ComfyUI 工作流">
+            <option value="anime">AnimeDiff（本机）</option>
+            <option value="comfyui">ComfyUI 工作流</option>
+          </select>
+          <button class="btn btn-primary" :disabled="submitting" @click="submitBatch">
+            {{ submitting ? '提交中…' : (submitForm.kind === 'preview' ? '▶ 提交预览批次' : '▶ 提交正式批次') }}
+          </button>
+          <span class="dim">按镜头串行生成（续接镜头等前序完成）；正式批次前请先跑预览并在项目里逐镜审核采用</span>
+        </div>
+        <div v-if="error" class="form-msg">{{ error }}</div>
+
+        <div v-for="sub in submissions" :key="sub.id" class="sub-card">
+          <div class="sub-head">
+            <span class="badge" :class="sub.status">{{ subStatus(sub.status) }}</span>
+            <span>{{ sub.kind === 'preview' ? '预览' : '正式' }} · {{ sub.engine }} · {{ sub.quality }}</span>
+            <span class="dim">{{ sub.done_count }}/{{ sub.shot_count }} 完成</span>
+            <span v-if="sub.failed_count" class="fail-tip">{{ sub.failed_count }} 失败</span>
+            <span class="dim">预算估算 {{ sub.budget_estimate_sec }}s / 上限 {{ sub.budget_limit_sec }}s</span>
+            <span class="dim">{{ fmtTime(sub.created_at) }}</span>
+            <span class="ops">
+              <button v-if="['partial', 'failed'].includes(sub.status)" class="btn btn-sm" @click="retryBatch(sub)">🔁 重试失败镜</button>
+              <button v-if="['pending', 'running'].includes(sub.status)" class="btn btn-sm" @click="cancelBatch(sub)">✕ 取消</button>
+            </span>
+          </div>
+          <div class="sub-items">
+            <div v-for="it in sub.items" :key="it.id" class="sub-item" :title="it.error || it.stage || ''">
+              <span class="dim">#{{ it.seq }}</span>
+              <span class="it-title">{{ it.shot_title || it.title || '镜头' }}</span>
+              <span class="st-chip" :class="it.status">{{ itStatus(it.status) }}</span>
+              <span v-if="it.status === 'running' || it.status === 'queued'" class="dim">{{ Math.round((it.progress || 0) * 100) }}% {{ it.stage }}</span>
+              <span v-if="it.error" class="it-err" :title="it.error">{{ it.error }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- 镜头表 -->
       <div class="shot-table">
         <div class="shot-row head">
@@ -153,7 +202,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 
@@ -185,7 +234,14 @@ const editingId = ref('')
 const charsText = ref('')
 const editForm = ref({})
 
+// PR-N05：提交批次
+const submissions = ref([])
+const submitting = ref(false)
+const submitForm = ref({ kind: 'preview', quality: 'draft', engine: 'anime' })
+let pollTimer = null
+
 onMounted(load)
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
 async function load() {
   loading.value = true
@@ -202,18 +258,83 @@ async function load() {
 async function onSelectEpisode() {
   plan.value = null
   editingId.value = ''
+  submissions.value = []
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (selectedId.value) await refreshPlan()
 }
 
 async function refreshPlan() {
   try {
     plan.value = await api.novelShotPlan(props.novelId, selectedId.value)
+    await refreshSubmissions()
   } catch (e) {
     if (e.status === 404 || (e.message || '').includes('尚未生成')) {
       plan.value = null
     } else {
       error.value = e.message
     }
+  }
+}
+
+// ---------- PR-N05：提交批次 ----------
+const SUB_ST = {
+  pending: '等待', running: '生成中', cancelling: '取消中', done: '已完成',
+  partial: '部分完成', failed: '失败', cancelled: '已取消',
+}
+const ITEM_ST = {
+  pending: '待放行', queued: '排队', running: '生成中', done: '完成',
+  failed: '失败', cancelled: '已取消',
+}
+function subStatus(s) { return SUB_ST[s] || s }
+function itStatus(s) { return ITEM_ST[s] || s }
+
+async function refreshSubmissions() {
+  if (!props.novelId || !selectedId.value) return
+  try {
+    submissions.value = await api.novelShotSubmissions(props.novelId, selectedId.value)
+    // 活跃批次存在 → 5s 轮询进度（GET 本身会顺带推进批次）
+    const active = submissions.value.some((s) => ['pending', 'running', 'cancelling'].includes(s.status))
+    if (active && !pollTimer) {
+      pollTimer = setInterval(refreshSubmissions, 5000)
+    } else if (!active && pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function submitBatch() {
+  submitting.value = true
+  error.value = ''
+  try {
+    await api.novelShotSubmit(props.novelId, selectedId.value, { ...submitForm.value })
+    await refreshSubmissions()
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function retryBatch(sub) {
+  error.value = ''
+  try {
+    await api.novelShotSubmitRetry(props.novelId, selectedId.value, sub.id)
+    await refreshSubmissions()
+  } catch (e) {
+    error.value = e.message
+  }
+}
+
+async function cancelBatch(sub) {
+  error.value = ''
+  try {
+    await api.novelShotSubmitCancel(props.novelId, selectedId.value, sub.id)
+    await refreshSubmissions()
+  } catch (e) {
+    error.value = e.message
   }
 }
 
@@ -371,6 +492,94 @@ function fmtTime(iso) {
 .badge.approved {
   color: #4ade80;
   background: rgba(74, 222, 128, 0.12);
+}
+/* ---------- PR-N05：提交批次 ---------- */
+.submit-sec {
+  margin-bottom: 12px;
+}
+.submit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+}
+.submit-bar .sel {
+  min-width: 130px;
+}
+.sub-card {
+  border: 1px solid var(--border, #2a3345);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+.sub-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.sub-head .ops {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.fail-tip {
+  color: #f87171;
+}
+.sub-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: var(--bg-secondary, #222a3a);
+}
+.it-title {
+  min-width: 100px;
+}
+.st-chip {
+  padding: 0 7px;
+  font-size: 10.5px;
+  border-radius: 999px;
+  background: var(--bg-primary, #161c28);
+}
+.st-chip.done { color: #4ade80; }
+.st-chip.running, .st-chip.queued { color: #38bdf8; }
+.st-chip.pending { color: var(--text-dim, #9aa5b8); }
+.st-chip.failed { color: #f87171; }
+.st-chip.cancelled { color: var(--text-dim, #9aa5b8); }
+.it-err {
+  color: #f87171;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+.badge.done, .badge.running {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.12);
+}
+.badge.partial {
+  color: #f0b429;
+  background: rgba(240, 180, 41, 0.12);
+}
+.badge.failed {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+}
+.badge.cancelled, .badge.cancelling, .badge.pending {
+  color: var(--text-dim, #9aa5b8);
+  background: var(--bg-secondary, #222a3a);
 }
 .shot-table {
   border: 1px solid var(--border, #2a3345);

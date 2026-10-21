@@ -276,6 +276,16 @@ def generate_plan(novel_id: str, episode_id: str) -> dict:
             "（支持 DeepSeek / 通义 / Kimi / 本地 Ollama 等 OpenAI 兼容端点）")
 
     chapters = novel_mod.list_chapters(novel_id)
+    # PR-N05：有进行中的提交批次时禁止重建（重建会级联删掉批次条目，
+    # 正在跑的批次会失去镜头映射）
+    active_sub = _row(
+        "SELECT id FROM novel_submissions WHERE episode_id = ?"
+        " AND status IN ('pending', 'running', 'cancelling') LIMIT 1",
+        (episode_id,))
+    if active_sub:
+        raise ShotPlanError(
+            "该分集有进行中的生成批次（预览/正式），请先取消或等待完成"
+            "后再重新生成分镜", 409)
     messages = [
         {"role": "system", "content": _SHOTPLAN_SYSTEM},
         {"role": "user", "content": _shotplan_user_payload(
@@ -743,6 +753,10 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
                 ).strip()
         if note:
             sb_mod.update_shot(shot["id"], note=note)
+        # PR-N05：回填条目 → 项目镜头映射（提交批次按此定位生成目标；
+        # 重复交接时随重建刷新为最新镜头 id）
+        _write("UPDATE novel_shot_items SET shot_id = ?, updated_at = ?"
+               " WHERE id = ?", (shot["id"], _utcnow(), it["id"]))
     _write("UPDATE novel_shot_plans SET project_id = ?, updated_at = ? WHERE id = ?",
            (project["id"], _utcnow(), plan["id"]))
     return {

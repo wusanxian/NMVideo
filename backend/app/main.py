@@ -1,4 +1,5 @@
 """FastAPI 应用入口"""
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from .routers import novel as novel_router
 from .routers import novel_bible as novel_bible_routers
 from .routers import novel_script as novel_script_routers
 from .routers import novel_shots as novel_shots_routers
+from .routers import novel_submit as novel_submit_routers
 from .routers import services as services_router
 from .routers import storyboard as storyboard_router
 from .config import FRONTEND_DIST, OUTPUTS_DIR
@@ -24,6 +26,9 @@ from .config import FRONTEND_DIST, OUTPUTS_DIR
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # PR-N05：登记主事件循环（小说提交器跨线程创建生成任务用）
+    from . import novel_submit
+    novel_submit.register_loop(asyncio.get_running_loop())
     job_queue.start()
     yield
     job_queue.stop()
@@ -60,6 +65,7 @@ app.include_router(novel_script_routers.router)
 app.include_router(novel_script_routers.ep_router)
 app.include_router(novel_shots_routers.router)
 app.include_router(novel_shots_routers.sp_router)
+app.include_router(novel_submit_routers.sp_router)
 app.include_router(storyboard_router.router)
 app.include_router(assets_router.router)
 app.include_router(services_router.router)

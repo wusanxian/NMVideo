@@ -63,6 +63,13 @@ _FK_TABLES = [
     ("novel_shot_plans", "novel_episodes", "episode_id"),
     ("novel_shot_items", "novel_shot_plans", "plan_id"),
     ("novel_shot_plan_versions", "novel_shot_plans", "plan_id"),
+    # PR-N05：提交批次（随小说/分集/计划删；条目随批次与分镜条目删——
+    # 分镜计划重建时旧批次条目级联消失，批次失去条目后由提交器标失败）
+    ("novel_submissions", "novels", "novel_id"),
+    ("novel_submissions", "novel_episodes", "episode_id"),
+    ("novel_submissions", "novel_shot_plans", "plan_id"),
+    ("novel_submission_items", "novel_submissions", "submission_id"),
+    ("novel_submission_items", "novel_shot_items", "shot_item_id"),
 ]
 
 
@@ -358,6 +365,7 @@ class Database:
                     mode TEXT DEFAULT 't2v',
                     chapter_refs TEXT DEFAULT '[]',
                     note TEXT DEFAULT '',
+                    shot_id TEXT DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -369,6 +377,42 @@ class Database:
                     snapshot TEXT NOT NULL,
                     note TEXT DEFAULT '',
                     created_at TEXT NOT NULL
+                );
+
+                -- PR-N05：提交批次（预览/正式）。任务复用现有 jobs 表，
+                -- 不新建第二套队列；status: pending→running→done|partial|failed|cancelled
+                -- （cancelling 为取消中间态：等进行中生成自然结束后转 cancelled）
+                CREATE TABLE IF NOT EXISTS novel_submissions (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    episode_id TEXT NOT NULL REFERENCES novel_episodes(id) ON DELETE CASCADE,
+                    plan_id TEXT NOT NULL REFERENCES novel_shot_plans(id) ON DELETE CASCADE,
+                    project_id TEXT DEFAULT '',
+                    kind TEXT NOT NULL DEFAULT 'preview',
+                    quality TEXT NOT NULL DEFAULT 'draft',
+                    engine TEXT NOT NULL DEFAULT 'anime',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    shot_count INTEGER NOT NULL DEFAULT 0,
+                    budget_estimate_sec INTEGER NOT NULL DEFAULT 0,
+                    budget_limit_sec INTEGER NOT NULL DEFAULT 0,
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_submission_items (
+                    id TEXT PRIMARY KEY,
+                    submission_id TEXT NOT NULL REFERENCES novel_submissions(id) ON DELETE CASCADE,
+                    shot_item_id TEXT NOT NULL REFERENCES novel_shot_items(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL DEFAULT 0,
+                    shot_id TEXT DEFAULT '',
+                    job_id TEXT DEFAULT '',
+                    adopted_version_id TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (submission_id, shot_item_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS scenes (
@@ -617,6 +661,20 @@ class Database:
                 self._conn.execute("ALTER TABLE exports ADD COLUMN fps INTEGER DEFAULT 0")
             if "manifest" not in exp_cols:
                 self._conn.execute("ALTER TABLE exports ADD COLUMN manifest TEXT DEFAULT ''")
+            self._conn.commit()
+
+        # ---------- 第十一批轻量迁移：分镜条目回填项目镜头 id（PR-N05） ----------
+        # 旧库的 novel_shot_items 没有 shot_id 列（N04 交接时不记录映射）；
+        # N05 提交批次需要按条目定位项目镜头。纯新增列，不迁移历史数据
+        # （旧条目 shot_id 为空 → 重新交接一次即回填）。
+        with self._lock:
+            nsi_cols = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(novel_shot_items)").fetchall()
+            }
+            if "shot_id" not in nsi_cols:
+                self._conn.execute(
+                    "ALTER TABLE novel_shot_items ADD COLUMN shot_id TEXT DEFAULT ''")
             self._conn.commit()
 
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
