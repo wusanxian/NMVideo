@@ -41,6 +41,9 @@
             ✔ 审核分镜（v{{ plan.version + 1 }}）
           </button>
           <button class="btn" @click="showVersions = true">版本历史</button>
+          <button class="btn" :disabled="validating" @click="runValidate">
+            {{ validating ? '校验中…' : '🔍 一致性校验' }}
+          </button>
           <button class="btn btn-primary" :disabled="plan.status !== 'approved'" @click="handoff">
             🎬 交接为项目分镜
           </button>
@@ -49,6 +52,40 @@
       <div v-if="plan.status === 'approved'" class="dim plan-note">
         已审核（v{{ plan.version }}）——改动任意镜头后自动回草稿态，版本历史保留；交接后项目分镜按当前审核态重建。
       </div>
+
+      <!-- 一致性校验（PR-N06：分镜 ↔ 圣经双向，只提示不阻断） -->
+      <section v-if="validation" class="validate-sec" :class="{ ok: validation.ok }">
+        <div class="val-head">
+          <b>🔍 一致性校验</b>
+          <span class="badge" :class="validation.ok ? 'ok' : 'warn'">
+            {{ validation.ok ? '通过' : `${validation.warnings.length} 项提示` }}
+          </span>
+          <span class="dim">
+            圣经 v{{ validation.bible_version }}（{{ validation.bible_status === 'approved' ? '已审核' : '草稿' }}）
+            · 分镜冻结于 v{{ validation.plan_bible_version }} · 已核对 {{ validation.checked_items }} 镜
+          </span>
+          <button class="btn btn-sm" @click="validation = null">收起</button>
+        </div>
+        <span v-if="validation.stale" class="badge stale">圣经已更新</span>
+        <ul class="val-warnings">
+          <li v-for="(w, i) in validation.warnings" :key="i">{{ w }}</li>
+        </ul>
+        <div v-if="validation.item_issues.length" class="val-items">
+          <div v-for="iss in validation.item_issues" :key="iss.item_id" class="val-item">
+            <span class="dim">#{{ iss.seq }}</span>
+            <span>{{ iss.title || '镜头' }}</span>
+            <span v-if="iss.unknown_characters.length" class="st-chip failed">
+              未知人物：{{ iss.unknown_characters.join('、') }}
+            </span>
+            <span v-for="a in iss.alias_resolved" :key="a.name" class="st-chip queued" :title="'将按圣经标准名锚定'">
+              {{ a.name }} → {{ a.canonical }}
+            </span>
+            <span v-if="iss.unknown_scenes.length" class="st-chip partial">
+              未知场景：{{ iss.unknown_scenes.join('、') }}
+            </span>
+          </div>
+        </div>
+      </section>
 
       <!-- 提交批次（PR-N05：预览转正与安全提交） -->
       <section v-if="plan.project" class="submit-sec">
@@ -86,6 +123,9 @@
               <button v-if="['partial', 'failed'].includes(sub.status)" class="btn btn-sm" @click="retryBatch(sub)">🔁 重试失败镜</button>
               <button v-if="['pending', 'running'].includes(sub.status)" class="btn btn-sm" @click="cancelBatch(sub)">✕ 取消</button>
             </span>
+          </div>
+          <div v-if="sub.warnings && sub.warnings.length" class="sub-warn">
+            ⚠ {{ sub.warnings.join('；') }}
           </div>
           <div class="sub-items">
             <div v-for="it in sub.items" :key="it.id" class="sub-item" :title="it.error || it.stage || ''">
@@ -240,6 +280,10 @@ const submitting = ref(false)
 const submitForm = ref({ kind: 'preview', quality: 'draft', engine: 'anime' })
 let pollTimer = null
 
+// PR-N06：一致性校验
+const validation = ref(null)
+const validating = ref(false)
+
 onMounted(load)
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
@@ -259,6 +303,7 @@ async function onSelectEpisode() {
   plan.value = null
   editingId.value = ''
   submissions.value = []
+  validation.value = null
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (selectedId.value) await refreshPlan()
 }
@@ -266,6 +311,7 @@ async function onSelectEpisode() {
 async function refreshPlan() {
   try {
     plan.value = await api.novelShotPlan(props.novelId, selectedId.value)
+    validation.value = null // 计划重载（生成/修改/审核）后旧校验结果作废
     await refreshSubmissions()
   } catch (e) {
     if (e.status === 404 || (e.message || '').includes('尚未生成')) {
@@ -402,9 +448,23 @@ async function approvePlan() {
   error.value = ''
   try {
     await api.novelShotPlanApprove(props.novelId, selectedId.value)
+    validation.value = null
     await refreshPlan()
   } catch (e) {
     error.value = e.message
+  }
+}
+
+// ---------- PR-N06：一致性校验 ----------
+async function runValidate() {
+  validating.value = true
+  error.value = ''
+  try {
+    validation.value = await api.novelShotValidate(props.novelId, selectedId.value)
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    validating.value = false
   }
 }
 
@@ -493,6 +553,65 @@ function fmtTime(iso) {
   color: #4ade80;
   background: rgba(74, 222, 128, 0.12);
 }
+/* ---------- PR-N06：一致性校验 ---------- */
+.validate-sec {
+  border: 1px solid rgba(250, 204, 21, 0.35);
+  background: rgba(250, 204, 21, 0.06);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-top: 10px;
+}
+.validate-sec.ok {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.06);
+}
+.val-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.val-head .btn-sm {
+  margin-left: auto;
+}
+.badge.warn {
+  color: #facc15;
+  background: rgba(250, 204, 21, 0.12);
+}
+.badge.ok {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.12);
+}
+.badge.stale {
+  color: #fb923c;
+  background: rgba(251, 146, 60, 0.12);
+  margin-top: 8px;
+}
+.val-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.val-items {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.val-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.sub-warn {
+  font-size: 12px;
+  color: #facc15;
+  padding: 6px 2px 0;
+}
+
 /* ---------- PR-N05：提交批次 ---------- */
 .submit-sec {
   margin-bottom: 12px;

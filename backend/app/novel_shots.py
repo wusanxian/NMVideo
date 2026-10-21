@@ -313,6 +313,9 @@ def generate_plan(novel_id: str, episode_id: str) -> dict:
     chapter_by_title = {c["title"]: c for c in chapters}
     now = _utcnow()
     plan_id = _new_id("nsp")
+    # PR-N06：冻结生成时的圣经版本——后续校验据此判断「圣经已更新，
+    # 分镜引用的人物/场景信息可能过期」
+    plan_bible_version = int(bible["bible"].get("version") or 0)
     with db.transaction() as conn:
         # 替换式生成：旧计划连带镜头/版本一起删（与分集刷新同语义）
         conn.execute("DELETE FROM novel_shot_plans WHERE episode_id = ?",
@@ -320,10 +323,11 @@ def generate_plan(novel_id: str, episode_id: str) -> dict:
         conn.execute(
             "INSERT INTO novel_shot_plans (id, novel_id, episode_id, script_id,"
             " status, version, shot_count, total_duration_sec, model,"
-            " created_at, updated_at) VALUES (?,?,?,?,'draft',0,?,?,?,?,?)",
+            " bible_version, created_at, updated_at)"
+            " VALUES (?,?,?,?,'draft',0,?,?,?,?,?,?)",
             (plan_id, novel_id, episode_id, script["id"], len(items),
              round(sum(i["duration_sec"] for i in items), 1),
-             _s(_cfg_model(), 80), now, now),
+             _s(_cfg_model(), 80), plan_bible_version, now, now),
         )
         for it in items:
             conn.execute(
@@ -647,6 +651,123 @@ def _scene_desc_for(scene_title: str, bible: dict) -> str:
     return ""
 
 
+def validate_plan(novel_id: str, episode_id: str) -> dict:
+    """分镜计划 ↔ 故事圣经一致性校验（只读，不阻断任何操作）。
+
+    双向校验：
+    - 分镜 → 圣经：每条镜头的 character_names 能否在圣经人物
+      （标准名 + 别名）中解析；解析到别名的给出 canonical 归一提示；
+      场景标题是否在圣经场景中（信息级）。
+    - 圣经 → 分镜：计划生成时冻结的 bible_version 与当前版本比对
+      （生成后圣经又审核过 → 人物锚定信息可能过期）；圣经处于草稿态
+      （有未审核修改）也提示。
+
+    全部结论为警告性提示：遵循「AI 结果保留原文来源 + 可人工修改 +
+    可重新生成」原则，不做硬阻断——未知人名可能是 LLM 合理补充，
+    由用户决定改镜头、改圣经别名还是重新生成。
+    """
+    novel = novel_mod.get_novel(novel_id)
+    if not novel:
+        raise ShotPlanError("小说不存在", 404)
+    plan = _row("SELECT * FROM novel_shot_plans WHERE episode_id = ?"
+                " AND novel_id = ?", (episode_id, novel_id))
+    if not plan:
+        raise ShotPlanError("分镜计划尚未生成", 404)
+    plan = dict(plan)
+    items = _decode_items(
+        _rows("SELECT * FROM novel_shot_items WHERE plan_id = ?"
+              " ORDER BY seq", (plan["id"],)))
+    bible = bible_mod.get_bible(novel_id)
+    characters = (bible or {}).get("characters", [])
+    scenes = (bible or {}).get("scenes", [])
+    bible_head = (bible or {}).get("bible", {})
+    bible_version = int(bible_head.get("version") or 0)
+    bible_status = bible_head.get("status", "")
+
+    name_map: dict = {}  # 标准名/别名 → canonical
+    for c in characters:
+        canon = c.get("name") or ""
+        if not canon:
+            continue
+        name_map[canon] = canon
+        for a in c.get("aliases") or []:
+            if a:
+                name_map.setdefault(a, canon)
+    scene_names = {s.get("name") for s in scenes if s.get("name")}
+
+    plan_version = int(plan.get("bible_version") or 0)
+    item_issues = []
+    unmatched_characters: set = set()
+    unmatched_scenes: set = set()
+    alias_pairs: list = []
+    for it in items:
+        unknown, aliased = [], []
+        for n in it.get("character_names") or []:
+            canon = name_map.get(n)
+            if canon is None:
+                unknown.append(n)
+                unmatched_characters.add(n)
+            elif canon != n:
+                aliased.append({"name": n, "canonical": canon})
+                alias_pairs.append((n, canon))
+        scene_unknown = []
+        st = it.get("scene_title") or ""
+        if st and st not in scene_names:
+            scene_unknown.append(st)
+            unmatched_scenes.add(st)
+        if unknown or aliased or scene_unknown:
+            item_issues.append({
+                "item_id": it["id"], "seq": it["seq"],
+                "title": it.get("title") or "",
+                "unknown_characters": unknown,
+                "alias_resolved": aliased,
+                "unknown_scenes": scene_unknown,
+            })
+
+    warnings = []
+    stale = False
+    if not bible:
+        warnings.append("故事圣经尚未生成：分镜人物无法与圣经锚定，"
+                        "建议先运行「AI 章节分析」并「生成故事圣经」")
+    else:
+        if plan_version and bible_version != plan_version:
+            stale = True
+            warnings.append(
+                f"圣经已更新（分镜生成于 v{plan_version}，当前 "
+                f"v{bible_version}）：人物外貌/服装等锚定信息可能已过期，"
+                "建议重新生成分镜或人工核对受影响镜头")
+        # 草稿态只在「计划生成于已审核圣经、之后圣经又被改动」时提示：
+        # 圣经从未审核（v0 草稿）是正常流水线状态，不算异常
+        if bible_status != "approved" and plan_version > 0:
+            warnings.append("圣经已回到草稿态（分镜生成后有未审核修改）："
+                            "人物锚定以草稿为准，建议审核圣经后再交接/提交")
+    if unmatched_characters:
+        warnings.append(
+            "以下人物名未在圣经中找到（LLM 补充写法或圣经改名）："
+            + "、".join(sorted(unmatched_characters))
+            + "。可修改镜头人物名，或把该称呼并入圣经人物别名")
+    if alias_pairs:
+        warnings.append(
+            "以下称呼将按圣经别名解析（交接建档与提示词锚定走精确名，"
+            "建议直接改用标准名）："
+            + "、".join(f"{n}→{c}" for n, c in alias_pairs))
+    # 场景标题是 LLM 的组织分组，几乎不会与圣经场景名精确相等——
+    # 只做逐镜信息展示（item_issues.unknown_scenes），不算全局警告
+
+    return {
+        "ok": not warnings,
+        "stale": stale,
+        "plan_bible_version": plan_version,
+        "bible_version": bible_version,
+        "bible_status": bible_status,
+        "checked_items": len(items),
+        "unmatched_characters": sorted(unmatched_characters),
+        "unmatched_scenes": sorted(unmatched_scenes),
+        "item_issues": item_issues,
+        "warnings": warnings,
+    }
+
+
 def handoff_plan(novel_id: str, episode_id: str) -> dict:
     """交接：审核通过的分镜计划 → 写入目标项目的 Scene/Shot。
 
@@ -759,6 +880,12 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
                " WHERE id = ?", (shot["id"], _utcnow(), it["id"]))
     _write("UPDATE novel_shot_plans SET project_id = ?, updated_at = ? WHERE id = ?",
            (project["id"], _utcnow(), plan["id"]))
+    # PR-N06：交接响应附带一致性警告（只提示不阻断——项目分镜已建成，
+    # 用户可在项目里改，或回分镜页修改后重新交接）
+    try:
+        handoff_warnings = validate_plan(novel_id, episode_id)["warnings"]
+    except Exception:  # 校验异常不阻断交接本身
+        handoff_warnings = []
     return {
         "already": rebuilt,
         "rebuilt": rebuilt,
@@ -768,4 +895,5 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
         "shot_count": len(items),
         "character_count": len(char_mapping),
         "total_duration_sec": round(sum(i["duration_sec"] for i in items), 1),
+        "warnings": handoff_warnings,
     }

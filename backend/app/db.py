@@ -677,6 +677,30 @@ class Database:
                     "ALTER TABLE novel_shot_items ADD COLUMN shot_id TEXT DEFAULT ''")
             self._conn.commit()
 
+        # ---------- 第十二批轻量迁移：分镜↔圣经一致性校验（PR-N06） ----------
+        # novel_shot_plans.bible_version：生成计划时冻结当时圣经版本，
+        # 校验时与当前版本比对判断「圣经已更新、分镜引用可能过期」。
+        # novel_submissions.warnings：建批次时冻结一致性警告（JSON 数组），
+        # 让提交入口直接可见人物不一致问题。纯新增列，旧数据回落默认值。
+        with self._lock:
+            nsp_cols = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(novel_shot_plans)").fetchall()
+            }
+            if "bible_version" not in nsp_cols:
+                self._conn.execute(
+                    "ALTER TABLE novel_shot_plans ADD COLUMN"
+                    " bible_version INTEGER DEFAULT 0")
+            nsub_cols = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(novel_submissions)").fetchall()
+            }
+            if "warnings" not in nsub_cols:
+                self._conn.execute(
+                    "ALTER TABLE novel_submissions ADD COLUMN"
+                    " warnings TEXT DEFAULT '[]'")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()

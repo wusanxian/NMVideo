@@ -108,6 +108,17 @@ def get_plan_version(novel_id: str, episode_id: str, version: int):
     return _run(shots_mod.get_plan_version, novel_id, episode_id, version)
 
 
+@sp_router.get("/episodes/{episode_id}/shots/validate")
+def validate_plan(novel_id: str, episode_id: str):
+    """分镜计划 ↔ 故事圣经一致性校验（只读，不阻断任何操作）。
+
+    返回未知人物名（含别名解析）、未匹配场景、圣经版本过期（stale）
+    与草稿态提示；warnings 汇总为面向用户的中文提示列表。
+    """
+    _guard_novel(novel_id)
+    return _run(shots_mod.validate_plan, novel_id, episode_id)
+
+
 @sp_router.post("/episodes/{episode_id}/shots/handoff")
 def handoff_plan(novel_id: str, episode_id: str):
     """交接：审核通过的分镜计划 → 写入目标项目的 Scene/Shot（幂等）。

@@ -21,6 +21,7 @@
 注册）。测试通过替换 _create_job_for_shot 打桩。
 """
 import asyncio
+import json
 import threading
 import time
 import uuid
@@ -287,15 +288,25 @@ def create_submission(novel_id: str, episode_id: str, *, kind: str,
     # 落库（批次 + 条目；adopted_version_id 记提交时已采用的版本，供追溯）
     now = _utcnow()
     sub_id = _new_id("nsub")
+    # PR-N06：建批次时冻结「分镜 ↔ 圣经」一致性警告（JSON 数组落库，
+    # 之后圣经再改动不影响已建批次的警示内容）。校验异常不阻断提交。
+    try:
+        _v = shots_mod.validate_plan(novel_id, episode_id)
+        warnings_json = json.dumps(_v.get("warnings", []),
+                                   ensure_ascii=False)
+    except Exception as e:
+        print(f"[novel-submit] 批次一致性校验跳过: {e}")
+        warnings_json = "[]"
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO novel_submissions (id, novel_id, episode_id, plan_id,"
             " project_id, kind, quality, engine, status, shot_count,"
-            " budget_estimate_sec, budget_limit_sec, note, created_at,"
-            " updated_at) VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)",
+            " budget_estimate_sec, budget_limit_sec, warnings, note,"
+            " created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?)",
             (sub_id, novel_id, episode_id, plan["id"], project_id, kind,
              quality, engine, len(selected), budget, int(budget_limit_sec),
-             (note or "").strip()[:300], now, now),
+             warnings_json, (note or "").strip()[:300], now, now),
         )
         for it in selected:
             shot = shots_by_item[it["id"]]
@@ -341,6 +352,10 @@ def get_submission(novel_id: str, episode_id: str, sid: str) -> Optional[dict]:
     done = sum(1 for it in sub["items"] if it["status"] == "done")
     sub["done_count"] = done
     sub["failed_count"] = sum(1 for it in sub["items"] if it["status"] == "failed")
+    try:
+        sub["warnings"] = json.loads(sub.get("warnings") or "[]")
+    except (ValueError, TypeError):
+        sub["warnings"] = []
     return sub
 
 

@@ -200,6 +200,7 @@ export const api = {
   novelShotPlanApprove: (id, eid, note = '') => request(`/novels/${id}/episodes/${eid}/shots/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
   novelShotPlanVersion: (id, eid, version) => request(`/novels/${id}/episodes/${eid}/shots/versions/${version}`),
   novelShotPlanHandoff: (id, eid) => request(`/novels/${id}/episodes/${eid}/shots/handoff`, { method: 'POST' }),
+  novelShotValidate: (id, eid) => request(`/novels/${id}/episodes/${eid}/shots/validate`),
 
   // ---------- 提交批次（PR-N05：预览转正与安全提交） ----------
   novelShotSubmit: (id, eid, body) => request(`/novels/${id}/episodes/${eid}/shots/submit`, { method: 'POST', body: JSON.stringify(body) }),
