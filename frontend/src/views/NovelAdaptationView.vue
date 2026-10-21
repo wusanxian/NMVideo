@@ -11,8 +11,10 @@
     <div class="stage-hint">
       <b>第一期已交付：</b>PR-N01 小说导入（TXT / Markdown，UTF-8 / GBK / BIG5）、中文章节自动识别、
       章节查看 / 重命名 / 拆分 / 合并 / 重新识别、原文位置保留；
-      <b>PR-N02 故事圣经</b>：AI 分章节理解（人物 / 场景 / 事件 / 关系）、结构化设定可编辑、审核版本、定位原小说。
-      <span class="dim">分集剧本（PR-N03）与自动分镜（PR-N04）将在后续批次接入，所有 AI 草案均可编辑审核。</span>
+      <b>PR-N02 故事圣经</b>：AI 分章节理解（人物 / 场景 / 事件 / 关系）、结构化设定可编辑、审核版本、定位原小说；
+      <b>PR-N03 分集与剧本</b>：AI 分集大纲（可编辑 / 审核 / 版本）、动漫剧本生成（工作台剧本格式）、
+      审核后一键交接为项目进入分镜工作台。
+      <span class="dim">结构化自动分镜（PR-N04）将在后续批次接入，所有 AI 草案均可编辑审核。</span>
     </div>
 
     <div v-if="loading" class="empty">加载中…</div>
@@ -46,6 +48,9 @@
           </button>
           <button class="tab" :class="{ active: activeTab === 'bible' }" @click="activeTab = 'bible'">
             📖 故事圣经
+          </button>
+          <button class="tab" :class="{ active: activeTab === 'episodes' }" @click="activeTab = 'episodes'">
+            🎬 分集与剧本
           </button>
         </div>
 
@@ -103,7 +108,9 @@
           </div>
         </template>
 
-        <NovelBiblePanel v-else :novel-id="currentId" :chapters="chapters" @locate="onLocate" />
+        <NovelBiblePanel v-else-if="activeTab === 'bible'" :novel-id="currentId" :chapters="chapters" @locate="onLocate" />
+
+        <NovelEpisodePanel v-else-if="activeTab === 'episodes'" :novel-id="currentId" :chapters="chapters" />
       </section>
     </div>
 
@@ -147,6 +154,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
 import NovelBiblePanel from './NovelBiblePanel.vue'
+import NovelEpisodePanel from './NovelEpisodePanel.vue'
 
 const novels = ref([])
 const loading = ref(true)

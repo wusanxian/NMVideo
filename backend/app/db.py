@@ -51,6 +51,13 @@ _FK_TABLES = [
     ("bible_scenes", "novel_bibles", "bible_id"),
     ("bible_timeline", "novel_bibles", "bible_id"),
     ("bible_relations", "novel_bibles", "bible_id"),
+    # PR-N03：分集与剧本（分集随小说删；版本随分集删；剧本挂小说+分集，
+    # 双级联保证删小说/删分集都不留孤儿剧本）
+    ("novel_episodes", "novels", "novel_id"),
+    ("novel_episode_versions", "novel_episodes", "episode_id"),
+    ("novel_scripts", "novels", "novel_id"),
+    ("novel_scripts", "novel_episodes", "episode_id"),
+    ("novel_script_versions", "novel_scripts", "script_id"),
 ]
 
 
@@ -254,6 +261,63 @@ class Database:
                     chapters TEXT DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                );
+
+                -- PR-N03：分集（动漫季播单元）——AI 大纲草案可编辑、可审核、
+                -- 可保存版本；chapter_refs 为章节快照（chapter_id+title+start/end），
+                -- 章节被拆分/合并/重识别后仍可定位原小说。
+                CREATE TABLE IF NOT EXISTS novel_episodes (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL DEFAULT 0,
+                    title TEXT NOT NULL,
+                    logline TEXT DEFAULT '',
+                    target_duration_sec INTEGER NOT NULL DEFAULT 90,
+                    chapter_refs TEXT DEFAULT '[]',
+                    beats TEXT DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    version INTEGER NOT NULL DEFAULT 0,
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_episode_versions (
+                    id TEXT PRIMARY KEY,
+                    episode_id TEXT NOT NULL REFERENCES novel_episodes(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                -- 动漫剧本：与现有分镜工作台剧本解析器兼容的纯文本
+                -- （场景一：xxx / 画面行（景别, 运动, 秒数）/ 人物：台词）。
+                -- project_id 记录交接去向（创建项目并导入场景分镜后回填）。
+                CREATE TABLE IF NOT EXISTS novel_scripts (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    episode_id TEXT NOT NULL REFERENCES novel_episodes(id) ON DELETE CASCADE,
+                    title TEXT DEFAULT '',
+                    content TEXT NOT NULL,
+                    scene_count INTEGER NOT NULL DEFAULT 0,
+                    shot_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    version INTEGER NOT NULL DEFAULT 0,
+                    model TEXT DEFAULT '',
+                    project_id TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (episode_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_script_versions (
+                    id TEXT PRIMARY KEY,
+                    script_id TEXT NOT NULL REFERENCES novel_scripts(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS scenes (

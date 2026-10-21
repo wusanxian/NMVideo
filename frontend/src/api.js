@@ -175,4 +175,20 @@ export const api = {
   bibleEntityCreate: (id, kind, fields) => request(`/novels/${id}/bible/${kind}`, { method: 'POST', body: JSON.stringify(fields) }),
   bibleEntityUpdate: (id, kind, eid, fields) => request(`/novels/${id}/bible/${kind}/${eid}`, { method: 'PUT', body: JSON.stringify(fields) }),
   bibleEntityDelete: (id, kind, eid) => request(`/novels/${id}/bible/${kind}/${eid}`, { method: 'DELETE' }),
+
+  // ---------- 分集与剧本（PR-N03：AI 分集规划 + 动漫剧本 + 交接项目） ----------
+  novelEpisodes: (id) => request(`/novels/${id}/episodes`),
+  novelOutlineGenerate: (id, body = {}) => request(`/novels/${id}/episodes/generate`, { method: 'POST', body: JSON.stringify(body) }),
+  novelEpisodeCreate: (id, body) => request(`/novels/${id}/episodes`, { method: 'POST', body: JSON.stringify(body) }),
+  novelEpisode: (id, eid) => request(`/novels/${id}/episodes/${eid}`),
+  novelEpisodeUpdate: (id, eid, body) => request(`/novels/${id}/episodes/${eid}`, { method: 'PUT', body: JSON.stringify(body) }),
+  novelEpisodeDelete: (id, eid) => request(`/novels/${id}/episodes/${eid}`, { method: 'DELETE' }),
+  novelEpisodeApprove: (id, eid, note = '') => request(`/novels/${id}/episodes/${eid}/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  novelEpisodeVersion: (id, eid, version) => request(`/novels/${id}/episodes/${eid}/versions/${version}`),
+  novelScriptGenerate: (id, eid) => request(`/novels/${id}/episodes/${eid}/script/generate`, { method: 'POST' }),
+  novelScript: (id, eid) => request(`/novels/${id}/episodes/${eid}/script`),
+  novelScriptUpdate: (id, eid, body) => request(`/novels/${id}/episodes/${eid}/script`, { method: 'PUT', body: JSON.stringify(body) }),
+  novelScriptApprove: (id, eid, note = '') => request(`/novels/${id}/episodes/${eid}/script/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  novelScriptVersion: (id, eid, version) => request(`/novels/${id}/episodes/${eid}/script/versions/${version}`),
+  novelScriptHandoff: (id, eid) => request(`/novels/${id}/episodes/${eid}/script/handoff`, { method: 'POST' }),
 }
