@@ -191,4 +191,13 @@ export const api = {
   novelScriptApprove: (id, eid, note = '') => request(`/novels/${id}/episodes/${eid}/script/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
   novelScriptVersion: (id, eid, version) => request(`/novels/${id}/episodes/${eid}/script/versions/${version}`),
   novelScriptHandoff: (id, eid) => request(`/novels/${id}/episodes/${eid}/script/handoff`, { method: 'POST' }),
+
+  // ---------- 结构化分镜（PR-N04：逐镜头草案 + 审核 + 交接项目分镜） ----------
+  novelShotPlan: (id, eid) => request(`/novels/${id}/episodes/${eid}/shots`),
+  novelShotPlanGenerate: (id, eid) => request(`/novels/${id}/episodes/${eid}/shots/generate`, { method: 'POST' }),
+  novelShotItemUpdate: (id, eid, iid, body) => request(`/novels/${id}/episodes/${eid}/shots/${iid}`, { method: 'PUT', body: JSON.stringify(body) }),
+  novelShotItemReorder: (id, eid, iid, direction) => request(`/novels/${id}/episodes/${eid}/shots/${iid}/reorder`, { method: 'POST', body: JSON.stringify({ direction }) }),
+  novelShotPlanApprove: (id, eid, note = '') => request(`/novels/${id}/episodes/${eid}/shots/approve`, { method: 'POST', body: JSON.stringify({ note }) }),
+  novelShotPlanVersion: (id, eid, version) => request(`/novels/${id}/episodes/${eid}/shots/versions/${version}`),
+  novelShotPlanHandoff: (id, eid) => request(`/novels/${id}/episodes/${eid}/shots/handoff`, { method: 'POST' }),
 }

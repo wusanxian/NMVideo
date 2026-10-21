@@ -20,7 +20,7 @@ import pytest  # noqa: E402
 from app.db import Database  # noqa: E402
 
 _PATCHED = ("app.storyboard", "app.assets", "app.tracks", "app.novel",
-            "app.novel_bible", "app.novel_script")
+            "app.novel_bible", "app.novel_script", "app.novel_shots")
 
 
 @pytest.fixture()
@@ -31,6 +31,7 @@ def fresh_db(tmp_path):
     import app.novel  # noqa: F401
     import app.novel_bible  # noqa: F401
     import app.novel_script  # noqa: F401
+    import app.novel_shots  # noqa: F401
     import app.storyboard  # noqa: F401
     import app.tracks  # noqa: F401
 

@@ -58,6 +58,11 @@ _FK_TABLES = [
     ("novel_scripts", "novels", "novel_id"),
     ("novel_scripts", "novel_episodes", "episode_id"),
     ("novel_script_versions", "novel_scripts", "script_id"),
+    # PR-N04：结构化分镜（计划随小说/分集删；镜头与版本随计划删）
+    ("novel_shot_plans", "novels", "novel_id"),
+    ("novel_shot_plans", "novel_episodes", "episode_id"),
+    ("novel_shot_items", "novel_shot_plans", "plan_id"),
+    ("novel_shot_plan_versions", "novel_shot_plans", "plan_id"),
 ]
 
 
@@ -314,6 +319,52 @@ class Database:
                 CREATE TABLE IF NOT EXISTS novel_script_versions (
                     id TEXT PRIMARY KEY,
                     script_id TEXT NOT NULL REFERENCES novel_scripts(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_shot_plans (
+                    id TEXT PRIMARY KEY,
+                    novel_id TEXT NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                    episode_id TEXT NOT NULL REFERENCES novel_episodes(id) ON DELETE CASCADE,
+                    script_id TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    version INTEGER NOT NULL DEFAULT 0,
+                    shot_count INTEGER NOT NULL DEFAULT 0,
+                    total_duration_sec REAL NOT NULL DEFAULT 0,
+                    note TEXT DEFAULT '',
+                    project_id TEXT DEFAULT '',
+                    model TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_shot_items (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL REFERENCES novel_shot_plans(id) ON DELETE CASCADE,
+                    seq INTEGER NOT NULL DEFAULT 0,
+                    scene_title TEXT DEFAULT '',
+                    title TEXT DEFAULT '',
+                    shot_size TEXT DEFAULT '中景',
+                    camera_movement TEXT DEFAULT '固定',
+                    action TEXT DEFAULT '',
+                    dialogue TEXT DEFAULT '',
+                    character_names TEXT DEFAULT '[]',
+                    position TEXT DEFAULT '',
+                    emotion TEXT DEFAULT '',
+                    duration_sec REAL NOT NULL DEFAULT 3,
+                    mode TEXT DEFAULT 't2v',
+                    chapter_refs TEXT DEFAULT '[]',
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS novel_shot_plan_versions (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL REFERENCES novel_shot_plans(id) ON DELETE CASCADE,
                     version INTEGER NOT NULL,
                     snapshot TEXT NOT NULL,
                     note TEXT DEFAULT '',
