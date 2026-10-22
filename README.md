@@ -1,6 +1,6 @@
 # 🎬 AI 视频工坊（aivideo）
 
-Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.2.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。0.1.2 增加逐句对白排程、超时末帧延长、按配音时长生成分句字幕和竖屏导出，详见[实施记录](docs/reports/20261022-short-drama-delivery.md)。
+Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.3.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。0.1.3 新增 **FreeVideo H3 引擎**（MiniMax H3 / OpenVDN VDN-H3，8 步采样，8GB 显存起）并设为默认引擎，用户可在生成入口自主切换；同时包含 anime 升级链路钳制修复与画廊目标档位选择。0.1.2 的对白排程与竖屏导出见[实施记录](docs/reports/20261022-short-drama-delivery.md)。
 
 本地运行的 AI 文生视频生成器，**可插拔引擎架构**。参考 FreeVideo 的低显存设计哲学：硬件自适应（模型选择/量化/卸载全自动）、四档质量、两遍采样、视频自带参数。
 
@@ -52,7 +52,7 @@ Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/r
 
 ### 方式一：单文件 exe（推荐，任意 Windows 10/11 电脑）
 
-从 `packaging/dist/` 拷贝 **`AI视频工坊-v0.1.2.exe`** 到目标电脑，双击运行，全程自动：
+从 `packaging/dist/` 拷贝 **`AI视频工坊-v0.1.3.exe`** 到目标电脑，双击运行，全程自动：
 
 ```
 探测硬件（显卡/显存/内存/磁盘）
