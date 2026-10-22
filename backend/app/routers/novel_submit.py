@@ -30,7 +30,7 @@ def _run(fn, *args, **kwargs):
 class SubmitCreate(BaseModel):
     kind: str = Field("preview", pattern="^(preview|final)$")
     quality: str = Field("draft", pattern="^(draft|standard|high)$")
-    engine: str = "anime"
+    engine: str = "h3"
     # 可选：只提交部分镜头（默认全部已审核镜头）
     shot_item_ids: Optional[list] = None
     # 预算闸：预计总耗时超过上限 → 400 阻断（秒）

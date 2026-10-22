@@ -384,7 +384,7 @@ const form = reactive({
 })
 
 const genForm = reactive({
-  engine: 'anime',
+  engine: 'h3',
   width: 512, height: 512,
   num_frames: 16, fps: 8, steps: 25, guidance: 7.5,
   seed: -1, preset: '', preview: false,

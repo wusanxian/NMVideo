@@ -104,7 +104,7 @@ class ShotUpdate(BaseModel):
 
 
 class ShotGenerate(BaseModel):
-    engine: str = "anime"
+    engine: str = "h3"
     width: int = Field(512, ge=256, le=1344)
     height: int = Field(512, ge=256, le=768)
     num_frames: int = Field(16, ge=8, le=121)

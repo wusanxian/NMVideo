@@ -196,7 +196,7 @@ const message = ref('')
 const activePreset = ref('')
 
 const form = reactive({
-  engine: 'anime',
+  engine: 'h3',
   prompt: '',
   negative_prompt: 'worst quality, low quality, blurry, watermark, signature',
   width: 512,

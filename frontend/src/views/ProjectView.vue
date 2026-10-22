@@ -679,7 +679,7 @@ async function quickGenerate(shot) {
     return
   }
   try {
-    await store.generate(shot.id, { engine: 'anime' })
+    await store.generate(shot.id, { engine: 'h3' })
   } catch (e) {
     message.value = e.message
   }

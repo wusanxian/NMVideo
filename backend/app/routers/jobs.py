@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 class JobCreate(BaseModel):
-    engine: str = "anime"
+    engine: str = "h3"
     prompt: str = Field(..., min_length=1, max_length=4000)
     negative_prompt: str = ""
     # 范围覆盖 Wan 2.2（720p / 121 帧）；各引擎内部按自身约束吸附
