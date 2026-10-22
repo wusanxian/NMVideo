@@ -36,7 +36,9 @@ def _clean_text(text: str) -> str:
     """清洗对白文本：去动作提示括号、限长，避免 TTS 读出旁白式噪音"""
     t = re.sub(r"[（(][^）)]{0,20}[）)]", "", text or "")  # （低声）这类舞台提示
     t = re.sub(r"\s+", " ", t).strip()
-    return t[:300]
+    if len(t) > 300:
+        raise ValueError("单条配音最多 300 字，请按对白分句生成，避免截断")
+    return t
 
 
 async def _edge_list_voices() -> list:

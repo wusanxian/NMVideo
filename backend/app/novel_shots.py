@@ -802,6 +802,22 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
                    (episode_id,))
     ep_title = (episode or {}).get("title", "")
 
+    # PR-N07：幂等提交——同一计划版本重复交接直接回放上次结果，不重复重建
+    #（幂等键 = 计划 id + 审核版本；版本随审核递增，草稿改动不可交接）
+    idem_key = f"{plan['id']}:{int(plan.get('version') or 0)}"
+    prev_commit = _row(
+        "SELECT * FROM novel_handoffs WHERE idempotency_key = ?", (idem_key,))
+    if prev_commit:
+        if sb_mod.get_project(prev_commit["project_id"]):
+            try:
+                replayed = json.loads(prev_commit.get("result_json") or "{}")
+            except (ValueError, TypeError):
+                replayed = {}
+            replayed.update({"already": True, "replayed": True})
+            return replayed
+        # 项目已被删除 → 幂等记录失效，按新交接重新建项目
+        _write("DELETE FROM novel_handoffs WHERE id = ?", (prev_commit["id"],))
+
     # 目标项目解析（幂等）：计划记录的去向优先，其次剧本交接的项目
     project = None
     rebuilt = False
@@ -835,16 +851,32 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
             f"个时间线片段、{outputs['active_jobs']} 个进行中任务），拒绝覆盖交接。"
             "请新建项目或手动清理后重试。")
 
+    # PR-N07：只重建本改编创建的场景（origin=novel_script/novel_shot_plan）。
+    # 项目里有用户手工场景 → 拒绝重建，绝不覆盖人工内容
+    foreign = _rows(
+        "SELECT id, title FROM scenes WHERE project_id = ?"
+        " AND COALESCE(origin, '') NOT IN ('novel_script', 'novel_shot_plan')",
+        (project["id"],))
+    if foreign:
+        titles = "、".join(f"「{s['title']}」" for s in foreign[:5])
+        more = f" 等 {len(foreign)} 个" if len(foreign) > 5 else ""
+        raise ShotPlanError(
+            f"目标项目「{project.get('name', '')}」中有手工创建的场景"
+            f"（{titles}{more}）：交接重建只清理本改编创建的场景，为避免"
+            "覆盖人工内容已拒绝。请新建项目交接，或先在项目里删除这些场景。")
+
     char_mapping = _ensure_project_characters(
         project["id"],
         _dedupe([n for it in items for n in (it.get("character_names") or [])]),
         bible,
     )
 
-    # 清掉剧本交接留下的基础分镜（无成果，安全），按结构化分镜重建
+    # 清掉本改编创建的场景（剧本交接的基础分镜 / 上次分镜交接的场景），
+    # 按结构化分镜重建；用户手工场景已在上面阻断
     with db.transaction() as conn:
         conn.execute(
-            "DELETE FROM scenes WHERE project_id = ?", (project["id"],))
+            "DELETE FROM scenes WHERE project_id = ? AND COALESCE(origin, '')"
+            " IN ('novel_script', 'novel_shot_plan')", (project["id"],))
     scene_ids: dict = {}
     for it in items:
         sc_title = it.get("scene_title") or "新场景"
@@ -853,6 +885,7 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
                 project["id"], sc_title,
                 description=_scene_desc_for(sc_title, bible),
                 environment=sc_title,
+                origin="novel_shot_plan",
             )
             scene_ids[sc_title] = scene["id"]
         shot = sb_mod.create_shot(
@@ -886,7 +919,7 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
         handoff_warnings = validate_plan(novel_id, episode_id)["warnings"]
     except Exception:  # 校验异常不阻断交接本身
         handoff_warnings = []
-    return {
+    result = {
         "already": rebuilt,
         "rebuilt": rebuilt,
         "project_id": project["id"],
@@ -897,3 +930,11 @@ def handoff_plan(novel_id: str, episode_id: str) -> dict:
         "total_duration_sec": round(sum(i["duration_sec"] for i in items), 1),
         "warnings": handoff_warnings,
     }
+    # PR-N07：记录本次交接（幂等键唯一）——同版本重复交接回放本结果
+    _write(
+        "INSERT OR REPLACE INTO novel_handoffs (id, plan_id, project_id,"
+        " idempotency_key, result_json, created_at) VALUES (?,?,?,?,?,?)",
+        (_new_id("nhof"), plan["id"], project["id"], idem_key,
+         json.dumps(result, ensure_ascii=False), _utcnow()),
+    )
+    return result

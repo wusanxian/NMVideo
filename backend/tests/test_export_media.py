@@ -44,7 +44,8 @@ def test_real_export_survives_original_media_changes(fresh_db, tmp_path, monkeyp
     result = sb.get_export(export['id'])
     assert result['status'] == 'done', result['error']
     final = out / result['file_url'].removeprefix('/outputs/')
-    assert 0.8 <= probe_duration(final) <= 1.2
+    # 配音 1.5 秒超过裁后 1 秒画面时，延长末帧保留完整对白。
+    assert 1.45 <= probe_duration(final) <= 1.6
     decoded = subprocess.run([get_ffmpeg(), '-i', str(final), '-f', 'null', '-'], capture_output=True)
     assert decoded.returncode == 0, decoded.stderr.decode('utf-8', errors='replace')
     description = decoded.stderr.decode('utf-8', errors='replace')
@@ -131,7 +132,9 @@ def test_native_audio_survives_trim_and_silent_clip_then_mixes_with_voice_and_mu
     mixed_final = export_project(project, out, exporter)
     mixed = samples(mixed_final, 1.2, 0.5)
     assert all(tone_strength(mixed, freq) > 0.01 for freq in (880, 220, 110))
-    assert 1.95 <= probe_duration(mixed_final) <= 2.1
+    assert 3.95 <= probe_duration(mixed_final) <= 4.1
+    assert tone_strength(samples(mixed_final, 3.2, 0.5), 220) > 0.01
+    assert tone_strength(samples(mixed_final, 3.2, 0.5), 880) < 0.005
 
 
 @pytest.mark.parametrize('music_duration', [0.2, 3.0])
@@ -166,3 +169,35 @@ def test_audio_trim_out_is_source_position_not_extra_duration(media_env):
     assert tone_strength(samples(mixed, 0.6, 0.2), 440) > 0.01
     assert max(map(abs, samples(mixed, 1.1, 0.5))) < 0.005
     assert 1.99 <= probe_duration(mixed) <= 2.01
+
+
+def test_portrait_export_keeps_sequential_dialogue_to_the_end(media_env):
+    from app.video import probe_resolution
+    out, exporter = media_env
+    run_ffmpeg('-f', 'lavfi', '-i', 'color=c=blue:s=64x64:r=24:d=1',
+               '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out / 'clip.mp4')
+    project = sb.create_project('Portrait dialogue delivery')
+    shot = add_clip(project, 'clip.mp4')
+    sb.sync_timeline(project['id'])
+    for name, frequency, duration in [('first', 220, 0.7), ('second', 880, 0.8)]:
+        run_ffmpeg('-f', 'lavfi', '-i', f'sine=frequency={frequency}:duration={duration}', out / f'{name}.wav')
+        tracks.create_voice(shot['id'], audio_url=f'/outputs/{name}.wav',
+                            duration_s=duration, text=name)
+    exp = sb.create_export(project['id'], canvas='portrait', fit='cover')
+    exporter.run_export(exp['id'])
+    result = sb.get_export(exp['id'])
+    assert result['status'] == 'done', result['error']
+    final = out / result['file_url'].removeprefix('/outputs/')
+    assert probe_resolution(final) == (1080, 1920)
+    assert 1.45 <= probe_duration(final) <= 1.6
+    early, late = samples(final, 0.15, 0.3), samples(final, 1.1, 0.3)
+    assert tone_strength(early, 220) > 0.02
+    assert tone_strength(early, 880) < 0.005
+    assert tone_strength(late, 880) > 0.02
+    assert tone_strength(late, 220) < 0.005
+    # 关闭自动延长时必须失败，不能以截断对白的成片冒充成功。
+    blocked = sb.create_export(project['id'], extend_dialogue=False)
+    exporter.run_export(blocked['id'])
+    failed = sb.get_export(blocked['id'])
+    assert failed['status'] == 'failed'
+    assert '配音需要' in failed['error']

@@ -169,6 +169,10 @@
           </h3>
           <div class="tts-panel">
             <div class="tts-row">
+              <select v-model="ttsCharacter" aria-label="对白说话人" @change="selectSpeaker">
+                <option value="">旁白 / 自选音色</option>
+                <option v-for="c in characters" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
               <select v-model="ttsVoice" :disabled="!voicesAvail">
                 <option value="">选择音色…</option>
                 <optgroup v-for="g in voiceGroups" :key="g.label" :label="g.label">
@@ -180,11 +184,11 @@
               </select>
               <button class="btn btn-primary" :disabled="!voicesAvail || !ttsText.trim() || ttsBusy"
                       @click="generateVoice">
-                {{ ttsBusy ? '生成中…' : '🎙 生成配音' }}
+                {{ ttsBusy ? '生成中…' : '🎙 添加一句配音' }}
               </button>
             </div>
             <div class="field" style="margin-top: 8px">
-              <label>配音文本（默认取对白）</label>
+              <label>本句配音文本（同镜头按添加顺序播放；重录后删除旧条目）</label>
               <textarea v-model="ttsText" rows="2"></textarea>
             </div>
             <div v-if="shot.voices && shot.voices.length" class="voice-list">
@@ -450,6 +454,11 @@ async function polishPrompt() {
 const voices = ref([])
 const voicesAvail = ref(false)
 const ttsVoice = ref('')
+const ttsCharacter = ref('')
+function selectSpeaker() {
+  const character = props.characters.find(c => c.id === ttsCharacter.value)
+  ttsVoice.value = character?.voice_id || ''
+}
 const ttsRate = ref('+0%')
 const ttsText = ref(props.shot.dialogue || '')
 const ttsBusy = ref(false)
@@ -504,7 +513,7 @@ async function generateVoice() {
   errMsg.value = ''
   try {
     await api.generateVoice(props.shot.id, {
-      text: ttsText.value, voice: ttsVoice.value, rate: ttsRate.value,
+      text: ttsText.value, voice: ttsVoice.value, rate: ttsRate.value, character_id: ttsCharacter.value,
     })
     // 只刷新数据（拿到新 voices 列表），不关闭弹窗
     emit('refresh')

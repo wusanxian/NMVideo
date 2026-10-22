@@ -70,6 +70,9 @@ _FK_TABLES = [
     ("novel_submissions", "novel_shot_plans", "plan_id"),
     ("novel_submission_items", "novel_submissions", "submission_id"),
     ("novel_submission_items", "novel_shot_items", "shot_item_id"),
+    # PR-N07：交接提交记录（随分镜计划删；项目被删时记录变为悬空引用，
+    # 由 handoff 侧按 project_id 失效处理，不随项目级联——保留审计）
+    ("novel_handoffs", "novel_shot_plans", "plan_id"),
 ]
 
 
@@ -699,6 +702,34 @@ class Database:
                 self._conn.execute(
                     "ALTER TABLE novel_submissions ADD COLUMN"
                     " warnings TEXT DEFAULT '[]'")
+            self._conn.commit()
+
+        # ---------- 第十三批轻量迁移：交接安全化 + 幂等提交（PR-N07） ----------
+        # scenes.origin 标记场景来源（''=手工/历史数据，'novel_script'=剧本导入，
+        # 'novel_shot_plan'=分镜交接）——交接重建只删自己创建的场景，绝不覆盖
+        # 用户手工建的内容；旧库历史场景保持 ''（保守视为用户内容，不删除）。
+        # novel_handoffs 记录每次交接的幂等结果（idempotency_key 唯一），
+        # 同一计划版本重复交接直接回放上次结果，不重复重建。
+        with self._lock:
+            scn_cols = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(scenes)").fetchall()
+            }
+            if "origin" not in scn_cols:
+                self._conn.execute(
+                    "ALTER TABLE scenes ADD COLUMN origin TEXT DEFAULT ''")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS novel_handoffs (
+                    id TEXT PRIMARY KEY,
+                    plan_id TEXT NOT NULL REFERENCES novel_shot_plans(id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    result_json TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
             self._conn.commit()
 
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------

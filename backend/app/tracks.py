@@ -55,7 +55,7 @@ def create_voice(shot_id: str, **fields) -> dict:
 
 def list_voices_of_shot(shot_id: str) -> list:
     return _rows(
-        "SELECT * FROM shot_voices WHERE shot_id = ? ORDER BY created_at", (shot_id,)
+        "SELECT * FROM shot_voices WHERE shot_id = ? ORDER BY created_at,rowid", (shot_id,)
     )
 
 

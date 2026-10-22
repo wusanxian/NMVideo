@@ -206,24 +206,42 @@ def concat_videos(
             if t_out <= t_in:
                 t_out = min(dur, t_in + 0.5)
             seg_dur = t_out - t_in
+            output_dur = max(seg_dur, float(it.get("duration_s") or seg_dur))
+            if output_dur > seg_dur + 0.001:
+                # 先物理裁切，保证延长时复制剪出点末帧，不会读到被剪掉的画面。
+                # FFmpeg 7 的 trim EOF 与 tpad 组合会丢末帧，独立文件保留完整时间基准。
+                trimmed = tmp_dir / f"trim_{i:03d}.mp4"
+                cut = subprocess.run(
+                    [ffmpeg, "-y", "-ss", f"{t_in:.6f}", "-i", str(src),
+                     "-t", f"{seg_dur:.6f}", "-an", "-c:v", "libx264",
+                     "-preset", "veryfast", "-crf", "18", str(trimmed)],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
+                if cut.returncode != 0:
+                    raise RuntimeError(f"延长片段前裁切失败: {cut.stderr[-400:]}")
+                src, t_in = trimmed, 0.0
+                seg_dur = probe_duration(trimmed)
 
             vf = [
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease",
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
                 # 给 fps 滤镜补一个尾帧，再按输出时长截断，防止缩放后每段丢末帧而累积声画错位。
-                f"tpad=stop_mode=clone:stop_duration={1 / fps:.6f}",
+                f"tpad=stop_mode=clone:stop_duration={max(output_dur - seg_dur, 0) + 1 / fps:.6f}",
                 f"fps={fps}",
+                "setsar=1",
                 "format=yuv420p",
             ]
+            if it.get("fit") == "cover":
+                vf[0:2] = [f"scale={width}:{height}:force_original_aspect_ratio=increase",
+                           f"crop={width}:{height}"]
             if it.get("transition") == "fade":
                 vf.append(f"fade=t=in:st=0:d=0.3")
-                vf.append(f"fade=t=out:st={seg_dur - 0.3:.3f}:d=0.3")
+                vf.append(f"fade=t=out:st={max(output_dur - 0.3, 0):.3f}:d=0.3")
             seg = tmp_dir / f"seg_{i:03d}.mp4"
             cmd = [
                 ffmpeg, "-y",
                 "-ss", f"{t_in:.3f}",
                 "-i", str(src),
-                "-t", f"{seg_dur:.3f}",
+                "-t", f"{output_dur:.3f}",
                 "-vf", ",".join(vf),
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-an", str(seg),

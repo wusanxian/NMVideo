@@ -200,6 +200,9 @@ def generate_voice(shot_id: str, data: VoiceGenerate):
     character_name = ""
     if data.character_id:
         c = assets.get_character(data.character_id)
+        scene = sb.get_scene(shot["scene_id"])
+        if not c or not scene or c["project_id"] != scene["project_id"]:
+            raise HTTPException(400, "配音角色不属于当前项目")
         if c:
             voice = voice or c.get("voice_id") or ""
             character_name = c.get("name") or ""
@@ -290,16 +293,26 @@ def auto_subtitles(project_id: str):
     """按时间线顺序 + 镜头对白自动生成字幕（覆盖式）"""
     if not sb.get_project(project_id):
         raise HTTPException(404, "项目不存在")
-    items = sb.timeline_layout(project_id)
+    try:
+        items = sb.timeline_layout(project_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not items:
         raise HTTPException(400, "时间线为空：请先同步已通过镜头")
-    out = []
+    from ..dialogue_timing import schedule, subtitles_for_cues
+    voices = list({v["id"]: v for it in items for v in tracks.list_voices_of_shot(it["shot_id"])}.values())
+    try:
+        _, cues = schedule(items, voices, extend=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    out = subtitles_for_cues(cues)
+    voiced = {cue["shot_id"] for cue in cues}
     for it in items:
         text = (it.get("dialogue") or "").strip()
-        if text:
+        if text and it["shot_id"] not in voiced:
             out.append({"shot_id": it["shot_id"], "text": text,
                         "start_s": it["start_s"], "end_s": it["end_s"]})
-    return tracks.replace_subtitles(project_id, out)
+    return tracks.replace_subtitles(project_id, sorted(out, key=lambda item: item["start_s"]))
 
 
 @router.put("/projects/{project_id}/subtitles")

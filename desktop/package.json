@@ -1,6 +1,6 @@
 {
   "name": "aivideo-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AI 动画导演工作台 - Windows desktop shell",
   "main": "main.js",
   "private": true,

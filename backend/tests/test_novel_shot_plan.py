@@ -389,11 +389,13 @@ def test_handoff_creates_structured_project(client, fresh_db, monkeypatch, tmp_p
     # 不自动启动生成：没有任务
     assert all(not s.get("job_id") for s in shots)
 
-    # 幂等：重复交接同一项目，按审核态重建
+    # 幂等：同一审核版本重复交接回放上次结果（PR-N07 幂等键），
+    # 不重建、不产生新场景 id
     r2 = client.post(f"/api/novels/{nid}/episodes/{eid}/shots/handoff")
     assert r2.status_code == 200 and r2.json()["project_id"] == pid
-    assert r2.json()["rebuilt"] is True
+    assert r2.json()["replayed"] is True and r2.json()["shot_count"] == 3
     scenes2 = sb.list_scenes(pid)
+    assert [s["id"] for s in scenes2] == [s["id"] for s in scenes]  # 未重建
     assert sum(len(s["shots"]) for s in scenes2) == 3  # 没有翻倍
 
 
@@ -408,6 +410,15 @@ def test_handoff_refuses_when_project_has_outputs(client, fresh_db, monkeypatch,
     shot = sb.list_scenes(pid)[0]["shots"][0]
     sb.create_version(shot["id"], {"id": "job_test", "engine": "test"},
                       "http://x/v.mp4")
+    # 同一版本重复交接 = 幂等回放，不写库 → 安全（不碰已生成成果）
+    r = client.post(f"/api/novels/{nid}/episodes/{eid}/shots/handoff")
+    assert r.status_code == 200 and r.json()["replayed"] is True
+    assert len(sb.list_versions(shot["id"])) == 1  # 成果原样保留
+    # 计划改动后重新审核 → 新版本触发真实重建 → 安全闸拒绝
+    plan = client.get(f"/api/novels/{nid}/episodes/{eid}/shots").json()
+    client.put(f"/api/novels/{nid}/episodes/{eid}/shots/{plan['items'][0]['id']}",
+               json={"title": "入林（v2）"})
+    client.post(f"/api/novels/{nid}/episodes/{eid}/shots/approve", json={})
     r = client.post(f"/api/novels/{nid}/episodes/{eid}/shots/handoff")
     assert r.status_code == 400 and "制作成果" in r.json()["detail"]
 

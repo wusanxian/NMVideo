@@ -166,7 +166,10 @@ def delete_project(project_id: str) -> None:
 # Scene
 # =====================================================================
 def create_scene(project_id: str, title: str, description: str = "",
-                 environment: str = "", lighting: str = "") -> dict:
+                 environment: str = "", lighting: str = "",
+                 origin: str = "") -> dict:
+    """建场景。origin 标记来源（''=手工，'novel_script'=剧本导入，
+    'novel_shot_plan'=小说分镜交接）——小说交接的重建只清理自己来源的场景。"""
     sid = _new_id("scn")
     now = _utcnow()
     max_order = _row(
@@ -176,9 +179,9 @@ def create_scene(project_id: str, title: str, description: str = "",
     scene = db.insert_and_get(
         "scenes",
         ["id", "project_id", "title", "description", "environment",
-         "lighting", "order_index", "created_at", "updated_at"],
+         "lighting", "order_index", "created_at", "updated_at", "origin"],
         (sid, project_id, title.strip() or "新场景", description, environment,
-         lighting, max_order + 1, now, now),
+         lighting, max_order + 1, now, now, origin or ""),
         sid,
     )
     _touch_project(project_id)
@@ -1062,8 +1065,8 @@ def import_script(project_id: str, text: str, mode: str = "rebuild",
             sid = _new_id("scn")
             conn.execute(
                 "INSERT INTO scenes (id, project_id, title, description,"
-                " environment, lighting, order_index, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?)",
+                " environment, lighting, order_index, created_at, updated_at,"
+                " origin) VALUES (?,?,?,?,?,?,?,?,?,'novel_script')",
                 (sid, project_id, ps["title"].strip() or "新场景", ps["description"],
                  "", "", scene_base + 1 + i, now, now),
             )
@@ -1126,7 +1129,13 @@ def timeline_layout(project_id: str) -> list:
 
     供字幕自动生成、配音对齐、导出混音共用同一套时间基准。
     """
-    return layout_from_items(list_timeline(project_id))
+    from .dialogue_timing import schedule
+    from .tracks import list_voices_of_shot
+    layout = layout_from_items(list_timeline(project_id))
+    voices = [v for item in layout for v in list_voices_of_shot(item["shot_id"])]
+    # 同一个镜头可能多次出现在时间线，配音列表只需收集一次。
+    voices = list({v["id"]: v for v in voices}.values())
+    return schedule(layout, voices, extend=True)[0]
 
 
 def layout_from_items(items: list) -> list:
@@ -1201,7 +1210,8 @@ def remove_timeline_item(item_id: str) -> None:
 # =====================================================================
 # Exports
 # =====================================================================
-def create_export(project_id: str, fps: int = None) -> dict:
+def create_export(project_id: str, fps: int = None, *, canvas="source", fit="contain",
+                  extend_dialogue=True) -> dict:
     """创建导出记录（PR-06：帧率参数化）。
 
     fps=None → 取项目 fps；仍无效回落 24。落库冻结（运行中改项目
@@ -1213,7 +1223,11 @@ def create_export(project_id: str, fps: int = None) -> dict:
         fps = proj.get("fps") or 24
     fps = int(fps)
     from .export_manifest import capture
-    manifest = json.dumps(capture(db, project_id, fps), ensure_ascii=False)
+    if canvas not in ("source", "portrait", "landscape", "square") or fit not in ("contain", "cover"):
+        raise ValueError("无效的画布或裁切方式")
+    frozen = capture(db, project_id, fps)
+    frozen["output"] = {"canvas": canvas, "fit": fit, "extend_dialogue": extend_dialogue}
+    manifest = json.dumps(frozen, ensure_ascii=False)
     return db.insert_and_get(
         "exports",
         ["id", "project_id", "status", "fps", "manifest", "created_at"],

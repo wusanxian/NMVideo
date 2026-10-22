@@ -16,7 +16,7 @@ def capture(database, project_id: str, fps: int) -> dict:
             "LEFT JOIN shot_versions v ON v.id=s.current_version_id "
             "WHERE t.project_id=? ORDER BY t.position")
         voices = rows("SELECT DISTINCT v.* FROM shot_voices v JOIN timeline_items t "
-                      "ON v.shot_id=t.shot_id WHERE t.project_id=?")
+                      "ON v.shot_id=t.shot_id WHERE t.project_id=? ORDER BY v.created_at,v.rowid")
         audio = rows("SELECT * FROM audio_tracks WHERE project_id=? ORDER BY position")
         subtitles = rows("SELECT * FROM subtitle_tracks WHERE project_id=? ORDER BY position")
     manifest = {"schema_version": 1, "fps": fps, "items": items,

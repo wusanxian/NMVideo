@@ -60,18 +60,20 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> b
         if available > 0 and volume != 0:
             sources.append((path, start, seek, available, volume))
 
+    from .dialogue_timing import schedule
+    voices = (manifest["voices"] if manifest is not None else
+              list({v["id"]: v for it in layout for v in tracks.list_voices_of_shot(it["shot_id"])}.values()))
+    _, cues = schedule(layout, voices)
     for it in layout:
         video_path = _url_to_path(it.get("video_url") or "")
         if video_path and has_audio_stream(video_path):
             add_source(video_path, it["start_s"], it.get("trim_in_eff") or 0.0,
-                       length=it["end_s"] - it["start_s"])
-        voices = ([v for v in manifest["voices"] if v["shot_id"] == it["shot_id"]]
-                  if manifest is not None else tracks.list_voices_of_shot(it["shot_id"]))
-        for v in voices:
-            audio_path = _url_to_path(v.get("audio_url") or "")
-            if audio_path:
-                # 配音落在片段起点；超出片段长度的部分由 atrim 裁掉
-                add_source(audio_path, it["start_s"], length=it["end_s"] - it["start_s"])
+                       length=it.get("source_duration_s", it["end_s"] - it["start_s"]))
+    for cue in cues:
+        audio_path = _url_to_path(cue.get("audio_url") or "")
+        if not audio_path or not audio_path.is_file():
+            raise ValueError("配音素材缺失，请重新生成后导出")
+        add_source(audio_path, cue["start_s"], length=cue["duration_s"])
     for t in (manifest["audio_tracks"] if manifest is not None else tracks.list_audio_tracks(project_id)):
         track_path = _url_to_path(t.get("audio_url") or "")
         if track_path:
@@ -134,6 +136,11 @@ def run_export(export_id: str) -> None:
         if not layout:
             raise ValueError("时间线为空：请先在时间线页添加镜头")
 
+        output = (manifest or {}).get("output", {})
+        if manifest is not None:
+            from .dialogue_timing import schedule
+            layout, _ = schedule(layout, manifest["voices"], extend=output.get("extend_dialogue", True))
+
         seg_inputs = []
         for it in layout:
             if not it.get("video_url"):
@@ -147,6 +154,8 @@ def run_export(export_id: str) -> None:
                     "trim_in_s": it.get("trim_in_eff") or 0.0,
                     "trim_out_s": float(it.get("trim_out_s") or 0),
                     "transition": it.get("transition") or "none",
+                    "duration_s": it.get("seg_dur"),
+                    "fit": output.get("fit", "contain"),
                 }
             )
 
@@ -155,6 +164,8 @@ def run_export(export_id: str) -> None:
         w, h = probe_resolution(Path(seg_inputs[0]["path"]))
         if not w or not h:
             w, h = 512, 512
+        w, h = {"portrait": (1080, 1920), "landscape": (1920, 1080),
+                "square": (1080, 1080)}.get(output.get("canvas"), (w, h))
 
         EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -236,7 +247,7 @@ def _final_mux(video: Path, audio: Optional[Path], srt: Optional[Path],
             srt_arg = str(srt).replace("\\", "/").replace(":", "\\:")
             vf = (f"subtitles='{srt_arg}':force_style='FontName=Microsoft YaHei,"
                   "FontSize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H80000000,"
-                  "BorderStyle=1,Outline=1'")
+                  "BorderStyle=1,Outline=1,MarginV=36,MarginL=24,MarginR=24'")
             cmd += ["-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
         else:
             cmd += ["-c:v", "copy"]

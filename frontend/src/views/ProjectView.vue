@@ -214,8 +214,18 @@
       <div class="panel">
         <div class="tl-head">
           <h3 style="margin: 0">多轨时间线</h3>
-          <div style="display: flex; gap: 8px">
+          <div style="display: flex; gap: 8px; flex-wrap: wrap">
             <button class="btn" @click="syncTimeline">🔄 同步已通过镜头</button>
+            <select v-model="exportCanvas" aria-label="导出画布" style="width: auto">
+              <option value="source">跟随首镜头</option>
+              <option value="portrait">竖屏 1080×1920</option>
+              <option value="landscape">横屏 1920×1080</option>
+              <option value="square">方形 1080×1080</option>
+            </select>
+            <select v-model="exportFit" aria-label="画面适配" style="width: auto">
+              <option value="contain">完整画面（留边）</option>
+              <option value="cover">填满画布（居中裁切）</option>
+            </select>
             <select v-model.number="exportFps" style="width: 110px" title="导出帧率">
               <option :value="16">16 fps</option>
               <option :value="24">24 fps</option>
@@ -226,6 +236,9 @@
             </button>
           </div>
         </div>
+
+        <p class="dim">同镜头配音按生成顺序逐条播放，重新配音后请删除不用的旧条目，并重新生成字幕。</p>
+        <label><input v-model="extendDialogue" type="checkbox" /> 对白超时自动延长末帧；关闭后会阻止超时导出。延长画面会顺延后续镜头，音乐和音效保持设置的位置。</label>
 
         <div v-if="exportJob" class="export-status">
           <div class="bar"><div class="bar-inner" :style="{ width: Math.round(exportJob.progress * 100) + '%' }"></div></div>
@@ -516,6 +529,9 @@ const exporting = ref(false)
 const exportJob = ref(null)
 const exportHistory = ref([])
 const exportFps = ref(24)
+const exportCanvas = ref('portrait')
+const exportFit = ref('contain')
+const extendDialogue = ref(true)
 const musicTracks = ref([])
 const sfxTracks = ref([])
 const subtitles = ref([])
@@ -957,7 +973,8 @@ async function downloadSrt() {
 async function startExport() {
   exporting.value = true
   try {
-    exportJob.value = await store.createExport({ fps: exportFps.value })
+    exportJob.value = await store.createExport({ fps: exportFps.value, canvas: exportCanvas.value,
+      fit: exportFit.value, extend_dialogue: extendDialogue.value })
     exportTimer = setInterval(async () => {
       exportJob.value = await store.pollExport(exportJob.value.id)
       if (exportJob.value.status === 'done' || exportJob.value.status === 'failed') {

@@ -22,7 +22,7 @@ const SHELL_FILE = path.join(__dirname, 'renderer', 'index.html')
 // Keep Chromium's sandbox enabled; compatibility failures must be diagnosed explicitly.
 
 const IS_DEV = !app.isPackaged
-const LAUNCHER_EXE = 'AI视频工坊-v1.0.0.exe'
+const LAUNCHER_EXE = `AI视频工坊-v${require('./package.json').version}.exe`
 const APP_PORT_DEFAULT = 8000
 let quitting = false
 

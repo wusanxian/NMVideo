@@ -11,6 +11,8 @@
     python packaging/build.py --no-fe    # 跳过前端构建（dist 已存在时）
 """
 import argparse
+import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -20,7 +22,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent.parent
 PACKAGING = PROJECT / "packaging"
 DIST = PACKAGING / "dist"
-VERSION = "1.0.0"
+VERSION = json.loads((PROJECT / "desktop" / "package.json").read_text(encoding="utf-8"))["version"]
 
 # exe 里不需要的大库（运行时由 launcher 装进 venv）
 EXCLUDES = [
@@ -46,7 +48,8 @@ def run(cmd: list, cwd: Path = PROJECT, desc: str = ""):
 
 
 def build_frontend():
-    pass  # 前端在开发机构建（npm run build），产物 frontend/dist 随 payload 打包
+    run(["node", "node_modules/vite/bin/vite.js", "build"], cwd=PROJECT / "frontend",
+        desc="构建前端")
 
 
 def assemble_payload():
@@ -144,10 +147,13 @@ def main():
         sys.exit(1)
 
     # 1. 装 PyInstaller
-    run([str(venv_py), "-m", "pip", "install", "pyinstaller", "-q",
-         "-i", "https://mirrors.aliyun.com/pypi/simple/"], desc="安装 PyInstaller")
+    if importlib.util.find_spec("PyInstaller") is None:
+        run([str(venv_py), "-m", "pip", "install", "pyinstaller", "-q",
+             "-i", "https://mirrors.aliyun.com/pypi/simple/"], desc="安装 PyInstaller")
 
     # 2. 确认前端产物存在
+    if not args.no_fe:
+        build_frontend()
     fe_dist = PROJECT / "frontend" / "dist" / "index.html"
     if not fe_dist.exists():
         print("✘ 未找到 frontend/dist，请先在 frontend 目录执行 npm run build")
@@ -158,13 +164,14 @@ def main():
     spec_path = write_spec()
 
     # 4. 构建
-    run([str(venv_py), "-m", "PyInstaller", "--clean", "--noconfirm", str(spec_path)],
+    pyi_dist = PACKAGING / ".build-dist"
+    pyi_build = PACKAGING / ".build-work"
+    run([str(venv_py), "-m", "PyInstaller", "--clean", "--noconfirm",
+         "--distpath", str(pyi_dist), "--workpath", str(pyi_build), str(spec_path)],
         desc="PyInstaller 构建（约 1-2 分钟）")
 
     # 5. 收尾：重命名带版本号，清理中间产物
     # 注意：PyInstaller 的 dist/build 目录相对当前工作目录（项目根）
-    pyi_dist = PROJECT / "dist"
-    pyi_build = PROJECT / "build"
     built = pyi_dist / "AI视频工坊.exe"
     if not built.exists():
         print(f"✘ 未找到构建产物（{built}）")

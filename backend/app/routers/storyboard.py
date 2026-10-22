@@ -45,6 +45,9 @@ class ProjectUpdate(BaseModel):
 class ExportCreate(BaseModel):
     """导出参数（PR-06：帧率可选；不传用项目帧率，旧项目回落 24）"""
     fps: Optional[int] = Field(None, ge=8, le=60)
+    canvas: str = Field("source", pattern="^(source|portrait|landscape|square)$")
+    fit: str = Field("contain", pattern="^(contain|cover)$")
+    extend_dialogue: bool = True
 
 
 class ScriptImport(BaseModel):
@@ -576,7 +579,10 @@ def create_export(project_id: str, body: ExportCreate = None):
         raise HTTPException(404, "项目不存在")
     fps = body.fps if body else None
     try:
-        exp = sb.create_export(project_id, fps=fps)
+        exp = sb.create_export(project_id, fps=fps,
+                               canvas=body.canvas if body else "source",
+                               fit=body.fit if body else "contain",
+                               extend_dialogue=body.extend_dialogue if body else True)
     except (ValueError, OSError) as exc:
         raise HTTPException(400, f"无法准备导出素材：{exc}") from exc
     start_export(exp["id"])

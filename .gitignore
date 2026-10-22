@@ -17,9 +17,12 @@ frontend/dist/
 # 打包产物与运行时（注意：desktop/build/icon.png 是源资源，需入库）
 packaging/dist/
 packaging/build/
+packaging/.build-dist/
+packaging/.build-work/
 packaging/payload/
 frontend/dist/
 desktop/dist/
+release/
 desktop/node_modules/
 desktop/electron-dist/
 runtime/

@@ -94,6 +94,11 @@ app.whenReady().then(async () => {
     await until(() => guest.executeJavaScript('document.querySelector(".tabs .active")?.textContent.includes("资产库")'), 'sidebar switches tab without reloading')
     await guest.executeJavaScript(`document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(${JSON.stringify(project.route)})`)
     await until(() => guest.executeJavaScript('document.querySelector(".tabs .active")?.textContent.includes("时间线")'), 'return timeline tab')
+    if (process.env.SMOKE_DELIVERY === '1') {
+      assert.equal(await guest.executeJavaScript('document.querySelector(\'select[aria-label="导出画布"]\').value'), 'portrait')
+      assert.equal(await guest.executeJavaScript('document.querySelector(\'select[aria-label="画面适配"]\').value'), 'contain')
+      assert.ok(await guest.executeJavaScript('document.body.innerText.includes("对白超时自动延长末帧")'))
+    }
     await guest.executeJavaScript(`window.__retainedDraft = 'draft'`)
     await evaluate(`document.querySelector('#system-btn').click()`)
     assert.ok(await evaluate('document.querySelector("#system-panel").classList.contains("open")'), 'panel opens over the workspace')

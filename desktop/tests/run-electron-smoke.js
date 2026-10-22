@@ -6,7 +6,9 @@ const root = path.resolve(__dirname, '../..')
 const packaged = process.argv.includes('--packaged')
 const restored = process.argv.includes('--restore')
 const proxyTarget = process.argv.find(arg => arg.startsWith('--proxy-target='))?.split('=')[1]
-const profileName = packaged ? 'smoke-packaged' : 'smoke-dev'
+const appDirArg = process.argv.find(arg => arg.startsWith('--app-dir='))?.slice('--app-dir='.length)
+const appDir = appDirArg ? path.resolve(root, appDirArg) : path.join(root, 'desktop/dist/win-unpacked')
+const profileName = appDirArg ? 'smoke-delivery-012' : (packaged ? 'smoke-packaged' : 'smoke-dev')
 const profile = path.join(root, '.phase1', profileName)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -82,9 +84,10 @@ async function main() {
   delete env.ELECTRON_RUN_AS_NODE
   delete env.SMOKE_MISSING
   delete env.SMOKE_APP
-  const executable = packaged ? path.join(root, 'desktop/dist/win-unpacked/AI动画导演工作台.exe') : require('electron')
+  const executable = packaged ? path.join(appDir, 'AI动画导演工作台.exe') : require('electron')
   if (!fs.existsSync(executable)) throw new Error('Build or install the Electron executable before running this test')
-  if (packaged) env.SMOKE_APP = path.join(root, 'desktop/dist/win-unpacked/resources/app.asar/main.js')
+  if (packaged) env.SMOKE_APP = path.join(appDir, 'resources/app.asar/main.js')
+  if (appDirArg) env.SMOKE_DELIVERY = '1'
   const args = packaged ? ['--inspect-brk=9235'] : [path.join(__dirname, 'electron-smoke.js')]
   const child = spawn(executable, args, { cwd: root, env, stdio: 'inherit', windowsHide: true })
   const ended = new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
