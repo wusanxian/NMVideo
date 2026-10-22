@@ -73,3 +73,9 @@ ehthumbs.db
 
 # 工具/IDE 分析产物
 .brooks-lint-history.json
+
+# 测试文件（不入库，仅本地保留，避免误传）
+backend/tests/
+desktop/tests/
+test_*.py
+*_test.py
