@@ -25,9 +25,9 @@ class JobCreate(BaseModel):
     engine: str = "h3"
     prompt: str = Field(..., min_length=1, max_length=4000)
     negative_prompt: str = ""
-    # 范围覆盖 Wan 2.2（720p / 121 帧）；各引擎内部按自身约束吸附
+    # 范围覆盖 Wan 2.2 与 MiniMax H3（720p 竖屏 / 1344×768 画布）；各引擎内部按自身约束吸附
     width: int = Field(512, ge=256, le=1344)
-    height: int = Field(512, ge=256, le=768)
+    height: int = Field(512, ge=256, le=1344)
     num_frames: int = Field(16, ge=8, le=121)
     fps: int = Field(8, ge=4, le=30)
     steps: int = Field(25, ge=5, le=100)

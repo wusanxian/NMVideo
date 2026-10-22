@@ -446,11 +446,14 @@ _H3_PRESET_BY_MODE = {
 
 
 def resolve_template_for(engine_id: str, mode: str = "t2v") -> dict:
-    """按引擎解析工作流模板。
+    """按引擎解析 ComfyUI 工作流模板。
 
-    - h3 引擎：固定使用 freevideo_h3_{t2v,i2v,first_last} 内置预设，
-      与「当前模板」解耦——用户在 ComfySetupView 里 apply 了别的模板
-      也不影响 h3 引擎的生成契约。
+    - h3：固定使用 freevideo_h3_{t2v,i2v,first_last} 内置预设，与「当前模板」
+      解耦，用户在 ComfySetupView 里 apply 了别的模板也不影响。
+      **注意**：h3 引擎自 0.1.4 起改为 diffusers 原生推理（见 engines/h3.py），
+      不再经 ComfyUI 执行；`prepare_comfy_workflow` 只在 ``engine == "comfyui"``
+      时调用，所以这个分支只覆盖「显式选 comfyui 引擎 + FreeVideo 预设」的路径。
+      预设文件刻意保留：装了 FreeVideo 插件的用户仍可走 ComfyUI 路线。
     - 其他引擎（comfyui/anime/wan22）：沿用当前模板（历史行为不变）。
     """
     if engine_id == "h3":

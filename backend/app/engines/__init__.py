@@ -6,7 +6,8 @@ from .h3 import H3Engine
 from .wan import WanEngine
 
 ENGINES: dict = {
-    # h3 置于首位：默认引擎（FreeVideo 同款 VDN-H3 模型），其余按需安装
+    # h3 置于首位：默认引擎（MiniMax H3 / VDN-H3 8 步蒸馏），由 diffusers
+    # ModularPipeline 原生推理——不需要 ComfyUI，也不需要 FreeVideo 插件
     H3Engine.meta.id: H3Engine,
     AnimeEngine.meta.id: AnimeEngine,
     WanEngine.meta.id: WanEngine,

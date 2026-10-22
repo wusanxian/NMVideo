@@ -8,16 +8,16 @@ python-multipart
 # ⚠️ torch 请单独安装（见 README）：
 #    无独显: pip install torch --index-url https://download.pytorch.org/whl/cpu/
 #    N 卡:   pip install torch --index-url https://download.pytorch.org/whl/cu124
-diffusers>=0.36
-transformers>=4.46
-accelerate>=1.1
+diffusers>=0.41         # MiniMaxH3ModularPipeline / MiniMaxH3Transformer3DModel 在 0.41 才齐（H3 引擎硬依赖）
+transformers>=5.0       # H3 的文本编码器是 Qwen3VLForConditionalGeneration（Qwen3-VL，需 5.x）
+accelerate>=1.10        # H3 的 cpu_offload_with_hook / group offloading 链
 safetensors>=0.4
-torchao>=0.9          # Wan 引擎权重量化（fp8/int8），缺失时引擎自动跳过量化
+torchao>=0.9          # Wan 引擎权重量化（fp8/int8），H3 的 fp8 也走它；缺失时自动跳过量化
 
 # 工具库
 pillow>=10.0
 imageio-ffmpeg>=0.5
-huggingface-hub>=0.27
+huggingface-hub>=1.30  # H3 走 HF 缓存模式（snapshot_download + local_files_only 完整性校验）
 numpy>=1.26
 websockets>=12.0       # ComfyUI 工作流进度推送（WS）
 requests>=2.31         # ComfyUI HTTP API 客户端

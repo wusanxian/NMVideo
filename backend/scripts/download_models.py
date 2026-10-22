@@ -4,6 +4,7 @@
     python scripts/download_models.py                  # 下载 AnimeDiff 模型
     python scripts/download_models.py --wan-ti2v-5b    # 下载 Wan 2.2 TI2V-5B（约 32GB，8GB 显存首选）
     python scripts/download_models.py --wan-a14b       # 下载 Wan 2.2 T2V-A14B（约 119GB，需 60GB+ 内存）
+    python scripts/download_models.py --h3             # 下载 MiniMax H3 / VDN-H3（约 139GB，需 N 卡）
     python scripts/download_models.py --all            # 全部下载（磁盘杀手，按需）
 
 可靠性设计（踩坑记录）：
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 加入 backen
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-from app.config import MODELS_DIR  # noqa: E402
+from app.config import MODELS_DIR, HF_CACHE_DIR  # noqa: E402
 
 try:
     from huggingface_hub import snapshot_download  # noqa: E402
@@ -44,6 +45,16 @@ WAN_T2V_A14B_REPO = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
 
 # Wan 仓库排除项：示例视频/flower 演示图/旧版 ckpt 转换残留
 WAN_IGNORE = ["*.mp4", "*.gif", "*.png", "*.jpg", "*.jpeg", "prompt*.json", "*.msgpack"]
+
+# MiniMax H3（VDN-H3 8 步蒸馏）：diffusers modular 组件格式，原生推理不依赖
+# ComfyUI / FreeVideo 插件。底模仓库 78GB（h3-base 72 + 两档蒸馏 9.4），
+# 文本编码器另外从 MiniMaxAI/MiniMax-H3 拿 62GB —— 合计约 139GB。
+# 走 HF 缓存（cache_dir）而不是 local_dir：modular_model_index.json 里的组件
+# 是用 hub repo id 引用的，只有缓存模式才能让 from_pretrained 离线命中。
+H3_REPO = "OpenVDN/vdn-minimax-h3"
+H3_BASE_REPO = "MiniMaxAI/MiniMax-H3"
+H3_BASE_ALLOW = ["text_encoder/*", "tokenizer/*", "processor/*", "*.json", "*.md"]
+H3_SIZE_GB = {"vdn": 78, "base": 62}
 
 HF_ENDPOINT = os.environ["HF_ENDPOINT"]
 
@@ -181,17 +192,60 @@ def download(repo: str, local_dir: Path, allow=None, ignore=None):
     print(f"[OK] {repo} 下载完成（{size_gb:.2f} GB）")
 
 
+def download_to_cache(repo: str, allow=None, label: str = "", size_gb: float = 0.0):
+    """下载到 HF 缓存（H3 专用）。
+
+    为什么不用 local_dir：OpenVDN/vdn-minimax-h3 的 modular_model_index.json 里
+    组件是用 hub repo id（MiniMaxAI/MiniMax-H3）引用的，只有缓存模式能让
+    ``ModularPipeline.from_pretrained`` 离线命中，不必改写模型仓库文件。
+    """
+    if snapshot_download is None:
+        print("[失败] 缺少 huggingface_hub，无法下载 H3 模型")
+        sys.exit(1)
+    tag = f"{label} {repo}" if label else repo
+    if size_gb:
+        tag += f"（约 {size_gb:.0f}GB）"
+    HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    patterns = list(allow) if allow else None
+    try:
+        snapshot_download(repo_id=repo, cache_dir=str(HF_CACHE_DIR),
+                          allow_patterns=patterns, local_files_only=True)
+        print(f"[OK] {tag} 已在缓存中且完整，跳过。")
+        return
+    except Exception:
+        pass  # 未下全：继续走真实下载
+    print(f"→ 下载 {tag} → {HF_CACHE_DIR}（大文件，支持断点续传）")
+    try:
+        snapshot_download(repo_id=repo, cache_dir=str(HF_CACHE_DIR),
+                          allow_patterns=patterns, max_workers=4)
+    except Exception as exc:
+        print(f"  [失败] {repo}: {exc}")
+        print("  重新运行本脚本可断点续传（HF 缓存不会重复下载已完成的分片）")
+        sys.exit(1)
+    try:
+        snapshot_download(repo_id=repo, cache_dir=str(HF_CACHE_DIR),
+                          allow_patterns=patterns, local_files_only=True)
+    except Exception as exc:
+        print(f"  [校验失败] {repo} 仍有文件缺失：{exc}")
+        sys.exit(1)
+    print(f"[OK] {tag} 下载完成")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="下载引擎模型")
     parser.add_argument("--skip-anime", action="store_true", help="跳过动漫底模")
     parser.add_argument("--skip-motion", action="store_true", help="跳过运动模块")
     parser.add_argument("--wan-ti2v-5b", action="store_true", help="下载 Wan 2.2 TI2V-5B（约 32GB）")
     parser.add_argument("--wan-a14b", action="store_true", help="下载 Wan 2.2 T2V-A14B（约 119GB）")
-    parser.add_argument("--all", action="store_true", help="下载全部模型")
+    parser.add_argument("--h3", action="store_true",
+                        help="下载 MiniMax H3 / VDN-H3（约 139GB，需 NVIDIA 显卡，原生 diffusers 推理）")
+    parser.add_argument("--all", action="store_true", help="下载全部模型（含 H3，合计 200GB+）")
     args = parser.parse_args()
 
     want_wan = args.wan_ti2v_5b or args.wan_a14b or args.all
-    want_anime = not (args.wan_ti2v_5b or args.wan_a14b)  # 只下 Wan 时跳过 AnimeDiff
+    want_h3 = args.h3 or args.all
+    # 只点名下 Wan / H3 时跳过 AnimeDiff（默认行为不变）
+    want_anime = not (args.wan_ti2v_5b or args.wan_a14b or args.h3)
 
     print(f"HF 镜像: {HF_ENDPOINT}")
     print(f"模型目录: {MODELS_DIR}\n")
@@ -217,5 +271,12 @@ if __name__ == "__main__":
             download(WAN_TI2V_5B_REPO, MODELS_DIR / "wan-ti2v-5b", ignore=WAN_IGNORE)
         if args.wan_a14b or args.all:
             download(WAN_T2V_A14B_REPO, MODELS_DIR / "wan-t2v-a14b", ignore=WAN_IGNORE)
+
+    if want_h3:
+        print("\n[MiniMax H3] 原生 diffusers 推理，约 139GB（底模 78GB + 文本编码器 62GB）")
+        print("           需要 NVIDIA 显卡（16GB 显存起）；磁盘请预留 140GB 以上。")
+        download_to_cache(H3_REPO, label="VDN-H3 底模", size_gb=H3_SIZE_GB["vdn"])
+        download_to_cache(H3_BASE_REPO, allow=H3_BASE_ALLOW, label="H3 文本编码器",
+                          size_gb=H3_SIZE_GB["base"])
 
     print("\n全部完成！现在可以启动后端生成视频了。")

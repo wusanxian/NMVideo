@@ -85,4 +85,11 @@ def normalize_generation(defaults: dict, explicit: dict) -> dict:
         params["num_frames"] = 4 * ((params["num_frames"] - 1) // 4) + 1
         for key in ("width", "height"):
             params[key] = max(128, params[key] // 16 * 16)
+    elif engine == "h3":
+        # MiniMax H3：宽高 32 对齐 + 画布上限（1032192 像素 = 1344×768）。
+        # 帧数刻意保持请求值——引擎内部按 17n+5 生成（最少 5 秒）后再截回
+        # 请求时长，所以存档的 num_frames/fps 就是最终视频的时长口径。
+        from .engines.h3 import H3Engine
+        params["width"], params["height"] = H3Engine.normalize_size(
+            int(params["width"]), int(params["height"]))
     return params

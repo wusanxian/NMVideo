@@ -106,7 +106,7 @@ class ShotUpdate(BaseModel):
 class ShotGenerate(BaseModel):
     engine: str = "h3"
     width: int = Field(512, ge=256, le=1344)
-    height: int = Field(512, ge=256, le=768)
+    height: int = Field(512, ge=256, le=1344)
     num_frames: int = Field(16, ge=8, le=121)
     fps: int = Field(8, ge=4, le=30)
     steps: int = Field(25, ge=5, le=100)

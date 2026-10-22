@@ -226,12 +226,12 @@
           <div class="param-grid" style="margin-top: 12px">
             <div class="field">
               <div class="range-label"><span>帧数</span><b>{{ genForm.num_frames }}</b></div>
-              <input type="range" min="8" :max="genForm.engine === 'wan22' ? 121 : 32" step="2"
+              <input type="range" min="8" :max="['wan22','h3'].includes(genForm.engine) ? 121 : 32" step="2"
                      v-model.number="genForm.num_frames" />
             </div>
             <div class="field">
               <div class="range-label"><span>帧率 FPS</span><b>{{ genForm.fps }}</b></div>
-              <input type="range" min="4" :max="genForm.engine === 'wan22' ? 24 : 16" step="1"
+              <input type="range" min="4" :max="['wan22','h3'].includes(genForm.engine) ? 24 : 16" step="1"
                      v-model.number="genForm.fps" />
             </div>
             <div class="field">
@@ -240,22 +240,26 @@
             </div>
             <div class="field">
               <div class="range-label"><span>CFG</span><b>{{ genForm.guidance }}</b></div>
-              <input type="range" min="1" :max="genForm.engine === 'wan22' ? 10 : 15" step="0.5"
+              <input type="range" min="1" :max="['wan22','h3'].includes(genForm.engine) ? 10 : 15" step="0.5"
                      v-model.number="genForm.guidance" />
             </div>
             <div class="field">
               <label>宽度</label>
-              <input type="number" v-model.number="genForm.width" min="256" :max="genForm.engine === 'wan22' ? 1344 : 1024" step="16" />
+              <input type="number" v-model.number="genForm.width" min="256" :max="['wan22','h3'].includes(genForm.engine) ? 1344 : 1024" step="16" />
             </div>
             <div class="field">
               <label>高度</label>
-              <input type="number" v-model.number="genForm.height" min="256" :max="genForm.engine === 'wan22' ? 768 : 1024" step="16" />
+              <input type="number" v-model.number="genForm.height" min="256" :max="['wan22','h3'].includes(genForm.engine) ? 768 : 1024" step="16" />
             </div>
             <div class="field">
               <label>随机种子（-1 随机）</label>
               <input type="number" v-model.number="genForm.seed" min="-1" />
             </div>
           </div>
+          <p v-if="genForm.engine === 'h3'" class="comfy-hint">
+            H3 是 guidance 蒸馏模型：<b>固定 8 步、无 CFG</b>，上方「步数 / CFG」两项不生效；
+            模型最少出 5 秒画面，更短的镜头会自动截取到设定时长。宽高按 32 对齐，帧数自动吸附到 17n+5。
+          </p>
           <p v-if="genForm.engine === 'comfyui'" class="comfy-hint">
             将按 <b>ComfyUI 工作流模板</b> 的节点映射注入以上参数与参考图；
             模板可在「ComfyUI 设置」中粘贴你自己导出的工作流。
@@ -337,7 +341,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 
 const props = defineProps({
@@ -390,6 +394,17 @@ const genForm = reactive({
   seed: -1, preset: '', preview: false,
   use_character_images: true, use_character_lora: true,
 })
+
+// 默认引擎 h3（MiniMax H3 原生推理）需要 NVIDIA 显卡 + 139GB 模型：
+// 本机不具备时自动降级到第一个可用引擎，别让用户对着不可用卡片发呆。
+watch(() => props.engines, (list) => {
+  if (!list || !list.length) return
+  const current = list.find((e) => e.id === genForm.engine)
+  if (current && current.status !== 'ready') {
+    const usable = list.find((e) => e.status === 'ready')
+    if (usable) genForm.engine = usable.id
+  }
+}, { immediate: true })
 
 function modeSupported(mode) {
   const engine = props.engines.find((item) => item.id === genForm.engine)

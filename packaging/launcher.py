@@ -12,7 +12,7 @@ AI 视频工坊 Windows 启动器（打包进 exe 的入口）
   7. 启动 uvicorn 服务并打开浏览器
 
 命令行参数（可选，全部有自动默认）：
-  --model auto|wan-ti2v|wan-a14b|anime   模型选型（默认 auto 按硬件）
+  --model auto|h3|wan-ti2v|wan-a14b|anime  模型选型（默认 auto 按硬件）
   --torch auto|cuda|cpu                 torch 版本（默认 auto 按显卡）
   --port N                              服务端口（默认 8000）
   --yes                                 跳过倒计时确认直接执行
@@ -85,6 +85,7 @@ MIN_PY_VER = (3, 10)
 
 # 模型磁盘需求（GB，含余量）
 DISK_NEED = {
+    "h3": 150.0,          # 底模 78GB + Qwen3-VL 文本编码器 62GB，留 10GB 余量
     "wan-a14b": 135.0,
     "wan-ti2v": 42.0,
     "anime": 14.0,
@@ -283,6 +284,12 @@ class Plan:
 def choose_plan(hw: HWInfo) -> Plan:
     if hw.gpus:
         vram = hw.max_vram_gb
+        # MiniMax H3 原生推理（VDN-H3 8 步蒸馏）：画质最好，但模型约 139GB，
+        # 且 diffusers 原生路径需要 ~16GB 显存（24GB 跑满 345 帧峰值 22GB）
+        if vram >= 16 and hw.ram_total_gb >= 32 and hw.disk_free_gb >= DISK_NEED["h3"]:
+            return Plan("h3", "cuda", "auto", "sequential",
+                        f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存 + "
+                        f"{hw.disk_free_gb:.0f}GB 磁盘：可跑 MiniMax H3 原生推理（8 步蒸馏，画质最好）")
         if vram >= 22 and hw.ram_total_gb >= 60:
             return Plan("wan-a14b", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存，可上 Wan2.2-A14B 画质标杆")
@@ -301,6 +308,7 @@ def choose_plan(hw: HWInfo) -> Plan:
 
 
 PLAN_LABEL = {
+    "h3": "MiniMax H3（VDN-H3 8 步蒸馏 · diffusers 原生 · 约 139GB 模型）",
     "wan-a14b": "Wan 2.2 T2V-A14B（双专家 MoE · 电影级画质 · 约 119GB 模型）",
     "wan-ti2v": "Wan 2.2 TI2V-5B（5B 统一模型 · 8GB 显存甜点位 · 约 32GB 模型）",
     "anime": "AnimeDiff 动漫引擎（dreamlike-anime + 运动模块 · 约 5GB 模型）",
@@ -481,7 +489,9 @@ def pip_install(py: Path, args: list, desc: str):
 
 # ---------------- 模型下载 ----------------
 def ensure_models(rt: Path, py: Path, plan: Plan, hw: HWInfo):
-    if plan.model == "anime":
+    if plan.model == "h3":
+        repo_args = ["--h3"]  # MiniMax H3：走 HF 缓存，约 139GB，耗时长
+    elif plan.model == "anime":
         repo_args = []  # AnimeDiff 是 download_models.py 的默认行为（不带参数）
     elif plan.model == "wan-ti2v":
         repo_args = ["--wan-ti2v-5b"]
@@ -570,7 +580,8 @@ def launch(rt: Path, py: Path, port: int, no_browser: bool = False, port_file: s
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Windows 启动器")
-    parser.add_argument("--model", default="auto", choices=["auto", "wan-ti2v", "wan-a14b", "anime"])
+    parser.add_argument("--model", default="auto",
+                        choices=["auto", "h3", "wan-ti2v", "wan-a14b", "anime"])
     parser.add_argument("--torch", default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--yes", action="store_true")

@@ -103,7 +103,7 @@
           <select v-model="submitForm.engine" class="sel" title="AnimeDiff 仅支持文生视频；FreeVideo H3 需在 ComfyUI 安装 FreeVideo 插件（8GB 显存起步）">
             <option value="anime">AnimeDiff（本机）</option>
             <option value="comfyui">ComfyUI 工作流</option>
-            <option value="h3">FreeVideo H3（MiniMax，需插件）</option>
+            <option value="h3">MiniMax H3（原生推理，无需插件）</option>
           </select>
           <button class="btn btn-primary" :disabled="submitting" @click="submitBatch">
             {{ submitting ? '提交中…' : (submitForm.kind === 'preview' ? '▶ 提交预览批次' : '▶ 提交正式批次') }}

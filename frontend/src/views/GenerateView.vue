@@ -98,11 +98,11 @@
       <div class="param-grid">
         <div class="field">
           <div class="range-label"><span>帧数（时长=帧数/帧率）</span><b>{{ form.num_frames }} 帧 / {{ (form.num_frames / form.fps).toFixed(1) }}s</b></div>
-          <input type="range" min="8" :max="form.engine === 'wan22' ? 121 : 32" :step="form.engine === 'wan22' ? 4 : 2" v-model.number="form.num_frames" />
+          <input type="range" min="8" :max="['wan22','h3'].includes(form.engine) ? 121 : 32" :step="['wan22','h3'].includes(form.engine) ? 4 : 2" v-model.number="form.num_frames" />
         </div>
         <div class="field">
           <div class="range-label"><span>帧率 FPS</span><b>{{ form.fps }}</b></div>
-          <input type="range" min="4" :max="form.engine === 'wan22' ? 24 : 16" step="1" v-model.number="form.fps" />
+          <input type="range" min="4" :max="['wan22','h3'].includes(form.engine) ? 24 : 16" step="1" v-model.number="form.fps" />
         </div>
         <div class="field">
           <div class="range-label"><span>采样步数（越高越精细越慢）</span><b>{{ form.steps }}</b></div>
@@ -110,15 +110,15 @@
         </div>
         <div class="field">
           <div class="range-label"><span>提示词引导 CFG</span><b>{{ form.guidance }}</b></div>
-          <input type="range" min="1" :max="form.engine === 'wan22' ? 10 : 15" step="0.5" v-model.number="form.guidance" />
+          <input type="range" min="1" :max="['wan22','h3'].includes(form.engine) ? 10 : 15" step="0.5" v-model.number="form.guidance" />
         </div>
         <div class="field">
           <label>宽度</label>
-          <input type="number" v-model.number="form.width" min="256" :max="form.engine === 'wan22' ? 1344 : 1024" step="16" />
+          <input type="number" v-model.number="form.width" min="256" :max="['wan22','h3'].includes(form.engine) ? 1344 : 1024" step="16" />
         </div>
         <div class="field">
           <label>高度</label>
-          <input type="number" v-model.number="form.height" min="256" :max="form.engine === 'wan22' ? 768 : 1024" step="16" />
+          <input type="number" v-model.number="form.height" min="256" :max="['wan22','h3'].includes(form.engine) ? 768 : 1024" step="16" />
         </div>
         <div class="field">
           <label>随机种子（-1 为随机）</label>
@@ -127,7 +127,7 @@
         <div class="field">
           <label>分辨率快捷</label>
           <div class="chips">
-            <template v-if="form.engine === 'wan22'">
+            <template v-if="['wan22','h3'].includes(form.engine)">
               <span class="chip" @click="setSize(832, 480)">480p 横</span>
               <span class="chip" @click="setSize(480, 832)">480p 竖</span>
               <span class="chip" @click="setSize(1280, 720)">720p 横</span>
@@ -144,6 +144,10 @@
       </div>
 
       <!-- 提交 -->
+      <p v-if="form.engine === 'h3'" class="hint-text" style="margin: 0 0 10px">
+        H3 是 guidance 蒸馏模型：<b>固定 8 步、无 CFG</b>（上方「步数 / CFG」不生效）；最少出 5 秒画面，
+        更短的镜头会自动截取到设定时长；宽高按 32 对齐。
+      </p>
       <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap">
         <button class="btn btn-primary" :disabled="store.submitting || !form.prompt.trim()" @click="submit">
           {{ store.submitting ? '提交中…' : (form.preview ? '🔍 生成预览' : '🎬 开始生成') }}
@@ -263,6 +267,13 @@ async function submit() {
 onMounted(async () => {
   try {
     engines.value = await api.engines()
+    // 默认引擎是 h3（MiniMax H3 原生推理），需要 NVIDIA 显卡 + 139GB 模型。
+    // 本机不具备时自动切到第一个可用引擎，避免一打开就停在不可用引擎上。
+    const current = engines.value.find((e) => e.id === form.engine)
+    if (current && current.status !== 'ready') {
+      const usable = engines.value.find((e) => e.status === 'ready')
+      if (usable) form.engine = usable.id
+    }
   } catch {
     engines.value = []
   }
