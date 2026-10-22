@@ -18,7 +18,8 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
     params["comfy_url"] = client.base_url
     if not client.is_available():
         raise ValueError(f"连不上 ComfyUI 服务器（{client.base_url}），请先启动并确认地址")
-    template = template if template is not None else comfyui.load_workflow_template()
+    template = template if template is not None else comfyui.resolve_template_for(
+        params.get("engine") or "", params.get("mode") or "t2v")
     if not isinstance(template.get("prompt"), dict) or not template["prompt"]:
         raise ValueError("工作流模板为空或缺少 prompt 节点图")
     from . import freevideo

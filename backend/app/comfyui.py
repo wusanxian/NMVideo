@@ -417,6 +417,48 @@ def load_workflow_template() -> dict:
     return _default_template()
 
 
+def load_preset_template(preset_id: str) -> dict:
+    """只读加载内置预设（不改动当前模板 default.json）。
+
+    与 apply_preset 的区别：apply 会覆盖全局当前模板，本函数仅按需
+    读取——供按引擎自动路由模板使用（h3 引擎固定走 FreeVideo 预设）。
+    """
+    path = PRESETS_DIR / f"{preset_id}.json"
+    if not path.exists():
+        raise ComfyUIError(f"预设不存在: {preset_id}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as e:
+        raise ComfyUIError(f"预设读取失败: {e}")
+    if not isinstance(data.get("prompt"), dict) or not data["prompt"]:
+        raise ComfyUIError(f"预设缺少 prompt 节点图: {preset_id}")
+    return data
+
+
+# h3 引擎（FreeVideo VDN-H3）按模式路由到对应内置预设：
+# 续接（continuation）在 FreeVideo 侧就是以末帧为首帧的 i2v 输入。
+_H3_PRESET_BY_MODE = {
+    "t2v": "freevideo_h3_t2v",
+    "i2v": "freevideo_h3_i2v",
+    "continuation": "freevideo_h3_i2v",
+    "first_last": "freevideo_h3_first_last",
+}
+
+
+def resolve_template_for(engine_id: str, mode: str = "t2v") -> dict:
+    """按引擎解析工作流模板。
+
+    - h3 引擎：固定使用 freevideo_h3_{t2v,i2v,first_last} 内置预设，
+      与「当前模板」解耦——用户在 ComfySetupView 里 apply 了别的模板
+      也不影响 h3 引擎的生成契约。
+    - 其他引擎（comfyui/anime/wan22）：沿用当前模板（历史行为不变）。
+    """
+    if engine_id == "h3":
+        preset = _H3_PRESET_BY_MODE.get(mode or "t2v", "freevideo_h3_t2v")
+        return load_preset_template(preset)
+    return load_workflow_template()
+
+
 def save_workflow_template(data: dict) -> dict:
     if "prompt" not in data or not isinstance(data["prompt"], dict):
         raise ComfyUIError("工作流缺少 prompt 节点图")

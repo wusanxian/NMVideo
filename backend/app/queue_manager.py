@@ -292,7 +292,8 @@ class JobQueue:
                     del self._engine_instances[cached_id]
             if engine_key not in self._engine_instances:
                 engine = get_engine(engine_id)()
-                if engine_id == "comfyui" and hasattr(engine, "bind_server"):
+                # ComfyUI 系引擎（comfyui / h3）按任务保存的地址绑定服务
+                if hasattr(engine, "bind_server"):
                     engine.bind_server(engine_key[1])
                 self._engine_instances[engine_key] = engine
             engine = self._engine_instances[engine_key]

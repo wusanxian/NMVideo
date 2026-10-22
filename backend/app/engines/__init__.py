@@ -2,9 +2,12 @@
 from .anime import AnimeEngine
 from .base import BaseEngine, EngineMeta, EngineUnavailable, GenerationCancelled
 from .comfy import ComfyEngine
+from .h3 import H3Engine
 from .wan import WanEngine
 
 ENGINES: dict = {
+    # h3 置于首位：默认引擎（FreeVideo 同款 VDN-H3 模型），其余按需安装
+    H3Engine.meta.id: H3Engine,
     AnimeEngine.meta.id: AnimeEngine,
     WanEngine.meta.id: WanEngine,
     ComfyEngine.meta.id: ComfyEngine,
