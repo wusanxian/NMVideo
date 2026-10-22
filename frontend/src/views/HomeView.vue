@@ -3,7 +3,7 @@
     <!-- 无当前项目：导演台引导 -->
     <div v-if="!project" class="empty-hero">
       <div class="empty-icon">🎬</div>
-      <h1>AI 动画导演工作台</h1>
+      <h1>NMVideo</h1>
       <p>从剧本到成片：剧本拆分、角色资产、分镜生成、多轨剪辑，一屏完成。</p>
       <div class="empty-actions">
         <button class="btn-primary" @click="$router.push('/projects')">🗂 打开我的作品</button>

@@ -1,9 +1,9 @@
 /**
- * Electron 主进程：AI 动画导演工作台桌面壳
+ * Electron 主进程：NMVideo 桌面壳
  *
  * 职责：
  *  - 无框窗口 + 自定义标题栏（renderer 发 IPC 控制）
- *  - spawn launcher.exe（PyInstaller 单文件，全自动：环境/依赖/模型/起服务）
+ *  - spawn NMVideo.exe（PyInstaller 单文件，全自动：环境/依赖/模型/起服务）
  *    stdout/stderr 实时转发到「终端」面板；解析 [AIVIDEO] STATE=xxx 驱动状态机
  *  - health 轮询兜底：launcher 就绪行之外双保险，ready 后通知 renderer 切应用视图
  *  - electron-updater 自动更新（GitHub Releases，latest.yml）
@@ -22,7 +22,7 @@ const SHELL_FILE = path.join(__dirname, 'renderer', 'index.html')
 // Keep Chromium's sandbox enabled; compatibility failures must be diagnosed explicitly.
 
 const IS_DEV = !app.isPackaged
-const LAUNCHER_EXE = `AI视频工坊-v${require('./package.json').version}.exe`
+const LAUNCHER_EXE = 'NMVideo.exe'
 const APP_PORT_DEFAULT = 8000
 let quitting = false
 
@@ -43,6 +43,8 @@ function runtimeDir() {
     fs.unlinkSync(probe)
     return path.join(base, 'runtime')
   } catch {
+    // 目录名固定为历史值 AI视频工坊：0.1.2 及更早版本的 venv/模型/数据库都在这里，
+    // 跟着产品改名会等于让老用户重装（模型可能十几 GB），所以只改显示名不改数据目录
     return path.join(process.env.LOCALAPPDATA || require('os').homedir(), 'AI视频工坊', 'runtime')
   }
 }
@@ -403,7 +405,7 @@ handle('app:createShortcut', async () => {
   if (process.platform !== 'win32') return { ok: false, error: 'only windows' }
   try {
     const desktop = app.getPath('desktop')
-    const lnk = path.join(desktop, 'AI 动画导演工作台.lnk')
+    const lnk = path.join(desktop, 'NMVideo.lnk')
     const target = process.execPath
     const args = app.isPackaged ? '' : path.join(__dirname, 'main.js')
     const workDir = app.isPackaged ? path.dirname(process.execPath) : __dirname
@@ -416,7 +418,7 @@ handle('app:createShortcut', async () => {
       `$s.Arguments='${quote(args)}';`,
       `$s.WorkingDirectory='${quote(workDir)}';`,
       `$s.IconLocation='${quote(icon)}';`,
-      `$s.Description='AI 动画导演工作台';`,
+      `$s.Description='NMVideo';`,
       `$s.Save()`,
     ].join(' ')
     await new Promise((resolve, reject) => {

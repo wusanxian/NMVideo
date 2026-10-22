@@ -1,6 +1,6 @@
 <template>
   <aside class="sidebar">
-    <div class="logo">🎬 AI 动画导演工作台</div>
+    <div class="logo">🎬 NMVideo</div>
     <nav>
       <a v-for="item in navItems" :key="item.label" class="nav-item"
          :class="{ active: isActive(item) }"

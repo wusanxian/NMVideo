@@ -1,4 +1,4 @@
-# 🎬 AI 视频工坊（aivideo）
+# 🎬 NMVideo
 
 Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.3.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。0.1.3 新增 **FreeVideo H3 引擎**（MiniMax H3 / OpenVDN VDN-H3，8 步采样，8GB 显存起）并设为默认引擎，用户可在生成入口自主切换；同时包含 anime 升级链路钳制修复与画廊目标档位选择。0.1.2 的对白排程与竖屏导出见[实施记录](docs/reports/20261022-short-drama-delivery.md)。
 
@@ -52,7 +52,7 @@ Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/r
 
 ### 方式一：单文件 exe（推荐，任意 Windows 10/11 电脑）
 
-从 `packaging/dist/` 拷贝 **`AI视频工坊-v0.1.3.exe`** 到目标电脑，双击运行，全程自动：
+从 `packaging/dist/` 拷贝 **`NMVideo.exe`** 到目标电脑，双击运行，全程自动：
 
 ```
 探测硬件（显卡/显存/内存/磁盘）
@@ -241,57 +241,8 @@ PNG 序列）开箱即用；把自己从 ComfyUI 导出的 API JSON 整段粘贴
 
 ## API 摘要
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/engines` | 引擎列表与状态（含硬件探测） |
-| GET | `/api/hardware` | 硬件探测结果与 Wan 推荐配置 |
-| GET | `/api/presets` | 质量档位列表 |
-| POST | `/api/jobs` | 创建任务（+preset/preview 字段） |
-| GET | `/api/jobs` | 任务列表 |
-| GET | `/api/jobs/{id}` | 任务详情（含进度/耗时） |
-| GET | `/api/jobs/{id}/metadata` | 读回视频内嵌生成参数 |
-| POST | `/api/jobs/{id}/cancel` | 取消任务 |
-| DELETE | `/api/jobs/{id}` | 删除任务及产物 |
-| GET | `/outputs/{id}.mp4` | 视频文件 |
-| GET/POST | `/api/projects` | 项目列表 / 创建 |
-| GET/PATCH/DELETE | `/api/projects/{id}` | 项目详情 / 改 / 删 |
-| PUT/POST | `/api/projects/{id}/script` `/script/import` | 保存剧本 / AI 拆分重建 |
-| GET/POST | `/api/projects/{id}/scenes` | 场景列表 / 新建 |
-| PATCH/DELETE | `/api/scenes/{id}` | 场景改 / 删 |
-| POST | `/api/scenes/{id}/shots` | 新建分镜 |
-| PATCH/DELETE | `/api/shots/{id}` | 分镜改 / 删 |
-| POST | `/api/shots/{id}/generate` | 分镜发起生成（engine/mode：t2v/i2v/first_last/continuation） |
-| POST | `/api/shots/{id}/review` | 审核（approve/rework + 意见，质检快照留痕） |
-| POST | `/api/shots/{id}/rework` | 返工（cascade=连同后续镜头） |
-| GET | `/api/shots/{id}/quality` | 镜头质量检查 |
-| GET | `/api/shots/{id}/versions` | 候选版本列表 |
-| POST | `/api/shots/{id}/versions/{vid}/adopt` | 采用某版本 |
-| GET/POST | `/api/projects/{id}/characters` | 角色卡列表 / 新建 |
-| PATCH/DELETE | `/api/characters/{id}` | 角色卡改 / 删 |
-| PUT | `/api/shots/{id}/characters` | 分镜绑定/解绑角色 |
-| POST | `/api/uploads` | 上传图片/音频（参考图、音乐、音效） |
-| GET | `/api/tts/voices` | TTS 音色目录（14 个中文神经音色） |
-| POST | `/api/shots/{id}/voice` | 生成对白配音 |
-| DELETE | `/api/voices/{id}` | 删除配音 |
-| GET/POST | `/api/projects/{id}/audio-tracks` | 音乐/音效轨列表 / 新增 |
-| PATCH/DELETE | `/api/audio-tracks/{id}` | 音轨改 / 删 |
-| GET/PUT | `/api/projects/{id}/subtitles` | 字幕列表 / 整轨替换 |
-| POST | `/api/projects/{id}/subtitles/auto` | 从对白自动生成字幕 |
-| GET | `/api/projects/{id}/subtitles/srt` | 导出 SRT |
-| GET | `/api/projects/{id}/timeline` | 时间线片段 |
-| POST | `/api/projects/{id}/timeline/sync` | 同步已通过镜头进时间线 |
-| POST | `/api/projects/{id}/export` | 创建导出（拼接 + 混音 + 字幕烧录） |
-| GET | `/api/exports/{id}` | 导出进度 |
-| GET | `/api/projects/{id}/history` | 审核历史 |
-| GET/PUT/DELETE | `/api/comfy/status` `/api/comfy/workflow` | ComfyUI 状态 / 工作流模板管理 |
-| GET | `/api/comfy/presets` | 内置工作流预设（MiniMax H3 / Wan / AnimateDiff） |
-| POST | `/api/comfy/presets/{id}/apply` | 应用内置预设为当前模板 |
-| GET | `/api/services/status` | 四类模型服务健康状态（ComfyUI/LLM/图像生成/TTS） |
-| GET/PUT | `/api/services/config` `/services/llm` `/services/imagegen` `/services/comfy` | 服务配置读写（key 打码） |
-| POST | `/api/services/llm/test` `/api/services/imagegen/test` | 服务连通测试 |
-| POST | `/api/llm/script` | AI 编剧（梗概 → 标准格式剧本） |
-| POST | `/api/llm/polish` `/api/llm/dialogue` | 提示词优化 / 台词润色 |
-| POST | `/api/imagegen/generate` | 图像生成（参考图/概念图/首帧，落盘 outputs/assets/） |
+完整的 REST API 端点清单（50+ 个，按模块分组：引擎/任务/分镜/角色/配音字幕/ComfyUI/模型服务/AI 编剧）见 [docs/api.md](docs/api.md)。
+本地服务默认运行在 `http://127.0.0.1:8000`；配置类接口返回的密钥字段已打码。
 
 ## 调参建议
 

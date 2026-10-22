@@ -66,7 +66,10 @@ def _setup_output_encoding():
 _setup_output_encoding()
 
 # ---------------- 常量 ----------------
-APP_NAME = "AI视频工坊"
+APP_NAME = "NMVideo"
+# 数据目录名沿用历史值，**不要跟着 APP_NAME 改**：0.1.2 及更早版本把 venv/模型/数据库
+# 落在 %LOCALAPPDATA%\AI视频工坊\runtime，改名等于让老用户丢掉已下载的模型和作品库。
+DATA_DIR_NAME = "AI视频工坊"
 RUNTIME_DIR_NAME = "runtime"
 EMBED_PY_VER = "3.12.8"
 EMBED_PY_URL = f"https://mirrors.huaweicloud.com/python/{EMBED_PY_VER}/python-{EMBED_PY_VER}-embed-amd64.zip"
@@ -359,7 +362,7 @@ def runtime_dir() -> Path:
         return base / RUNTIME_DIR_NAME
     except Exception:
         local = os.environ.get("LOCALAPPDATA") or str(Path.home())
-        return Path(local) / APP_NAME / RUNTIME_DIR_NAME
+        return Path(local) / DATA_DIR_NAME / RUNTIME_DIR_NAME
 
 
 def sync_payload(dest: Path):

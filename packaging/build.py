@@ -3,7 +3,7 @@
 一键构建 Windows 单文件 exe
 
 流程：装 PyInstaller → 组装 payload（backend 源码 + frontend/dist）→ 生成 spec → 构建
-产物：packaging/dist/AI视频工坊-<版本>.exe（约 15MB，含全部程序文件；
+产物：packaging/dist/NMVideo.exe（约 9MB，含全部程序文件；
       torch/模型由 exe 首次运行时按硬件自动安装下载）
 
 用法：
@@ -115,7 +115,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AI视频工坊',
+    name='NMVideo',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -172,12 +172,12 @@ def main():
 
     # 5. 收尾：重命名带版本号，清理中间产物
     # 注意：PyInstaller 的 dist/build 目录相对当前工作目录（项目根）
-    built = pyi_dist / "AI视频工坊.exe"
+    built = pyi_dist / "NMVideo.exe"
     if not built.exists():
         print(f"✘ 未找到构建产物（{built}）")
         sys.exit(1)
     DIST.mkdir(exist_ok=True)
-    final = DIST / f"AI视频工坊-v{VERSION}.exe"
+    final = DIST / "NMVideo.exe"
     shutil.move(str(built), str(final))
     shutil.rmtree(pyi_build, ignore_errors=True)
     shutil.rmtree(pyi_dist, ignore_errors=True)

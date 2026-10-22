@@ -16,7 +16,7 @@
   // ---------------- i18n ----------------
   const I18N = {
     zh: {
-      appName: 'AI 动画导演工作台',
+      appName: 'NMVideo',
       workspace: '你的工作空间',
       workspaceSub: '后台正在忙，完成后可以操作',
       workspaceSubReady: '工作空间已就绪',
@@ -51,7 +51,7 @@
       serviceHint: '不用生成时可关闭本地服务，释放本软件的内存与显存。独立启动的 ComfyUI 需在原窗口关闭。',
     },
     en: {
-      appName: 'AI Anime Director Studio',
+      appName: 'NMVideo',
       workspace: 'Your Workspace',
       workspaceSub: 'Working in the background. Ready soon.',
       workspaceSubReady: 'Workspace is ready',

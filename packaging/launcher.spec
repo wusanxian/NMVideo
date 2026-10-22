@@ -25,7 +25,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AI视频工坊',
+    name='NMVideo',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
