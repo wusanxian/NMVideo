@@ -26,9 +26,18 @@
           </div>
           <div class="gallery-actions">
             <button class="btn" @click="reuse(job)">复用参数</button>
-            <button v-if="job.preview" class="btn btn-primary" :disabled="upgrading === job.id" @click="upgrade(job)">
-              {{ upgrading === job.id ? '提交中…' : (job.preview_kind === 'native' ? '继续二采' : '⬆ 生成高清候选') }}
-            </button>
+            <template v-if="job.preview">
+              <select v-model="upgradePreset" class="sel" :title="upgradeHint">
+                <option value="">沿用原目标</option>
+                <option v-for="p in qualityPresets" :key="p.id" :value="p.id">
+                  {{ p.name }}（{{ p.width }}×{{ p.height }}）
+                </option>
+              </select>
+              <button class="btn btn-primary" :disabled="upgrading === job.id" @click="upgrade(job)">
+                {{ upgrading === job.id ? '提交中…' : (job.preview_kind === 'native' ? '继续二采' : '⬆ 生成高清候选') }}
+              </button>
+            </template>
+            <span v-if="job.upgrade_clamped" class="g-tag g-tag-clamp" :title="job.upgrade_clamped">引擎护栏钳制</span>
             <span v-if="job.parent_job_id" class="g-tag">来源预览 {{ job.parent_job_id }}</span>
             <a class="btn" :href="job.video_url" download>下载</a>
             <button class="btn btn-danger" @click="store.remove(job.id)">删除</button>
@@ -40,7 +49,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { useJobsStore } from '../store/jobs'
@@ -50,6 +59,11 @@ const store = useJobsStore()
 const qualityPresets = ref([])
 const upgrading = ref('')
 const error = ref('')
+const upgradePreset = ref('')
+
+// AnimeDiff 引擎有 32 帧 / 640×640 护栏：升级时自动钳到引擎上限
+const upgradeHint = computed(() =>
+  '选择目标档位；AnimeDiff 引擎上限 32 帧 / 640×640，超出会自动钳制')
 
 function presetName(id) {
   const p = qualityPresets.value.find((q) => q.id === id)
@@ -86,7 +100,7 @@ async function upgrade(job) {
   upgrading.value = job.id
   error.value = ''
   try {
-    await api.upgradeJob(job.id)
+    await api.upgradeJob(job.id, { preset: upgradePreset.value })
     await store.fetch()
     router.push('/queue')
   } catch (e) {
@@ -104,3 +118,20 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.sel {
+  background: var(--bg-input, #1f2430);
+  color: var(--text, #e5e7eb);
+  border: 1px solid var(--border, #374151);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.g-tag-clamp {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  cursor: help;
+}
+</style>

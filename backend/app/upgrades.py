@@ -35,6 +35,27 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
     else:
         raise ValueError("旧预览未保存目标参数，请选择升级质量档位")
     params.update(preview=False, preset=selected, parent_job_id=source["id"])
+    # PR-N08：AnimeDiff 引擎护栏软化——预览可升级到引擎上限内的最大参数
+    #（32 帧 / 640×640 面积），而不是整条升级链路 400 死路。
+    # 其他引擎保持严格校验（normalize_generation 统一拦）。
+    if params.get("engine") == "anime":
+        clamped = []
+        frames = int(params["num_frames"])
+        if frames > 32:
+            clamped.append(f"帧数 {frames}→32")
+            params["num_frames"] = 32
+        area = params["width"] * params["height"]
+        if area > 640 * 640:
+            scale = (640 * 640 / area) ** 0.5
+            new_w = max(256, int(params["width"] * scale) // 8 * 8)
+            new_h = max(256, int(params["height"] * scale) // 8 * 8)
+            while new_w * new_h > 640 * 640 and new_h > 256:
+                new_h -= 8
+            clamped.append(
+                f"分辨率 {params['width']}×{params['height']}→{new_w}×{new_h}")
+            params["width"], params["height"] = new_w, new_h
+        if clamped:
+            params["upgrade_clamped"] = "；".join(clamped)
     params = normalize_generation(params, params)
 
     graph, template = None, None

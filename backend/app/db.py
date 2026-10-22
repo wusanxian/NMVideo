@@ -732,6 +732,19 @@ class Database:
             )
             self._conn.commit()
 
+        # ---------- 第十四批轻量迁移：升级钳制记录（PR-N08） ----------
+        # jobs.upgrade_clamped：升级渲染时若目标参数被引擎护栏钳制
+        # （AnimeDiff 32 帧 / 640×640 面积），记录钳制说明供画廊展示。
+        with self._lock:
+            job_cols = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(jobs)").fetchall()
+            }
+            if "upgrade_clamped" not in job_cols:
+                self._conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN upgrade_clamped TEXT DEFAULT ''")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()
