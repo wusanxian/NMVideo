@@ -1,6 +1,6 @@
 # 🎬 AI 视频工坊（aivideo）
 
-Windows 当前本地构建：**`release/0.1.2/aivideo-desktop-setup-0.1.2.exe`**，双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。0.1.2 增加逐句对白排程、超时末帧延长、按配音时长生成分句字幕和竖屏导出，详见[实施记录](docs/reports/20261022-short-drama-delivery.md)。
+Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.2.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。0.1.2 增加逐句对白排程、超时末帧延长、按配音时长生成分句字幕和竖屏导出，详见[实施记录](docs/reports/20261022-short-drama-delivery.md)。
 
 本地运行的 AI 文生视频生成器，**可插拔引擎架构**。参考 FreeVideo 的低显存设计哲学：硬件自适应（模型选择/量化/卸载全自动）、四档质量、两遍采样、视频自带参数。
 
