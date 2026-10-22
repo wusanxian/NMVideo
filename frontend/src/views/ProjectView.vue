@@ -679,7 +679,8 @@ async function quickGenerate(shot) {
     return
   }
   try {
-    await store.generate(shot.id, { engine: 'h3' })
+    // 快捷生成走默认通道（ComfyUI）；后端按引擎能力校验输入槽位
+    await store.generate(shot.id, { engine: 'comfyui' })
   } catch (e) {
     message.value = e.message
   }

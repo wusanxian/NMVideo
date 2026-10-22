@@ -11,7 +11,7 @@ from . import db as db_module
 from . import hw_probe
 from . import storyboard as sb
 from .config import OUTPUTS_DIR
-from .engines import get_engine
+from .engines import get_engine, is_comfy_engine
 from .engines.base import GenerationCancelled
 from .video import extract_first_frame, frames_to_video, remux_video
 
@@ -90,7 +90,7 @@ class JobQueue:
         for job in self._iter_jobs("running"):
             shot_id = job.get("shot_id") or ""
             prompt_id = job.get("prompt_id") or ""
-            if job.get("engine") == "comfyui" and prompt_id:
+            if is_comfy_engine(job.get("engine")) and prompt_id:
                 state = self._probe_comfy_job(prompt_id, self._comfy_url(job))
                 if state in ("done", "running", "queued"):
                     # ComfyUI 侧任务仍在（或已完成）：重新入队，worker 走
@@ -138,7 +138,7 @@ class JobQueue:
         for job in self._iter_jobs("needs_attention"):
             shot_id = job.get("shot_id") or ""
             prompt_id = job.get("prompt_id") or ""
-            if job.get("engine") == "comfyui" and prompt_id:
+            if is_comfy_engine(job.get("engine")) and prompt_id:
                 state = self._probe_comfy_job(prompt_id, self._comfy_url(job))
                 if state in ("done", "running", "queued"):
                     db_module.db.update_job(
@@ -227,7 +227,8 @@ class JobQueue:
     async def submit(self, params: dict) -> str:
         from .generation import prepare_comfy_workflow, persist_prepared_job
         graph, template = None, None
-        if params["engine"] == "comfyui":
+        # ComfyUI 通道（默认引擎）入队即固化工作流快照；兜底通道不建快照
+        if is_comfy_engine(params["engine"]):
             graph, template = prepare_comfy_workflow(params, output_dir=OUTPUTS_DIR)
         job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR, graph=graph, template=template)
         await self._queue.put(job["id"])
@@ -284,7 +285,9 @@ class JobQueue:
 
         # 引擎实例缓存（模型常驻内存，切任务不重载）
         engine_id = job["engine"]
-        engine_key = (engine_id, self._comfy_url(job)) if engine_id == "comfyui" else engine_id
+        # ComfyUI 通道按 (引擎, 服务地址) 缓存：同一引擎可能连不同服务器；
+        # 兜底通道（进程内推理）没有远端地址，用引擎 id 作键
+        engine_key = (engine_id, self._comfy_url(job)) if is_comfy_engine(engine_id) else engine_id
         try:
             for cached_id, cached in list(self._engine_instances.items()):
                 if cached_id != engine_key and hasattr(cached, "unload"):
@@ -292,8 +295,8 @@ class JobQueue:
                     del self._engine_instances[cached_id]
             if engine_key not in self._engine_instances:
                 engine = get_engine(engine_id)()
-                # 只有 comfyui 引擎需要按任务保存的地址绑定服务（engine_key 是
-                # (id, url) 元组）；本地引擎（anime / wan22 / h3）没有远端地址，
+                # 只有 ComfyUI 通道需要按任务保存的地址绑定服务（engine_key 是
+                # (id, url) 元组）；兜底通道（anime / wan22 / h3）没有远端地址，
                 # 早先这里对所有带 bind_server 的引擎取 engine_key[1]，对字符串
                 # "h3" 会取到 "3"——判断类型后再绑，避免把引擎绑到错误地址。
                 if isinstance(engine_key, tuple) and hasattr(engine, "bind_server"):
@@ -342,7 +345,7 @@ class JobQueue:
         resume_prompt_id = ""
         resume_client_id = ""
         workflow_snapshot = ""
-        if job.get("engine") == "comfyui":
+        if is_comfy_engine(job.get("engine")):
             resume_prompt_id = job.get("prompt_id") or ""
             # P0-01：提交时持久化的 client_id——恢复后续 WS 进度；
             # 老任务没有该列，为空走轮询（兼容旧行为）
@@ -379,7 +382,7 @@ class JobQueue:
                 raise GenerationCancelled()
         except GenerationCancelled:
             note = ("已取消（ComfyUI 任务可能仍在远端执行）"
-                    if engine_id == "comfyui" else "已取消")
+                    if is_comfy_engine(engine_id) else "已取消")
             db_module.db.cancel_job(job_id, note=note)
             self._cancelled.discard(job_id)
             return
@@ -519,7 +522,7 @@ class JobQueue:
             "parent_job_id": job.get("parent_job_id") or "",
             "generation_inputs": json.loads(job.get("generation_inputs") or "[]"),
             "characters": json.loads(job.get("characters_snapshot") or "[]"),
-            "hardware": ("ComfyUI 外部执行，资源由服务端管理" if job["engine"] == "comfyui"
+            "hardware": ("ComfyUI 外部执行，资源由服务端管理" if is_comfy_engine(job["engine"])
                          else f"{hw['gpu_name']} | {hw['quant']} | {hw['offload']}"),
         }
 

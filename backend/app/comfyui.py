@@ -420,8 +420,8 @@ def load_workflow_template() -> dict:
 def load_preset_template(preset_id: str) -> dict:
     """只读加载内置预设（不改动当前模板 default.json）。
 
-    与 apply_preset 的区别：apply 会覆盖全局当前模板，本函数仅按需
-    读取——供按引擎自动路由模板使用（h3 引擎固定走 FreeVideo 预设）。
+    与 apply_preset 的区别：apply 会覆盖全局当前模板，本函数仅按需读取——
+    供引擎按 ``EngineMeta.workflow_presets`` 声明式路由（见 resolve_template_for）。
     """
     path = PRESETS_DIR / f"{preset_id}.json"
     if not path.exists():
@@ -435,30 +435,30 @@ def load_preset_template(preset_id: str) -> dict:
     return data
 
 
-# h3 引擎（FreeVideo VDN-H3）按模式路由到对应内置预设：
-# 续接（continuation）在 FreeVideo 侧就是以末帧为首帧的 i2v 输入。
-_H3_PRESET_BY_MODE = {
-    "t2v": "freevideo_h3_t2v",
-    "i2v": "freevideo_h3_i2v",
-    "continuation": "freevideo_h3_i2v",
-    "first_last": "freevideo_h3_first_last",
-}
+# 内置预设不再按引擎 id 硬编码路由：引擎用 EngineMeta.workflow_presets 声明
+# 自己在各模式下用哪张内置工作流图（见 engines/base.py）。FreeVideo 的
+# freevideo_h3_* 只是「可选工作流之一」——用户在「ComfyUI 设置」里 apply 即可，
+# 与引擎身份解耦：装了 FreeVideo 插件的人能用，没装的人缺节点时会被
+# workflow_capabilities 在提交前如实阻断。
 
 
 def resolve_template_for(engine_id: str, mode: str = "t2v") -> dict:
-    """按引擎解析 ComfyUI 工作流模板。
+    """按引擎声明的 workflow_presets 解析 ComfyUI 工作流模板。
 
-    - h3：固定使用 freevideo_h3_{t2v,i2v,first_last} 内置预设，与「当前模板」
-      解耦，用户在 ComfySetupView 里 apply 了别的模板也不影响。
-      **注意**：h3 引擎自 0.1.4 起改为 diffusers 原生推理（见 engines/h3.py），
-      不再经 ComfyUI 执行；`prepare_comfy_workflow` 只在 ``engine == "comfyui"``
-      时调用，所以这个分支只覆盖「显式选 comfyui 引擎 + FreeVideo 预设」的路径。
-      预设文件刻意保留：装了 FreeVideo 插件的用户仍可走 ComfyUI 路线。
-    - 其他引擎（comfyui/anime/wan22）：沿用当前模板（历史行为不变）。
+    - 引擎声明了 ``workflow_presets``：按模式取内置预设（只读加载，不覆盖
+      用户当前模板），与「当前模板」解耦——用户在 ComfyUI 设置里 apply 了
+      别的图也不影响该引擎的契约。
+    - 未声明（默认 ComfyUI 引擎就是这种情况）：沿用用户当前模板，历史行为不变。
+
+    延迟导入 ENGINES 以避免 comfyui <-> engines 的循环依赖。
     """
-    if engine_id == "h3":
-        preset = _H3_PRESET_BY_MODE.get(mode or "t2v", "freevideo_h3_t2v")
-        return load_preset_template(preset)
+    from .engines import ENGINES
+
+    meta = getattr(ENGINES.get(engine_id or ""), "meta", None)
+    presets = getattr(meta, "workflow_presets", None) or {}
+    preset_id = presets.get(mode or "t2v") or presets.get("t2v")
+    if preset_id:
+        return load_preset_template(preset_id)
     return load_workflow_template()
 
 

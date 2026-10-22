@@ -37,6 +37,8 @@ class WanEngine(BaseEngine):
         name="Wan 2.2 文生视频",
         description="开源画质标杆 · 8GB 显存可跑（offload+量化）· 最高 720p",
         status="ready",
+        # 兜底通道：进程内推理，仅 ComfyUI 不可用时使用（非默认引擎）
+        execution_channel="native",
     )
 
     _pipe = None

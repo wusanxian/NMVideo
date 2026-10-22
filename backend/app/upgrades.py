@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from .comfyui import build_shot_workflow, verify_snapshot_payload
+from .engines import is_comfy_engine
 from .quality import QUALITY_PRESETS, normalize_generation
 
 
@@ -59,7 +60,8 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
     params = normalize_generation(params, params)
 
     graph, template = None, None
-    if source["engine"] == "comfyui":
+    # 只有 ComfyUI 通道有工作流快照可复用；兜底通道按原参数重新生成
+    if is_comfy_engine(source["engine"]):
         path = Path(source.get("workflow_snapshot") or "")
         if not path.is_file():
             raise ValueError("原预览的工作流快照缺失，无法保留原输入；请恢复快照")

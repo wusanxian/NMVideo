@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .. import db as db_module
 from .. import storyboard as sb
 from ..config import OUTPUTS_DIR
-from ..engines import ENGINES
+from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine
 from ..generation import prepare_comfy_workflow, persist_prepared_job
 from ..comfyui import ComfyUIError
 from ..quality import normalize_generation
@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 class JobCreate(BaseModel):
-    engine: str = "h3"
+    # 默认引擎 = ComfyUI 通道（架构口径：ComfyUI 是唯一视频生成底座）
+    engine: str = DEFAULT_ENGINE_ID
     prompt: str = Field(..., min_length=1, max_length=4000)
     negative_prompt: str = ""
     # 范围覆盖 Wan 2.2 与 MiniMax H3（720p 竖屏 / 1344×768 画布）；各引擎内部按自身约束吸附
@@ -54,7 +55,9 @@ async def create_job(data: JobCreate):
         params["seed"] = random.randint(0, 2**31 - 1)
     graph, template = None, None
     try:
-        if params["engine"] == "comfyui":
+        # ComfyUI 通道（默认引擎，以及未来任何声明 execution_channel=comfyui 的
+        # 引擎）都必须在入队前固化工作流快照；兜底通道不产生 ComfyUI 任务。
+        if is_comfy_engine(params["engine"]):
             graph, template = prepare_comfy_workflow(params, output_dir=OUTPUTS_DIR)
         job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR, graph=graph, template=template)
     except (ValueError, ComfyUIError) as exc:

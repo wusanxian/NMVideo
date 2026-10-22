@@ -200,7 +200,9 @@ const message = ref('')
 const activePreset = ref('')
 
 const form = reactive({
-  engine: 'h3',
+  // 默认引擎 = ComfyUI 通道（架构口径：ComfyUI 是唯一视频生成底座）。
+  // ComfyUI 未连接时由 onMounted 的可用性检查自动降级到兜底引擎。
+  engine: 'comfyui',
   prompt: '',
   negative_prompt: 'worst quality, low quality, blurry, watermark, signature',
   width: 512,
@@ -267,10 +269,10 @@ async function submit() {
 onMounted(async () => {
   try {
     engines.value = await api.engines()
-    // 默认引擎是 h3（MiniMax H3 原生推理），需要 NVIDIA 显卡 + 139GB 模型。
-    // 本机不具备时自动切到第一个可用引擎，避免一打开就停在不可用引擎上。
+    // 默认引擎是 ComfyUI（唯一视频生成底座）。ComfyUI 未连接时自动切到第一个
+    // 可用引擎（anime / wan22 / h3 属本机兜底通道），避免一打开就停在不可用引擎上。
     const current = engines.value.find((e) => e.id === form.engine)
-    if (current && current.status !== 'ready') {
+    if (!current || current.status !== 'ready') {
       const usable = engines.value.find((e) => e.status === 'ready')
       if (usable) form.engine = usable.id
     }

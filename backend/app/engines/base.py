@@ -1,8 +1,15 @@
 """引擎抽象基类：所有视频生成引擎实现同一接口，可插拔"""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
+
+# 执行通道：项目以 ComfyUI 为唯一视频生成底座（2026-10-22 架构口径）。
+# 引擎只描述「用哪张工作流图 + 支持哪些输入槽位」，不在 NMVideo 进程内加载
+# 视频模型；进程内推理（anime/wan/h3）属于历史通道，仅作 ComfyUI 不可用时的
+# 兜底，不再作为默认引擎，也不承诺与 ComfyUI 路径同参数同结果。
+EXECUTION_COMFY = "comfyui"
+EXECUTION_NATIVE = "native"
 
 
 @dataclass
@@ -13,6 +20,11 @@ class EngineMeta:
     status: str = "ready"  # ready / unavailable
     note: str = ""
     supported_modes: tuple = ("t2v",)
+    # 执行通道：comfyui（默认）/ native（兜底）
+    execution_channel: str = EXECUTION_NATIVE
+    # 走 ComfyUI 时按模式声明的内置预设 id（mode -> preset_id）。
+    # 为空表示使用用户在「ComfyUI 设置」里 apply 的当前模板。
+    workflow_presets: dict = field(default_factory=dict)
 
 
 class EngineUnavailable(Exception):

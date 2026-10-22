@@ -52,6 +52,8 @@ class ComfyEngine(BaseEngine):
         status="ready",
         note="",
         supported_modes=("t2v", "i2v", "first_last", "continuation"),
+        # 默认通道：ComfyUI 是唯一视频生成底座
+        execution_channel="comfyui",
     )
 
     def __init__(self):

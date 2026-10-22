@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from .. import novel as novel_mod
 from .. import novel_submit as submit_mod
+from ..engines import DEFAULT_ENGINE_ID
 
 sp_router = APIRouter(prefix="/api/novels/{novel_id}", tags=["novel-submit"])
 
@@ -30,7 +31,7 @@ def _run(fn, *args, **kwargs):
 class SubmitCreate(BaseModel):
     kind: str = Field("preview", pattern="^(preview|final)$")
     quality: str = Field("draft", pattern="^(draft|standard|high)$")
-    engine: str = "h3"
+    engine: str = DEFAULT_ENGINE_ID
     # 可选：只提交部分镜头（默认全部已审核镜头）
     shot_item_ids: Optional[list] = None
     # 预算闸：预计总耗时超过上限 → 400 阻断（秒）

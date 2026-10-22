@@ -100,10 +100,10 @@
             <option value="standard">标准档</option>
             <option value="high">精细档</option>
           </select>
-          <select v-model="submitForm.engine" class="sel" title="AnimeDiff 仅支持文生视频；FreeVideo H3 需在 ComfyUI 安装 FreeVideo 插件（8GB 显存起步）">
-            <option value="anime">AnimeDiff（本机）</option>
-            <option value="comfyui">ComfyUI 工作流</option>
-            <option value="h3">MiniMax H3（原生推理，无需插件）</option>
+          <select v-model="submitForm.engine" class="sel" title="ComfyUI 是默认生成通道；AnimeDiff / MiniMax H3 属本机兜底通道，仅在 ComfyUI 不可用时使用">
+            <option value="comfyui">ComfyUI 工作流（默认）</option>
+            <option value="anime">AnimeDiff（本机兜底）</option>
+            <option value="h3">MiniMax H3（原生推理·兜底）</option>
           </select>
           <button class="btn btn-primary" :disabled="submitting" @click="submitBatch">
             {{ submitting ? '提交中…' : (submitForm.kind === 'preview' ? '▶ 提交预览批次' : '▶ 提交正式批次') }}
@@ -278,7 +278,7 @@ const editForm = ref({})
 // PR-N05：提交批次
 const submissions = ref([])
 const submitting = ref(false)
-const submitForm = ref({ kind: 'preview', quality: 'draft', engine: 'h3' })
+const submitForm = ref({ kind: 'preview', quality: 'draft', engine: 'comfyui' })
 let pollTimer = null
 
 // PR-N06：一致性校验

@@ -66,6 +66,10 @@ class H3Engine(BaseEngine):
         ),
         status="ready",
         supported_modes=("t2v", "i2v", "first_last", "continuation"),
+        # 兜底通道：进程内推理，仅 ComfyUI 不可用时使用（非默认引擎）。
+        # 架构口径要求 H3 最终也走 ComfyUI 工作流；本实现保留是为了不破坏
+        # 已产出的历史结果，不再作为默认引擎。
+        execution_channel="native",
     )
 
     _pipe = None

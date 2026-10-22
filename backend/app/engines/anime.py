@@ -36,6 +36,8 @@ class AnimeEngine(BaseEngine):
         name="AnimeDiff 动漫引擎",
         description="dreamlike-anime 动漫底模 + AnimateDiff v3 · CPU/GPU 自适应 · 512x512",
         status="ready",
+        # 兜底通道：进程内推理，仅 ComfyUI 不可用时使用（非默认引擎）
+        execution_channel="native",
     )
 
     _pipe = None

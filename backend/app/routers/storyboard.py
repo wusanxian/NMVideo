@@ -17,7 +17,7 @@ from ..comfyui import (
     save_workflow_template,
 )
 from ..config import OUTPUTS_DIR
-from ..engines import ENGINES, validate_engine_mode
+from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine, validate_engine_mode
 from ..quality import normalize_generation
 from ..generation import prepare_comfy_workflow, persist_prepared_job
 from .. import db as db_module
@@ -104,7 +104,8 @@ class ShotUpdate(BaseModel):
 
 
 class ShotGenerate(BaseModel):
-    engine: str = "h3"
+    # 默认引擎 = ComfyUI 通道（架构口径：ComfyUI 是唯一视频生成底座）
+    engine: str = DEFAULT_ENGINE_ID
     width: int = Field(512, ge=256, le=1344)
     height: int = Field(512, ge=256, le=1344)
     num_frames: int = Field(16, ge=8, le=121)
@@ -444,7 +445,8 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
 
     graph, template = None, None
     try:
-        if data.engine == "comfyui":
+        # ComfyUI 通道：入队前固化工作流快照（兜底通道不产生 ComfyUI 任务）
+        if is_comfy_engine(data.engine):
             graph, template = prepare_comfy_workflow(params, output_dir=OUTPUTS_DIR)
         job = persist_prepared_job(db_module.db, params, OUTPUTS_DIR,
                                    graph=graph, template=template)

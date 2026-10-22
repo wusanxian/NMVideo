@@ -1,24 +1,54 @@
-"""引擎注册表"""
+"""引擎注册表
+
+架构口径（2026-10-22）：**ComfyUI 是唯一视频生成底座**。所有生成都经
+ComfyUI（/prompt + WS 进度 + history 对账 + 产物归档）执行，NMVideo 只做
+编排、资产、版本、剪辑、导出。FreeVideo 仅作为产品能力的参考对象（能力
+描述、首尾帧双槽、多参考图、预览转正、队列状态），不复制其运行时，也不把
+它的插件节点当作引擎身份——`freevideo_h3_*` 只是「可选工作流之一」。
+
+所以注册表按执行通道排序：ComfyUI 通道在前且是默认引擎；进程内推理的
+anime / wan22 / h3 退为 fallback（历史通道，ComfyUI 不可用时才用）。
+"""
 from .anime import AnimeEngine
-from .base import BaseEngine, EngineMeta, EngineUnavailable, GenerationCancelled
+from .base import (
+    EXECUTION_COMFY,
+    EXECUTION_NATIVE,
+    BaseEngine,
+    EngineMeta,
+    EngineUnavailable,
+    GenerationCancelled,
+)
 from .comfy import ComfyEngine
 from .h3 import H3Engine
 from .wan import WanEngine
 
 ENGINES: dict = {
-    # h3 置于首位：默认引擎（MiniMax H3 / VDN-H3 8 步蒸馏），由 diffusers
-    # ModularPipeline 原生推理——不需要 ComfyUI，也不需要 FreeVideo 插件
+    # 默认通道：提交 ComfyUI 工作流，模型与节点由 ComfyUI 侧管理
+    ComfyEngine.meta.id: ComfyEngine,
+    # ---- 以下为兜底通道（进程内推理，非默认） ----
     H3Engine.meta.id: H3Engine,
     AnimeEngine.meta.id: AnimeEngine,
     WanEngine.meta.id: WanEngine,
-    ComfyEngine.meta.id: ComfyEngine,
 }
+
+# 默认引擎：ComfyUI 通道
+DEFAULT_ENGINE_ID = ComfyEngine.meta.id
 
 
 def get_engine(engine_id: str):
     if engine_id not in ENGINES:
         raise EngineUnavailable(f"未知引擎: {engine_id}")
     return ENGINES[engine_id]
+
+
+def is_comfy_engine(engine_id: str) -> bool:
+    """是否经 ComfyUI 执行（含未来新增的 ComfyUI 通道引擎）。
+
+    未知引擎一律返回 False——重启恢复要能安全处理已下线引擎的历史任务，
+    不能因为查表抛异常把整个恢复流程打断。
+    """
+    meta = getattr(ENGINES.get(engine_id or ""), "meta", None)
+    return getattr(meta, "execution_channel", "") == EXECUTION_COMFY
 
 
 def list_engines() -> list:
@@ -38,7 +68,11 @@ def list_engines() -> list:
                 }
             )
     for item in out:
-        item["supported_modes"] = list(ENGINES[item["id"]].meta.supported_modes)
+        meta = ENGINES[item["id"]].meta
+        item["supported_modes"] = list(meta.supported_modes)
+        # 前端据此区分默认通道 / 兜底通道，不把兜底引擎当首选
+        item["execution_channel"] = getattr(meta, "execution_channel", EXECUTION_NATIVE)
+        item["is_default"] = item["id"] == DEFAULT_ENGINE_ID
     return out
 
 
@@ -50,10 +84,15 @@ def validate_engine_mode(engine_id: str, mode: str) -> None:
 
 __all__ = [
     "ENGINES",
+    "DEFAULT_ENGINE_ID",
+    "EXECUTION_COMFY",
+    "EXECUTION_NATIVE",
     "BaseEngine",
     "EngineMeta",
     "EngineUnavailable",
     "GenerationCancelled",
     "get_engine",
+    "is_comfy_engine",
     "list_engines",
+    "validate_engine_mode",
 ]

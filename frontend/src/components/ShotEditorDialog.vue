@@ -388,19 +388,20 @@ const form = reactive({
 })
 
 const genForm = reactive({
-  engine: 'h3',
+  // 默认走 ComfyUI 通道；不可用时由下方 watch 自动降级到兜底引擎
+  engine: 'comfyui',
   width: 512, height: 512,
   num_frames: 16, fps: 8, steps: 25, guidance: 7.5,
   seed: -1, preset: '', preview: false,
   use_character_images: true, use_character_lora: true,
 })
 
-// 默认引擎 h3（MiniMax H3 原生推理）需要 NVIDIA 显卡 + 139GB 模型：
-// 本机不具备时自动降级到第一个可用引擎，别让用户对着不可用卡片发呆。
+// 默认引擎是 ComfyUI（唯一视频生成底座）；ComfyUI 未连接时自动降级到第一个
+// 可用引擎（anime/wan22/h3 属兜底通道），别让用户对着不可用卡片发呆。
 watch(() => props.engines, (list) => {
   if (!list || !list.length) return
   const current = list.find((e) => e.id === genForm.engine)
-  if (current && current.status !== 'ready') {
+  if (!current || current.status !== 'ready') {
     const usable = list.find((e) => e.status === 'ready')
     if (usable) genForm.engine = usable.id
   }
