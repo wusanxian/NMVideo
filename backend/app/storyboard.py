@@ -324,10 +324,14 @@ def update_shot(shot_id: str, **fields) -> Optional[dict]:
         "character_ids", "mode", "continue_from", "review_stage",
         # PR-02：独立首/尾帧与续接来源版本（URL 字符串，兼容旧 reference_image）
         "first_frame_image", "last_frame_image", "source_video_version_id",
+        # PR-08 后半：多参考图（JSON 字符串数组，单槽 reference_image 兼容不变）
+        "reference_images",
     }
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "character_ids" in fields and not isinstance(fields["character_ids"], str):
         fields["character_ids"] = json.dumps(fields["character_ids"])
+    if "reference_images" in fields and not isinstance(fields["reference_images"], str):
+        fields["reference_images"] = json.dumps(fields["reference_images"])
     if not fields:
         return get_shot(shot_id)
     fields["updated_at"] = _utcnow()

@@ -92,4 +92,37 @@ def normalize_generation(defaults: dict, explicit: dict) -> dict:
         from .engines.h3 import H3Engine
         params["width"], params["height"] = H3Engine.normalize_size(
             int(params["width"]), int(params["height"]))
+
+    # ---- 多参考图（改造.md PR-08 后半）：归一为 JSON 字符串数组 ----
+    # 单槽 reference_image 完全兼容：本字段只承载「额外的」参考图。
+    # 上限 4 张、超限明确拒绝（不默默丢弃）；存储口径与 characters_snapshot
+    # 一致用 JSON 字符串（jobs.create_job 按 params key 建列插入）。
+    MAX_REFERENCE_IMAGES = 4
+    refs = params.get("reference_images")
+    if refs in (None, "", []):
+        params["reference_images"] = "[]"
+    else:
+        if isinstance(refs, str):
+            # 升级路径会把已序列化的 JSON 字符串原样带回——解析后重新校验
+            try:
+                refs = json.loads(refs)
+            except (TypeError, ValueError):
+                raise ValueError("reference_images 存档格式无效（应为 JSON 数组）")
+            if not isinstance(refs, list):
+                raise ValueError("reference_images 存档格式无效（应为 JSON 数组）")
+        if not isinstance(refs, (list, tuple)):
+            raise ValueError("reference_images 必须是图片 URL 数组")
+        cleaned = []
+        for item in refs:
+            if item is None:
+                continue  # UI 空槽位
+            if not isinstance(item, str):
+                raise ValueError("reference_images 每一项必须是图片 URL 字符串")
+            item = item.strip()
+            if item and item not in cleaned:
+                cleaned.append(item)
+        if len(cleaned) > MAX_REFERENCE_IMAGES:
+            raise ValueError(
+                f"参考图最多 {MAX_REFERENCE_IMAGES} 张（含主参考图外额外的多参考），当前 {len(cleaned)} 张")
+        params["reference_images"] = json.dumps(cleaned, ensure_ascii=False)
     return params

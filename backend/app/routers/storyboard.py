@@ -101,6 +101,8 @@ class ShotUpdate(BaseModel):
     # PR-02：独立首/尾帧（first_last 模式分别注入工作流首/尾帧节点）
     first_frame_image: Optional[str] = None
     last_frame_image: Optional[str] = None
+    # PR-08 后半：多参考图（额外参考图 URL 数组，≤4 张；与单槽 reference_image 共存）
+    reference_images: Optional[list] = None
 
 
 class ShotGenerate(BaseModel):
@@ -434,6 +436,9 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["first_frame_image"] = first_frame
     params["last_frame_image"] = last_frame
     params["source_video_version_id"] = source_version_id
+    # PR-08 后半：多参考图入队冻结（shot 上保存的 JSON 数组；normalize 已校验过
+    # 单槽语义，这里只透传 shot 的存档值——与首尾帧同源，保证可复现）
+    params["reference_images"] = shot.get("reference_images") or "[]"
     # PR-04：入队即冻结角色卡快照（生成时 compose_prompt 所用的角色数据）——
     # 之后修改角色卡不影响本任务的复现语义；完成后随版本存档（角色版本锁定）
     params["characters_snapshot"] = json.dumps([

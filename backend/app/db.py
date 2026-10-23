@@ -745,6 +745,27 @@ class Database:
                     "ALTER TABLE jobs ADD COLUMN upgrade_clamped TEXT DEFAULT ''")
             self._conn.commit()
 
+        # ---------- 第十五批轻量迁移：镜头多参考图（改造.md PR-08 后半） ----------
+        # shots.reference_images：JSON 字符串数组（多张参考图 URL，最多 4 张）。
+        # 旧 reference_image 单槽完全兼容——不迁移数据，单图继续走 reference_image。
+        # jobs.reference_images：入队冻结的多参考快照（可复现语义与首尾帧一致）。
+        with self._lock:
+            shot_cols15 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(shots)").fetchall()
+            }
+            if "reference_images" not in shot_cols15:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN reference_images TEXT DEFAULT '[]'")
+            job_cols15 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(jobs)").fetchall()
+            }
+            if "reference_images" not in job_cols15:
+                self._conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN reference_images TEXT DEFAULT '[]'")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()

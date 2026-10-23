@@ -15,6 +15,7 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
         "fps", "steps", "guidance", "seed", "shot_id", "reference_image", "mode",
         "first_frame_image", "last_frame_image", "continue_from",
         "source_video_version_id", "characters_snapshot",
+        "reference_images",  # PR-08 后半：升级保留多参考快照（JSON 字符串）
         "generation_inputs", "comfy_url",
         "use_character_images", "use_character_lora",
     )

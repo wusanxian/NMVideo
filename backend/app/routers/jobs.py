@@ -26,6 +26,8 @@ class JobCreate(BaseModel):
     engine: str = DEFAULT_ENGINE_ID
     prompt: str = Field(..., min_length=1, max_length=4000)
     negative_prompt: str = ""
+    # PR-08 后半：多参考图（额外参考图 URL 数组，≤4 张；normalize 校验后冻结为 JSON）
+    reference_images: Optional[list] = None
     # 范围覆盖 Wan 2.2 与 MiniMax H3（720p 竖屏 / 1344×768 画布）；各引擎内部按自身约束吸附
     width: int = Field(512, ge=256, le=1344)
     height: int = Field(512, ge=256, le=1344)

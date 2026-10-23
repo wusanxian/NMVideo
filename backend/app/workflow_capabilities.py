@@ -23,6 +23,7 @@ requires/mode 字段并存，只加字段不改旧值）::
   如实报告「无法探测」，生成侧不因探测失败而拦截（后续提交自然失败）
 """
 import json
+import re
 from typing import Optional
 
 SUPPORTED_MODES = ("t2v", "i2v", "first_last", "continuation")
@@ -57,6 +58,13 @@ def capability_from_template(template: dict) -> Optional[dict]:
         min_vram = float(meta.get("min_vram_gb") or 0)
     except (TypeError, ValueError):
         min_vram = 0.0
+    # 多参考图容量（PR-08 后半）：从 _aivideo_map 的 reference_image_N 附加槽位
+    # 自推导——模板映射了几个附加槽就支持几张额外参考图（不含主参考图槽）。
+    mapping = template.get("_aivideo_map") or {}
+    extra_slots = [
+        k for k in mapping
+        if isinstance(k, str) and re.fullmatch(r"reference_image_\d+", k)
+    ]
     return {
         "name": str(meta.get("name") or ""),
         "execution_kind": kind,
@@ -70,6 +78,7 @@ def capability_from_template(template: dict) -> Optional[dict]:
         "native_preview": bool(meta.get("native_preview")),
         "character_images": bool(meta.get("character_images")),
         "character_lora": bool(meta.get("character_lora")),
+        "max_reference_images": 1 + len(extra_slots),
     }
 
 

@@ -1,6 +1,7 @@
 """生成准备与持久化：在任务可执行之前固定参数、图片条件和工作流。"""
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 
@@ -81,6 +82,38 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
                 except Exception as exc:
                     raise ValueError(f"参考图上传 ComfyUI 失败: {exc}") from exc
             inject[key] = uploaded[url]
+
+    # ---- 多参考图（改造.md PR-08 后半）：注入模板声明的 reference_image_N 槽位 ----
+    # 模板 _aivideo_map 里映射了 reference_image_2..N 即声明支持对应数量的额外
+    # 参考图；给多了明确拒绝（不默默丢弃），模板不支持时同样阻断。
+    extra_refs = params.get("reference_images") or "[]"
+    if isinstance(extra_refs, str):
+        try:
+            extra_refs = json.loads(extra_refs)
+        except (TypeError, ValueError):
+            raise ValueError("reference_images 存档格式无效（应为 JSON 数组）")
+    if extra_refs:
+        extra_slots = [k for k in mapping if re.fullmatch(r"reference_image_\d+", k)]
+        if not extra_slots:
+            raise ValueError(
+                "当前工作流模板不支持多参考图（未映射 reference_image_2+ 槽位）；"
+                f"但提交了 {len(extra_refs)} 张额外参考图")
+        usable = len(extra_slots) + 1  # 主参考图占 1 个槽
+        if len(extra_refs) > len(extra_slots):
+            raise ValueError(
+                f"当前工作流模板最多支持 {usable} 张参考图（额外槽位 {len(extra_slots)} 个），"
+                f"提交了 {len(extra_refs) + 1} 张")
+        for i, url in enumerate(extra_refs, start=2):
+            slot = f"reference_image_{i}"
+            if not mapping.get(slot):
+                break  # 槽位不连续时停止（模板只映射到 reference_image_2 之类）
+            if url not in uploaded:
+                try:
+                    uploaded[url] = upload_condition(params, client, url, slot, output_dir)
+                except Exception as exc:
+                    raise ValueError(f"多参考图上传 ComfyUI 失败: {exc}") from exc
+            inject[slot] = uploaded[url]
+
     graph = comfyui.build_shot_workflow(inject, template=template)
     if native:
         graph = freevideo.attach_characters(graph, params, client,

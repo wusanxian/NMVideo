@@ -98,6 +98,22 @@
                 <input type="file" accept="image/*" hidden @change="onFrameUpload($event, 'reference_image')" />
               </label>
             </div>
+            <!-- PR-08 后半：多参考图（额外参考，最多 4 张；工作流需映射对应槽位，
+                 不支持时生成会明确提示而不是忽略） -->
+            <div v-for="(ref, i) in form.reference_images" :key="i" class="ref-input-row" style="margin-top: 6px">
+              <input type="text" v-model="form.reference_images[i]" :placeholder="`参考图 ${i + 2}`" />
+              <label class="btn upload-btn">
+                上传
+                <input type="file" accept="image/*" hidden @change="onMultiRefUpload($event, i)" />
+              </label>
+              <button type="button" class="btn" @click="form.reference_images.splice(i, 1)">移除</button>
+            </div>
+            <button
+              v-if="form.reference_images.length < 4"
+              type="button" class="btn" style="margin-top: 6px" @click="form.reference_images.push('')">
+              + 添加参考图（{{ form.reference_images.length }}/4）
+            </button>
+            <p v-else class="comfy-hint">已达多参考图上限（4 张）。实际可用数量取决于工作流映射的 reference_image_N 槽位。</p>
           </div>
 
           <!-- 首尾帧（PR-02）：首帧与尾帧分别独立输入，分别注入工作流首/尾帧节点 -->
@@ -369,6 +385,17 @@ const RATES = [
 const saving = ref(false)
 const errMsg = ref('')
 
+function _parseRefList(value) {
+  if (Array.isArray(value)) return value.filter((v) => typeof v === 'string')
+  if (typeof value === 'string' && value) {
+    try {
+      const arr = JSON.parse(value)
+      return Array.isArray(arr) ? arr.filter((v) => typeof v === 'string') : []
+    } catch { /* 旧数据脏值按空处理 */ }
+  }
+  return []
+}
+
 const form = reactive({
   title: props.shot.title || '',
   dialogue: props.shot.dialogue || '',
@@ -376,6 +403,9 @@ const form = reactive({
   camera_movement: props.shot.camera_movement || '固定',
   duration_s: props.shot.duration_s || 3,
   reference_image: props.shot.reference_image || '',
+  // PR-08 后半：多参考图（shot 存 JSON 字符串，编辑态转数组；保存时数组原样
+  // 提交，后端 ShotUpdate 会 json.dumps 存回）
+  reference_images: _parseRefList(props.shot.reference_images),
   // PR-02：独立首/尾帧。旧 first_last 只有一张参考图 → 预填为首帧，用户可见可改
   first_frame_image: props.shot.first_frame_image
     || (props.shot.mode === 'first_last' ? (props.shot.reference_image || '') : ''),
@@ -518,6 +548,18 @@ async function onFrameUpload(e, field) {
   try {
     const r = await api.uploadFile(file)
     form[field] = r.url
+  } catch (err) {
+    errMsg.value = err.message
+  }
+  e.target.value = ''
+}
+
+async function onMultiRefUpload(e, idx) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const r = await api.uploadFile(file)
+    form.reference_images[idx] = r.url
   } catch (err) {
     errMsg.value = err.message
   }
