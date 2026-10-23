@@ -33,6 +33,7 @@ from typing import List
 from .base import BaseEngine, EngineMeta, EngineUnavailable, GenerationCancelled
 from ..config import HF_CACHE_DIR
 from .. import hw_probe
+from . import h3_quant
 
 # 仓库与本地缓存（config 已把 HF_HOME 指到 models/hf-cache，不占 C 盘用户目录）
 MODEL_REPO = "OpenVDN/vdn-minimax-h3"
@@ -62,7 +63,8 @@ class H3Engine(BaseEngine):
         name="MiniMax H3（VDN-H3 原生）",
         description=(
             "MiniMax H3 本机直连推理 · 8 步出片 · 无需 ComfyUI / FreeVideo 插件 · "
-            f"需 NVIDIA 显卡（16GB 显存起，24GB 更稳）· 模型约 {SIZE_TOTAL:.0f}GB"
+            "需 NVIDIA 显卡（int8 约需 80GB 内存；int4 实验档约需 52GB 内存）· "
+            f"模型约 {SIZE_TOTAL:.0f}GB"
         ),
         status="ready",
         supported_modes=("t2v", "i2v", "first_last", "continuation"),
@@ -132,13 +134,13 @@ class H3Engine(BaseEngine):
                 ),
                 "hardware": profile.to_dict(),
             }
-        if profile.vram_gb < 10:
+        strategy = self._strategy(profile)
+        plan = strategy["plan"]
+        if not plan.available:
             return {
                 **base, "status": "unavailable",
-                "note": (
-                    f"显存 {profile.vram_gb:.0f}GB 不足：diffusers 原生路径最低约 10GB"
-                    "（24GB 跑满 345 帧峰值约 22GB，fp8 约 20GB）。"
-                ),
+                "note": plan.reason,
+                "plan": plan.to_dict(),
                 "hardware": profile.to_dict(),
             }
         ok, missing = self.model_ready()
@@ -150,33 +152,46 @@ class H3Engine(BaseEngine):
                     f"  python scripts/download_models.py --h3\n"
                     f"或在「模型与设置」里点「下载 H3 模型」。"
                 ),
+                "plan": plan.to_dict(),
                 "hardware": profile.to_dict(),
             }
-        strategy = self._strategy(profile)
+        ram = profile.available_ram_gb if profile.available_ram_gb is not None else profile.ram_gb
         return {
             **base, "status": "ready",
             "note": (
-                f"就绪（{profile.gpu_name} / {profile.vram_gb:.0f}GB 显存）。"
-                f"{strategy['note']}"
+                f"就绪（{profile.gpu_name} / {profile.vram_gb:.0f}GB 显存 / "
+                f"{ram:.0f}GB 可用内存）。{strategy['note']}"
             ),
+            "plan": plan.to_dict(),
             "hardware": profile.to_dict(),
         }
 
     @staticmethod
     def _strategy(profile) -> dict:
-        """按显存决定权重放置与量化（对齐官方 README 的三档做法）。"""
-        fp8 = getattr(profile, "quant", "") == "fp8"
-        if profile.vram_gb >= 24:
-            return {
-                "offload": "none", "fp8": fp8,
-                "note": "transformer 常驻显存，速度优先。",
-            }
+        """按「显存 × 内存」决定量化档位与权重放置。
+
+        旧实现只看显存，且把 24GB 以上判成 ``offload=none``（权重直接
+        ``.to("cuda")``）——transformer 是 61.7GiB，24GB 卡根本放不下，
+        这条分支一旦真跑必然 OOM。现改为统一走 h3_quant.plan()：
+        显存决定量化档位，内存决定能不能装下（加权卸载只省显存不省内存）。
+        """
+        ram = getattr(profile, "available_ram_gb", None)
+        if ram is None:
+            ram = getattr(profile, "ram_gb", 0.0)
+        p = h3_quant.plan(
+            getattr(profile, "vram_gb", 0.0),
+            ram,
+            getattr(profile, "compute_cap", ""),
+        )
         return {
-            "offload": "block_level", "fp8": fp8,
-            "note": (
-                "transformer 按块分组卸载（block_level），显存换速度；"
-                "建议用 480p 以内、5~8 秒的镜头。"
-            ),
+            "offload": p.offload,
+            # fp8 键保留只为兼容旧调用点，量化实际走 quantization_config
+            "fp8": False,
+            "tier": p.tier,
+            "quantization": dict(p.quantization),
+            "max_pixels": p.max_pixels,
+            "plan": p,
+            "note": p.note if p.available else p.reason,
         }
 
     # ---------- 模型加载 ----------
@@ -203,10 +218,12 @@ class H3Engine(BaseEngine):
                 raise EngineUnavailable(
                     "H3 需要 NVIDIA 显卡（本机 torch 无 CUDA），无法在 CPU 上运行"
                 )
-            if profile.vram_gb < 10:
-                raise EngineUnavailable(
-                    f"显存 {profile.vram_gb:.0f}GB 不足，H3 原生推理最低约需 10GB"
-                )
+
+            strategy = self._strategy(profile)
+            plan = strategy["plan"]
+            if not plan.available:
+                raise EngineUnavailable(plan.reason)
+
             ok, missing = self.model_ready()
             if not ok:
                 raise EngineUnavailable(
@@ -214,8 +231,11 @@ class H3Engine(BaseEngine):
                     "运行 python scripts/download_models.py --h3 下载。"
                 )
 
-            strategy = self._strategy(profile)
-            on_progress(0.02, "加载 MiniMax H3（首次约 2~5 分钟）")
+            on_progress(
+                0.02,
+                f"加载 MiniMax H3（{h3_quant.TIER_LABEL.get(plan.tier, plan.tier)}，"
+                "首次约 2~5 分钟）",
+            )
             pipe = ModularPipeline.from_pretrained(
                 MODEL_REPO, workflow=workflow, cache_dir=str(HF_CACHE)
             )
@@ -224,9 +244,12 @@ class H3Engine(BaseEngine):
                 torch_dtype=torch.bfloat16,
                 cache_dir=str(HF_CACHE),
             )
-            if strategy["fp8"]:
-                # torchao fp8 e4m3：官方报 345 帧峰值从 22GB 降到 20GB
-                load_kwargs["fp8"] = {"transformer": True}
+            # 量化必须走 from_pretrained 的 quantization_config。
+            # 旧写的 load_kwargs["fp8"] 不是 from_pretrained 的参数，会被
+            # 当成 config 覆盖项静默吞掉——等于从未生效。
+            quant_config = h3_quant.build_quantization_config(plan.quantization)
+            if quant_config:
+                load_kwargs["quantization_config"] = quant_config
             pipe.load_components(**load_kwargs)
 
             on_progress(0.25, "布置权重与卸载策略")
@@ -245,6 +268,16 @@ class H3Engine(BaseEngine):
                     )
             except Exception as exc:  # 无 audio_vae 或 accelerate 版本差异
                 print(f"[h3] VAE 卸载链跳过：{exc}")
+            # 低显存档：VAE 分块解码，激活不再一次性铺满显存
+            if plan.max_pixels < h3_quant.PIXELS_DEFAULT:
+                for name in ("vae", "audio_vae"):
+                    comp = getattr(pipe, name, None)
+                    enable = getattr(comp, "enable_tiling", None)
+                    if callable(enable):
+                        try:
+                            enable()
+                        except Exception as exc:
+                            print(f"[h3] {name} 分块解码未启用：{exc}")
             # 主 transformer
             if strategy["offload"] == "block_level":
                 apply_group_offloading(
@@ -272,14 +305,18 @@ class H3Engine(BaseEngine):
         return 17 * n + 5
 
     @staticmethod
-    def normalize_size(width: int, height: int) -> tuple:
-        """宽高取 32 的倍数（模型硬约束），并限制在画布上限内。"""
+    def normalize_size(width: int, height: int, max_pixels: int = h3_quant.PIXELS_DEFAULT) -> tuple:
+        """宽高取 32 的倍数（模型硬约束），并限制在画布上限内。
+
+        max_pixels 由量化档位给出：8GB 显存档会压到 512×384 级，
+        因为按块卸载时显存主要被激活占满，而帧数有 124 帧的下限。
+        """
         w = max(256, int(round(width / 32.0)) * 32)
         h = max(256, int(round(height / 32.0)) * 32)
-        # canvas_max_pixels 默认 1032192，超了就等比缩
+        ceiling = max(int(max_pixels or h3_quant.PIXELS_DEFAULT), 256 * 256)
         pixels = w * h
-        if pixels > 1032192:
-            scale = math.sqrt(1032192 / pixels)
+        if pixels > ceiling:
+            scale = math.sqrt(ceiling / pixels)
             w = max(256, int(w * scale // 32 * 32))
             h = max(256, int(h * scale // 32 * 32))
         return w, h
@@ -362,7 +399,11 @@ class H3Engine(BaseEngine):
         workflow, keyframes = self.resolve_workflow(first, last_frame_image)
 
         h3_frames = self.normalize_num_frames(num_frames, fps)
-        w, h = self.normalize_size(width, height)
+        # 画布上限跟量化档位走：8GB 档压到 512×384 级，避免激活撑爆
+        plan = self._strategy(hw_probe.probe())["plan"]
+        w, h = self.normalize_size(width, height, plan.max_pixels)
+        if (w, h) != self.normalize_size(width, height):
+            on_progress(0.47, f"画布按本机档位缩到 {w}×{h}")
 
         pipe = self._get_pipe(workflow, on_progress)
 

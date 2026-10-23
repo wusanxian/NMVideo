@@ -284,12 +284,18 @@ class Plan:
 def choose_plan(hw: HWInfo) -> Plan:
     if hw.gpus:
         vram = hw.max_vram_gb
-        # MiniMax H3 原生推理（VDN-H3 8 步蒸馏）：画质最好，但模型约 139GB，
-        # 且 diffusers 原生路径需要 ~16GB 显存（24GB 跑满 345 帧峰值 22GB）
-        if vram >= 16 and hw.ram_total_gb >= 32 and hw.disk_free_gb >= DISK_NEED["h3"]:
+        # MiniMax H3 原生推理（VDN-H3 8 步蒸馏）：模型约 139GB。
+        # 权重 bf16 合计 123.8GiB、按块卸载只省显存不省内存，所以真正门槛
+        # 是内存：int8 约 79GB、int4 约 52GB（后端 h3_quant.plan 同口径）。
+        if vram >= 10 and hw.ram_total_gb >= 80 and hw.disk_free_gb >= DISK_NEED["h3"]:
             return Plan("h3", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存 + "
                         f"{hw.disk_free_gb:.0f}GB 磁盘：可跑 MiniMax H3 原生推理（8 步蒸馏，画质最好）")
+        if vram >= 8 and hw.ram_total_gb >= 52 and hw.disk_free_gb >= DISK_NEED["h3"]:
+            # 8GB 档：能跑但默认不选——139GB 下载 + int4 实验画质
+            return Plan("wan-ti2v", "cuda", "auto", "sequential",
+                        f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存：默认 TI2V-5B；"
+                        "想试 H3 可手动选 --model h3（int4 实验档，需 52GB 内存 + 139GB 磁盘）")
         if vram >= 22 and hw.ram_total_gb >= 60:
             return Plan("wan-a14b", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存，可上 Wan2.2-A14B 画质标杆")
