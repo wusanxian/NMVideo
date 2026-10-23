@@ -76,6 +76,12 @@ export const api = {
   updateCharacter: (id, data) => request(`/characters/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCharacter: (id) => request(`/characters/${id}`, { method: 'DELETE' }),
   setShotCharacters: (shotId, ids) => request(`/shots/${shotId}/characters`, { method: 'PUT', body: JSON.stringify({ character_ids: ids }) }),
+
+  // ---------- 动作模板（PR-10 后半：对峙/追击/格挡/收招 + 项目自定义） ----------
+  motionTemplates: (projectId = '') => request(`/motion-templates${projectId ? `?project_id=${projectId}` : ''}`),
+  createMotionTemplate: (data) => request('/motion-templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateMotionTemplate: (id, data) => request(`/motion-templates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteMotionTemplate: (id) => request(`/motion-templates/${id}`, { method: 'DELETE' }),
   uploadFile: async (file) => {
     const fd = new FormData()
     fd.append('file', file)

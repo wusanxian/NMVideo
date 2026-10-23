@@ -53,6 +53,44 @@
           <p v-else class="hint-text">还没有角色卡。去项目里「🎭 资产库」标签页创建，跨镜头人物外观才能保持一致。</p>
         </section>
 
+        <!-- 动作与构图（PR-10 后半：跨镜头连续性约束，生成时拼入提示词） -->
+        <section class="form-section">
+          <h3>动作与构图（生成时自动拼入提示词）</h3>
+          <div class="field">
+            <label>动作模板</label>
+            <select v-model="form.motion_template_id" @change="onTemplateChange">
+              <option value="">无（自由发挥）</option>
+              <option v-for="t in motionTemplates" :key="t.id" :value="t.id">
+                {{ t.name }}{{ t.is_builtin ? '' : '（自定义）' }}
+              </option>
+            </select>
+            <p v-if="templateAction" class="hint-text">动作描述：{{ templateAction }}</p>
+          </div>
+          <div v-if="boundCharacters.length" class="field">
+            <label>人物站位与朝向（可选；仅对已关联角色生效）</label>
+            <div v-for="c in boundCharacters" :key="c.id" class="comp-row">
+              <span class="comp-name">
+                <i class="char-dot" :style="{ background: charColor(c.name) }"></i>{{ c.name }}
+              </span>
+              <select v-model="compPositions[c.id]" @change="syncComposition" aria-label="站位">
+                <option value="">站位不限</option>
+                <option value="left">画面左侧</option>
+                <option value="center">画面中央</option>
+                <option value="right">画面右侧</option>
+              </select>
+              <select v-model="compFacings[c.id]" @change="syncComposition" aria-label="朝向">
+                <option value="">朝向不限</option>
+                <option value="toward_camera">面向镜头</option>
+                <option value="back_to_camera">背对镜头</option>
+                <option value="toward_left">面向画面左侧</option>
+                <option value="toward_right">面向画面右侧</option>
+                <option value="profile">侧身对镜头</option>
+              </select>
+            </div>
+          </div>
+          <p v-else class="hint-text">关联角色后可为每人物设置站位与朝向约束（双人对手戏左右关系保持的关键）。</p>
+        </section>
+
         <!-- 提示词 -->
         <section class="form-section">
           <h3>提示词</h3>
@@ -366,6 +404,7 @@ const props = defineProps({
   presets: { type: Array, default: () => [] },
   characters: { type: Array, default: () => [] },
   siblingShots: { type: Array, default: () => [] },
+  projectId: { type: String, default: '' },
 })
 const emit = defineEmits(['close', 'saved', 'refresh', 'generate', 'adopt', 'delete-version', 'delete-voice'])
 
@@ -415,7 +454,58 @@ const form = reactive({
   character_ids: [...(props.shot.character_ids || [])],
   mode: props.shot.mode || 't2v',
   continue_from: props.shot.continue_from || '',
+  // PR-10 后半：动作模板 + 构图约束（编辑态拆成站位/朝向映射，保存时合成 JSON）
+  motion_template_id: props.shot.motion_template_id || '',
+  composition: {},
 })
+
+// ---- PR-10 后半：动作模板 + 构图约束 ----
+const motionTemplates = ref([])
+const compPositions = reactive({})
+const compFacings = reactive({})
+
+function _parseComposition(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  if (typeof value === 'string' && value) {
+    try {
+      const obj = JSON.parse(value)
+      return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {}
+    } catch { /* 脏值按空处理 */ }
+  }
+  return {}
+}
+
+const shotComposition = _parseComposition(props.shot.composition)
+for (const [cid, pos] of Object.entries(shotComposition.character_positions || {})) compPositions[cid] = pos
+for (const [cid, face] of Object.entries(shotComposition.character_facing || {})) compFacings[cid] = face
+
+const boundCharacters = computed(() =>
+  (props.characters || []).filter((c) => form.character_ids.includes(c.id)))
+
+const templateAction = computed(() => {
+  const t = motionTemplates.value.find((x) => x.id === form.motion_template_id)
+  return t?.action_prompt || ''
+})
+
+function onTemplateChange() {
+  // 选模板联动默认镜头运动（仍可手动改；固定不动）
+  const t = motionTemplates.value.find((x) => x.id === form.motion_template_id)
+  if (t?.default_camera_movement && t.default_camera_movement !== '固定') {
+    form.camera_movement = t.default_camera_movement
+  }
+}
+
+function syncComposition() {
+  const positions = {}
+  const facings = {}
+  for (const c of boundCharacters.value) {
+    if (compPositions[c.id]) positions[c.id] = compPositions[c.id]
+    if (compFacings[c.id]) facings[c.id] = compFacings[c.id]
+  }
+  form.composition = {}
+  if (Object.keys(positions).length) form.composition.character_positions = positions
+  if (Object.keys(facings).length) form.composition.character_facing = facings
+}
 
 const genForm = reactive({
   // 默认走 ComfyUI 通道；不可用时由下方 watch 自动降级到兜底引擎
@@ -525,6 +615,11 @@ onMounted(async () => {
     voices.value = r.voices || []
     voicesAvail.value = !!r.available
   } catch { /* ignore */ }
+  // PR-10 后半：动作模板列表（内置 + 本项目自定义）
+  try {
+    const r = await api.motionTemplates(props.projectId)
+    motionTemplates.value = r.templates || []
+  } catch { /* 拉取失败不阻塞编辑，仅无模板可选 */ }
   const bound = (props.characters || []).filter((c) => form.character_ids.includes(c.id))
   const withVoice = bound.find((c) => c.voice_id)
   if (withVoice) ttsVoice.value = withVoice.voice_id
@@ -593,6 +688,7 @@ function applyPreset(q) {
 }
 
 function save() {
+  syncComposition()
   emit('saved', { ...form })
 }
 
@@ -602,6 +698,7 @@ function generate() {
     return
   }
   errMsg.value = ''
+  syncComposition()
   // 先落编辑内容，再发起生成（带模式与续接来源）
   emit('saved', { ...form }, { then: 'generate', params: { ...genForm, mode: form.mode, continue_from: form.continue_from } })
 }
@@ -677,6 +774,22 @@ function generate() {
 .char-chip.on { border-color: var(--accent); color: var(--text); background: rgba(99, 102, 241, 0.12); }
 .char-chip em { font-style: normal; font-size: 11px; color: var(--text-dim); }
 .char-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+/* ---- PR-10 后半：动作与构图 ---- */
+.comp-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.comp-name {
+  display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+  color: var(--text); flex: 0 0 96px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.comp-row select {
+  flex: 1; min-width: 0; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text); padding: 7px 9px; font-size: 12.5px;
+  font-family: inherit;
+}
+.comp-row select:focus { border-color: var(--accent); outline: none; }
 
 .mode-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .mode-card {

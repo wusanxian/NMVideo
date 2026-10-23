@@ -429,6 +429,7 @@
       :presets="presets"
       :characters="characters"
       :sibling-shots="siblingsOf(editingShot)"
+      :project-id="project?.id || ''"
       @close="editingShot = null"
       @saved="onShotSaved"
       @refresh="onEditorRefresh"

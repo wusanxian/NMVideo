@@ -766,6 +766,42 @@ class Database:
                     "ALTER TABLE jobs ADD COLUMN reference_images TEXT DEFAULT '[]'")
             self._conn.commit()
 
+        # ---------- 第十六批轻量迁移：动作模板 + 构图约束（改造.md PR-10 后半） ----------
+        # motion_templates：动作模板库（project_id='' 为内置全局模板，只读不可删）。
+        # shots.motion_template_id：镜头引用的动作模板（悬空容忍——模板被删后
+        #   生成时查不到就跳过，不阻塞）。
+        # shots.composition：构图约束 JSON（人物站位/朝向映射），空 '{}' = 未启用。
+        # 约束在 generate 时拼进 params["prompt"] 随任务冻结，不加 jobs 列。
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS motion_templates (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT DEFAULT '',
+                    name TEXT NOT NULL,
+                    action_prompt TEXT DEFAULT '',
+                    default_camera_movement TEXT DEFAULT '',
+                    is_builtin INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )""")
+            shot_cols16 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(shots)").fetchall()
+            }
+            if "motion_template_id" not in shot_cols16:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN motion_template_id TEXT DEFAULT ''")
+            if "composition" not in shot_cols16:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN composition TEXT DEFAULT '{}'")
+            self._conn.commit()
+        # 内置模板种子（INSERT OR IGNORE 幂等；id 固定，老库重开不重复插入）
+        from .motion import seed_builtin_templates
+        try:
+            seed_builtin_templates(self)
+        except Exception as e:
+            print(f"[db] 内置动作模板种子失败（不影响启动）: {e}")
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()

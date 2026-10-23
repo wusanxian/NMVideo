@@ -21,6 +21,7 @@ from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine, validate_engi
 from ..quality import normalize_generation
 from ..generation import prepare_comfy_workflow, persist_prepared_job
 from .. import db as db_module
+from .. import motion
 from ..export import start_export
 from ..queue_manager import job_queue
 
@@ -87,6 +88,9 @@ class ShotCreate(BaseModel):
     reference_image: str = ""
     first_frame_image: str = ""
     last_frame_image: str = ""
+    # PR-10 后半：动作模板 + 构图约束
+    motion_template_id: str = ""
+    composition: dict = Field(default_factory=dict)
 
 
 class ShotUpdate(BaseModel):
@@ -103,6 +107,9 @@ class ShotUpdate(BaseModel):
     last_frame_image: Optional[str] = None
     # PR-08 后半：多参考图（额外参考图 URL 数组，≤4 张；与单槽 reference_image 共存）
     reference_images: Optional[list] = None
+    # PR-10 后半：动作模板 + 构图约束（composition: {character_positions, character_facing}）
+    motion_template_id: Optional[str] = None
+    composition: Optional[dict] = None
 
 
 class ShotGenerate(BaseModel):
@@ -307,7 +314,10 @@ def update_shot(shot_id: str, data: ShotUpdate):
     if not sb.get_shot(shot_id):
         raise HTTPException(404, "分镜不存在")
     fields = {k: v for k, v in data.model_dump(exclude_unset=True).items()}
-    shot = sb.update_shot(shot_id, **fields)
+    try:
+        shot = sb.update_shot(shot_id, **fields)
+    except ValueError as e:  # 构图约束非法 → 400（不静默丢弃拼错的站位）
+        raise HTTPException(400, str(e)) from e
     # 改提示词等创作参数后，回到草稿态重新生成（已通过的不动）
     if shot and shot["status"] == "rework":
         sb.set_shot_status(shot_id, "draft")
@@ -323,6 +333,57 @@ def delete_shot(shot_id: str):
         sb.delete_shot(shot_id)
     except sb.ReferenceConflictError as e:
         raise HTTPException(409, detail={"message": str(e), "references": e.details})
+    return {"ok": True}
+
+
+# =====================================================================
+# 动作模板（PR-10 后半：对峙/追击/格挡/收拴等动作预设 + 项目自定义）
+# =====================================================================
+class MotionTemplateCreate(BaseModel):
+    project_id: str = ""
+    name: str = Field(..., min_length=1, max_length=60)
+    action_prompt: str = Field(..., min_length=1)
+    default_camera_movement: str = ""
+
+
+class MotionTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=60)
+    action_prompt: Optional[str] = Field(None, min_length=1)
+    default_camera_movement: Optional[str] = None
+
+
+@router.get("/motion-templates")
+def list_motion_templates(project_id: str = ""):
+    return {"templates": motion.list_templates(project_id)}
+
+
+@router.post("/motion-templates", status_code=201)
+def create_motion_template(data: MotionTemplateCreate):
+    try:
+        return motion.create_template(
+            data.project_id, data.name, data.action_prompt,
+            data.default_camera_movement)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.patch("/motion-templates/{template_id}")
+def update_motion_template(template_id: str, data: MotionTemplateUpdate):
+    try:
+        tpl = motion.update_template(template_id, **data.model_dump(exclude_unset=True))
+    except ValueError as e:  # 内置模板不可改 / 字段非法
+        raise HTTPException(400, str(e)) from e
+    if not tpl:
+        raise HTTPException(404, "动作模板不存在")
+    return tpl
+
+
+@router.delete("/motion-templates/{template_id}")
+def delete_motion_template(template_id: str):
+    try:
+        motion.delete_template(template_id)
+    except ValueError as e:  # 内置模板不可删
+        raise HTTPException(400, str(e)) from e
     return {"ok": True}
 
 
@@ -418,6 +479,11 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     characters = assets.characters_of_shot(shot)
     if characters:
         prompt = assets.compose_prompt_with_characters(shot, characters)
+    # PR-10 后半：动作模板 + 构图约束（站位/朝向/镜头运动）拼进提示词——
+    # 随 params["prompt"] 入队冻结，之后改模板/构图不影响本任务可复现
+    motion_seg = motion.compose_motion_prompt(shot, characters)
+    if motion_seg:
+        prompt = f"{prompt} || {motion_seg}" if prompt.strip() else motion_seg
     if mode == "continuation":
         prompt = (prompt + " || continuous shot, seamless continuation, "
                   "same character and scene as the previous shot").strip(" |")

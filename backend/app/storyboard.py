@@ -242,6 +242,9 @@ def delete_scene(scene_id: str) -> None:
 def create_shot(scene_id: str, **fields) -> dict:
     sid = _new_id("sht")
     now = _utcnow()
+    # PR-10 后半：构图约束经 motion 归一（dict/字符串/None 都收敛为规范 JSON）
+    from .motion import normalize_composition
+    composition = normalize_composition(fields.get("composition"))
     max_order = _row(
         "SELECT COALESCE(MAX(order_index), -1) AS m FROM shots WHERE scene_id = ?",
         (scene_id,),
@@ -252,6 +255,8 @@ def create_shot(scene_id: str, **fields) -> dict:
          "duration_s", "prompt", "negative_prompt", "reference_image",
          "first_frame_image", "last_frame_image",
          "character_ids", "mode", "continue_from", "order_index",
+         # PR-10 后半：动作模板 + 构图约束
+         "motion_template_id", "composition",
          "created_at", "updated_at"],
         (sid, scene_id, fields.get("title", ""),
          fields.get("dialogue", ""), fields.get("shot_size", "中景"),
@@ -260,7 +265,10 @@ def create_shot(scene_id: str, **fields) -> dict:
          fields.get("reference_image", ""), fields.get("first_frame_image", ""),
          fields.get("last_frame_image", ""), json.dumps(fields.get("character_ids") or []),
          fields.get("mode", "t2v"), fields.get("continue_from", ""),
-         fields.get("order_index", max_order + 1), now, now),
+         fields.get("order_index", max_order + 1),
+         fields.get("motion_template_id", ""),
+         composition,
+         now, now),
         sid,
     )
     sc = get_scene(scene_id)
@@ -326,12 +334,17 @@ def update_shot(shot_id: str, **fields) -> Optional[dict]:
         "first_frame_image", "last_frame_image", "source_video_version_id",
         # PR-08 后半：多参考图（JSON 字符串数组，单槽 reference_image 兼容不变）
         "reference_images",
+        # PR-10 后半：动作模板 + 构图约束（composition 由 motion 归一后落库）
+        "motion_template_id", "composition",
     }
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "character_ids" in fields and not isinstance(fields["character_ids"], str):
         fields["character_ids"] = json.dumps(fields["character_ids"])
     if "reference_images" in fields and not isinstance(fields["reference_images"], str):
         fields["reference_images"] = json.dumps(fields["reference_images"])
+    if "composition" in fields:
+        from .motion import normalize_composition
+        fields["composition"] = normalize_composition(fields["composition"])
     if not fields:
         return get_shot(shot_id)
     fields["updated_at"] = _utcnow()
@@ -369,6 +382,9 @@ def _decode_shot(shot: dict) -> None:
         shot["character_ids"] = json.loads(shot.get("character_ids") or "[]")
     except (ValueError, TypeError):
         shot["character_ids"] = []
+    # PR-10 后半：构图约束解码（脏值按空对象处理，读取不抛异常）
+    from .motion import decode_composition
+    shot["composition"] = decode_composition(shot)
     from . import assets, tracks
 
     shot["characters"] = assets.characters_of_shot(shot)
