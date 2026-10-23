@@ -1172,10 +1172,21 @@ def layout_from_items(items: list) -> list:
         t_in = min(float(it.get("trim_in_s") or 0), max(dur - 0.3, 0))
         t_out = float(it.get("trim_out_s") or 0)
         end = min(t_out, dur) if t_out > 0 else dur
-        seg_dur = max(end - t_in, 0.3)
+        source_dur = max(end - t_in, 0.3)
+        # PR-11 后半：片段变速——时间线时长 = 裁剪源时长 / speed；
+        # source_duration_s 保留源时间轴时长（混音原声裁剪 + atempo 用）
+        try:
+            speed = float(it.get("speed") or 1.0)
+        except (TypeError, ValueError):
+            speed = 1.0
+        if speed <= 0:
+            speed = 1.0
+        seg_dur = max(source_dur / speed, 0.1)
+        it["speed"] = speed
         it["start_s"] = round(t, 3)
         it["end_s"] = round(t + seg_dur, 3)
         it["seg_dur"] = round(seg_dur, 3)
+        it["source_duration_s"] = round(source_dur, 3)
         it["trim_in_eff"] = round(t_in, 3)
         t += seg_dur
     return items
@@ -1208,8 +1219,17 @@ def sync_timeline(project_id: str) -> list:
 
 
 def update_timeline_item(item_id: str, **fields) -> Optional[dict]:
-    allowed = {"position", "trim_in_s", "trim_out_s", "transition"}
+    allowed = {"position", "trim_in_s", "trim_out_s", "transition",
+               # PR-11 后半：片段变速（0.25~4.0，路由层 pydantic 管范围）
+               "speed"}
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if "speed" in fields:
+        try:
+            fields["speed"] = float(fields["speed"])
+        except (TypeError, ValueError):
+            raise ValueError("变速必须是数值（0.25~4.0）")
+        if not 0.25 <= fields["speed"] <= 4.0:
+            raise ValueError("变速必须在 0.25 ~ 4.0 之间")
     if not fields:
         return _row("SELECT * FROM timeline_items WHERE id = ?", (item_id,))
     sql = f"UPDATE timeline_items SET {','.join(f'{k} = ?' for k in fields)} WHERE id = ?"

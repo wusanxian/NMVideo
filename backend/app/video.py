@@ -206,8 +206,14 @@ def concat_videos(
             if t_out <= t_in:
                 t_out = min(dur, t_in + 0.5)
             seg_dur = t_out - t_in
-            output_dur = max(seg_dur, float(it.get("duration_s") or seg_dur))
-            if output_dur > seg_dur + 0.001:
+            # PR-11 后半：片段变速——时间线时长 = 源时长 / speed。
+            # speed=1 时 output_seg == seg_dur，与原行为完全一致。
+            speed = float(it.get("speed") or 1.0)
+            if speed <= 0:
+                speed = 1.0
+            output_seg = seg_dur / speed
+            output_dur = max(output_seg, float(it.get("duration_s") or output_seg))
+            if output_dur > output_seg + 0.001:
                 # 先物理裁切，保证延长时复制剪出点末帧，不会读到被剪掉的画面。
                 # FFmpeg 7 的 trim EOF 与 tpad 组合会丢末帧，独立文件保留完整时间基准。
                 trimmed = tmp_dir / f"trim_{i:03d}.mp4"
@@ -220,12 +226,16 @@ def concat_videos(
                     raise RuntimeError(f"延长片段前裁切失败: {cut.stderr[-400:]}")
                 src, t_in = trimmed, 0.0
                 seg_dur = probe_duration(trimmed)
+                output_seg = seg_dur / speed
 
             vf = [
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease",
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
+                # 变速：setpts 输出时长 = 原时长 / 系数 → 提速 s 倍用 (1/s)*PTS
+                # （在补尾帧之前；speed=2 压半、speed=0.5 拉长一倍）
+                *( [f"setpts={1.0 / speed:.6f}*PTS"] if abs(speed - 1.0) > 1e-6 else [] ),
                 # 给 fps 滤镜补一个尾帧，再按输出时长截断，防止缩放后每段丢末帧而累积声画错位。
-                f"tpad=stop_mode=clone:stop_duration={max(output_dur - seg_dur, 0) + 1 / fps:.6f}",
+                f"tpad=stop_mode=clone:stop_duration={max(output_dur - output_seg, 0) + 1 / fps:.6f}",
                 f"fps={fps}",
                 "setsar=1",
                 "format=yuv420p",

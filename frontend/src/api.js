@@ -115,6 +115,8 @@ export const api = {
   projectHistory: (pid) => request(`/projects/${pid}/history`),
 
   timeline: (pid) => request(`/projects/${pid}/timeline`),
+  timelineWarnings: (pid) => request(`/projects/${pid}/timeline/warnings`),
+  waveform: (url, points = 64) => request(`/audio/waveform?url=${encodeURIComponent(url)}&points=${points}`),
   syncTimeline: (pid) => request(`/projects/${pid}/timeline/sync`, { method: 'POST' }),
   updateTimelineItem: (id, data) => request(`/timeline/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   reorderTimeline: (pid, ids) => request(`/projects/${pid}/timeline/reorder`, { method: 'POST', body: JSON.stringify({ ids }) }),

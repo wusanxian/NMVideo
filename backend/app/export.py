@@ -37,6 +37,55 @@ def _exists(url: str) -> bool:
     return p is not None and p.is_file()
 
 
+def _tempo_chain(speed: float) -> str:
+    """atempo 滤镜链：单片只支持 0.5~2.0，超出部分级联（0.25~4.0 最多两级）。"""
+    parts = []
+    remaining = float(speed)
+    while remaining > 2.0 + 1e-9:
+        parts.append("atempo=2.0")
+        remaining /= 2.0
+    while remaining < 0.5 - 1e-9:
+        parts.append("atempo=0.5")
+        remaining /= 0.5
+    parts.append(f"atempo={remaining:.6f}")
+    return ",".join(parts)
+
+
+def _track_overrun_warnings(layout: list, audio_tracks: list) -> list:
+    """音频越界警告（PR-11 验收：音频越界时给出警告，不静默截断）。
+
+    只提示不阻断：音乐/音效超出片尾的部分导出时本来就会被 -t 截断，
+    但用户应当在导出前/后都看得见。
+    """
+    total = max((float(it.get("end_s") or 0) for it in layout), default=0)
+    if total <= 0:
+        return []
+    from .video import probe_duration
+    warns = []
+    for t in audio_tracks or []:
+        path = _url_to_path(t.get("audio_url") or "")
+        if not path or not path.is_file():
+            continue
+        start = float(t.get("start_s") or 0)
+        t_in = float(t.get("trim_in_s") or 0)
+        t_out = float(t.get("trim_out_s") or 0)
+        dur = probe_duration(path)
+        length = (t_out - t_in) if t_out > t_in else max(dur - t_in, 0)
+        end = start + length
+        if end > total + 0.05:
+            kind = "音效" if (t.get("kind") == "sfx") else "音乐"
+            title = t.get("title") or "未命名"
+            warns.append(
+                f"{kind}「{title}」超出片尾 {end - total:.1f} 秒，导出时将被截断")
+    return warns
+
+
+def preview_warnings(project_id: str) -> list:
+    """时间线页实时越界预览（不创建导出记录也能看）。"""
+    layout = sb.timeline_layout(project_id)
+    return _track_overrun_warnings(layout, tracks.list_audio_tracks(project_id))
+
+
 def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> bool:
     """视频原声 + 对白 + 音乐 + 音效；统一按冻结时间线裁剪、落位和补静音。"""
     ffmpeg = get_ffmpeg()
@@ -44,10 +93,11 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> b
     if duration <= 0:
         return False
 
-    # (path, timeline_start, source_trim_in, duration, volume)
+    # (path, timeline_start, source_trim_in, duration, volume, tempo)
     sources: list = []
 
-    def add_source(path, start, trim_in=0.0, trim_out=0.0, volume=1.0, length=None):
+    def add_source(path, start, trim_in=0.0, trim_out=0.0, volume=1.0, length=None,
+                   tempo=1.0):
         start, trim_in = float(start), max(float(trim_in), 0.0)
         # 负起点意味着只取进入时间线范围后的那一段声音。
         seek = trim_in + max(-start, 0.0)
@@ -58,7 +108,7 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> b
         if length is not None:
             available = min(available, length)
         if available > 0 and volume != 0:
-            sources.append((path, start, seek, available, volume))
+            sources.append((path, start, seek, available, volume, float(tempo or 1.0)))
 
     from .dialogue_timing import schedule
     voices = (manifest["voices"] if manifest is not None else
@@ -67,8 +117,11 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> b
     for it in layout:
         video_path = _url_to_path(it.get("video_url") or "")
         if video_path and has_audio_stream(video_path):
+            # PR-11 后半：原声跟随片段变速（source_duration_s 是源时间轴裁剪时长，
+            # atempo 压缩/拉伸后正好填满时间线槽位 seg_dur = source/speed）
             add_source(video_path, it["start_s"], it.get("trim_in_eff") or 0.0,
-                       length=it.get("source_duration_s", it["end_s"] - it["start_s"]))
+                       length=it.get("source_duration_s", it["end_s"] - it["start_s"]),
+                       tempo=float(it.get("speed") or 1.0))
     for cue in cues:
         audio_path = _url_to_path(cue.get("audio_url") or "")
         if not audio_path or not audio_path.is_file():
@@ -90,9 +143,12 @@ def _mix_audio(project_id: str, layout: list, out_wav: Path, manifest=None) -> b
 
     filters = []
     labels = []
-    for i, (path, start, t_in, length, volume) in enumerate(sources):
+    for i, (path, start, t_in, length, volume, tempo) in enumerate(sources):
         chain = f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo"
         chain += f",atrim=start={t_in:.6f}:duration={length:.6f},asetpts=PTS-STARTPTS"
+        # 变速片段的原声压缩/拉伸（atempo 链支持 0.25~4.0）
+        if abs(tempo - 1.0) > 1e-6:
+            chain += "," + _tempo_chain(tempo)
         # 裁剪后 adelay 的前导静音可能没有 PTS，按样本重新计时再交给 amix。
         chain += (f",volume={volume:.2f},adelay={int(start * 1000)}|{int(start * 1000)}"
                   ",asetpts=N/SR/TB")
@@ -155,6 +211,7 @@ def run_export(export_id: str) -> None:
                     "trim_out_s": float(it.get("trim_out_s") or 0),
                     "transition": it.get("transition") or "none",
                     "duration_s": it.get("seg_dur"),
+                    "speed": float(it.get("speed") or 1.0),
                     "fit": output.get("fit", "contain"),
                 }
             )
@@ -213,6 +270,12 @@ def run_export(export_id: str) -> None:
             progress=1.0,
             stage="导出完成",
             file_url=f"/outputs/exports/{export_id}.mp4",
+            # PR-11 验收：音频越界时给出警告（随导出记录持久化，UI 可回看）
+            warnings=json.dumps(_track_overrun_warnings(
+                layout,
+                manifest["audio_tracks"] if manifest is not None
+                else tracks.list_audio_tracks(project_id),
+            ), ensure_ascii=False),
             finished_at=_now(),
         )
     except Exception as e:

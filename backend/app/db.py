@@ -802,6 +802,27 @@ class Database:
         except Exception as e:
             print(f"[db] 内置动作模板种子失败（不影响启动）: {e}")
 
+        # ---------- 第十七批轻量迁移：片段变速 + 导出越界警告（改造.md PR-11 后半） ----------
+        # timeline_items.speed：播放速率（0.25~4.0，1.0=原速）——画面时长按
+        #   裁剪时长/speed 计算，导出 concat 用 setpts、混音原声用 atempo 同步变速。
+        # exports.warnings：导出时的音频越界警告 JSON 数组（音乐超出片尾截断等）。
+        with self._lock:
+            tl_cols17 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(timeline_items)").fetchall()
+            }
+            if "speed" not in tl_cols17:
+                self._conn.execute(
+                    "ALTER TABLE timeline_items ADD COLUMN speed REAL NOT NULL DEFAULT 1.0")
+            exp_cols17 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(exports)").fetchall()
+            }
+            if "warnings" not in exp_cols17:
+                self._conn.execute(
+                    "ALTER TABLE exports ADD COLUMN warnings TEXT DEFAULT '[]'")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()

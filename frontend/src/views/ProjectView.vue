@@ -238,6 +238,10 @@
         </div>
 
         <p class="dim">同镜头配音按生成顺序逐条播放，重新配音后请删除不用的旧条目，并重新生成字幕。</p>
+        <!-- PR-11 后半：音频越界警告（导出前实时预览） -->
+        <div v-if="timelineWarnings.length" class="warn-box">
+          <div v-for="(w, i) in timelineWarnings" :key="i">⚠ {{ w }}</div>
+        </div>
         <label><input v-model="extendDialogue" type="checkbox" /> 对白超时自动延长末帧；关闭后会阻止超时导出。延长画面会顺延后续镜头，音乐和音效保持设置的位置。</label>
 
         <div v-if="exportJob" class="export-status">
@@ -274,6 +278,15 @@
                           @change="updateItem(item, { trim_in_s: +$event.target.value || 0 })" /></label>
                   <label>出点 <input type="number" min="0" step="0.1" :value="item.trim_out_s"
                           @change="updateItem(item, { trim_out_s: +$event.target.value || 0 })" /></label>
+                  <!-- PR-11 后半：片段变速 -->
+                  <select :value="item.speed || 1" @change="updateItem(item, { speed: +$event.target.value })" title="播放速率">
+                    <option :value="0.5">0.5×</option>
+                    <option :value="0.75">0.75×</option>
+                    <option :value="1">原速</option>
+                    <option :value="1.25">1.25×</option>
+                    <option :value="1.5">1.5×</option>
+                    <option :value="2">2×</option>
+                  </select>
                   <select :value="item.transition" @change="updateItem(item, { transition: $event.target.value })">
                     <option value="none">硬切</option>
                     <option value="fade">淡入淡出</option>
@@ -298,6 +311,11 @@
                 <div v-for="v in voicesOf(item)" :key="v.id" class="tr-clip">
                   <audio :src="v.audio_url" controls preload="metadata"></audio>
                   <span class="clip-meta">{{ v.character_name || v.voice }} · {{ v.duration_s.toFixed(1) }}s</span>
+                  <!-- PR-11 后半：配音波形 -->
+                  <div v-if="waveforms[v.audio_url]" class="wave-bars">
+                    <span v-for="(p, i) in waveforms[v.audio_url]" :key="i" class="wave-bar"
+                          :style="{ height: Math.max(p * 100, 8) + '%' }"></span>
+                  </div>
                   <button class="icon-btn danger" @click="deleteVoice(v.id)">✕</button>
                 </div>
               </template>
@@ -323,6 +341,11 @@
                      @change="updateTrack(t, { start_s: +$event.target.value || 0 })" /></label>
               <label class="tr-field">音量 <input type="range" min="0" max="1" step="0.05" :value="t.volume"
                      @change="updateTrack(t, { volume: +$event.target.value })" /></label>
+              <!-- PR-11 后半：音乐波形 -->
+              <div v-if="waveforms[t.audio_url]" class="wave-bars wide">
+                <span v-for="(p, i) in waveforms[t.audio_url]" :key="i" class="wave-bar"
+                      :style="{ height: Math.max(p * 100, 8) + '%' }"></span>
+              </div>
               <button class="icon-btn danger" @click="deleteTrack(t.id)">✕</button>
             </div>
             <div v-if="!musicTracks.length" class="tr-empty">还没有音乐，上传后自动混入导出</div>
@@ -344,6 +367,10 @@
                      @change="updateTrack(t, { start_s: +$event.target.value || 0 })" /></label>
               <label class="tr-field">音量 <input type="range" min="0" max="1" step="0.05" :value="t.volume"
                      @change="updateTrack(t, { volume: +$event.target.value })" /></label>
+              <div v-if="waveforms[t.audio_url]" class="wave-bars wide">
+                <span v-for="(p, i) in waveforms[t.audio_url]" :key="i" class="wave-bar"
+                      :style="{ height: Math.max(p * 100, 8) + '%' }"></span>
+              </div>
               <button class="icon-btn danger" @click="deleteTrack(t.id)">✕</button>
             </div>
             <div v-if="!sfxTracks.length" class="tr-empty">还没有音效</div>
@@ -386,6 +413,8 @@
             <span class="exp-time">{{ (e.created_at || '').slice(5, 16).replace('T', ' ') }}</span>
             <a v-if="e.file_url" :href="e.file_url" download>下载</a>
             <span v-if="e.error" class="form-msg">{{ e.error }}</span>
+            <!-- PR-11 后半：导出时的音频越界警告回看 -->
+            <span v-for="(w, i) in parseWarnings(e.warnings)" :key="'w' + i" class="warn-inline">⚠ {{ w }}</span>
           </div>
         </div>
       </div>
@@ -856,17 +885,43 @@ async function doImport(mode) {
 }
 
 // ---------- 时间线 ----------
+const timelineWarnings = ref([])   // PR-11 后半：音频越界实时预览
+const waveforms = reactive({})     // PR-11 后半：url → peaks[]（波形条）
+
+function parseWarnings(raw) {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string' && raw) {
+    try { const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : [] } catch { /* 脏值忽略 */ }
+  }
+  return []
+}
+
+async function loadWaveform(url) {
+  if (!url || waveforms[url]) return
+  try {
+    const r = await api.waveform(url, 64)
+    waveforms[url] = r.peaks || []
+  } catch { /* 波形失败不阻塞时间线 */ }
+}
+
 async function loadTimeline() {
   timeline.value = await store.loadTimeline()
   exportHistory.value = await api.listExports(project.value.id)
-  const [music, sfx, subs] = await Promise.all([
+  const [music, sfx, subs, warns] = await Promise.all([
     api.audioTracks(project.value.id, 'music'),
     api.audioTracks(project.value.id, 'sfx'),
     api.subtitles(project.value.id),
+    api.timelineWarnings(project.value.id).catch(() => ({ warnings: [] })),
   ])
   musicTracks.value = music
   sfxTracks.value = sfx
   subtitles.value = subs
+  timelineWarnings.value = warns.warnings || []
+  // PR-11 后半：懒加载音轨/配音波形（缓存命中时开销可忽略）
+  for (const t of [...music, ...sfx]) loadWaveform(t.audio_url)
+  for (const item of timeline.value) {
+    for (const v of voicesOf(item)) loadWaveform(v.audio_url)
+  }
 }
 
 async function syncTimeline() {
@@ -930,6 +985,8 @@ async function onAudioUpload(e, kind) {
 async function updateTrack(t, data) {
   const updated = await api.updateAudioTrack(t.id, data)
   if (updated) Object.assign(t, updated)
+  // 起点变化会影响越界判定 → 重新拉警告
+  api.timelineWarnings(project.value.id).then((r) => (timelineWarnings.value = r.warnings || [])).catch(() => {})
 }
 
 async function deleteTrack(id) {
@@ -1123,6 +1180,22 @@ async function loadHistory() {
 .tr-clip { display: flex; align-items: center; gap: 8px; }
 .tr-clip audio { height: 30px; }
 .clip-meta { font-size: 11px; color: var(--text-dim); }
+/* ---- PR-11 后半：波形条 / 越界警告 ---- */
+.wave-bars {
+  display: flex; align-items: center; gap: 1px; height: 26px;
+  flex: 0 1 160px; min-width: 0; overflow: hidden;
+}
+.wave-bars.wide { flex: 1 1 240px; }
+.wave-bar {
+  flex: 1 0 2px; max-width: 4px; background: var(--accent);
+  opacity: 0.55; border-radius: 1px;
+}
+.warn-box {
+  background: rgba(250, 204, 21, 0.1); border: 1px solid rgba(250, 204, 21, 0.45);
+  border-radius: 8px; padding: 8px 12px; margin: 8px 0;
+  font-size: 12.5px; color: var(--yellow, #eab308); line-height: 1.7;
+}
+.warn-inline { font-size: 11.5px; color: var(--yellow, #eab308); }
 .tr-empty { font-size: 11.5px; color: var(--text-dim); font-style: italic; }
 .tr-title-input, .tr-sub-input {
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;

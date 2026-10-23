@@ -148,6 +148,8 @@ class TimelineUpdate(BaseModel):
     trim_in_s: Optional[float] = Field(None, ge=0)
     trim_out_s: Optional[float] = Field(None, ge=0)
     transition: Optional[str] = Field(None, pattern="^(none|fade)$")
+    # PR-11 后半：片段变速（0.25~4.0；1.0=原速）
+    speed: Optional[float] = Field(None, ge=0.25, le=4.0)
 
 
 class WorkflowUpdate(BaseModel):
@@ -624,12 +626,36 @@ def sync_timeline(project_id: str):
 
 @router.patch("/timeline/{item_id}")
 def update_timeline_item(item_id: str, data: TimelineUpdate):
-    item = sb.update_timeline_item(
-        item_id, **{k: v for k, v in data.model_dump(exclude_unset=True).items()}
-    )
+    try:
+        item = sb.update_timeline_item(
+            item_id, **{k: v for k, v in data.model_dump(exclude_unset=True).items()}
+        )
+    except ValueError as e:  # 变速数值非法
+        raise HTTPException(400, str(e)) from e
     if not item:
         raise HTTPException(404, "时间线片段不存在")
     return item
+
+
+@router.get("/projects/{project_id}/timeline/warnings")
+def timeline_warnings(project_id: str):
+    """时间线音频越界实时预览（PR-11 验收：音频越界时给出警告）。"""
+    if not sb.get_project(project_id):
+        raise HTTPException(404, "项目不存在")
+    from ..export import preview_warnings
+    return {"warnings": preview_warnings(project_id)}
+
+
+@router.get("/audio/waveform")
+def audio_waveform(url: str, points: int = 200):
+    """受管音频的峰值波形（PR-11 后半：多轨可视化；磁盘缓存）。"""
+    from .. import waveform
+    try:
+        return waveform.peaks_for(url, points)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(500, str(e)) from e
 
 
 @router.post("/projects/{project_id}/timeline/reorder")
