@@ -33,7 +33,9 @@ Thumbs.db
 *.log
 
 # 本地 agent 工作数据（含记忆，勿入库）
-.workbuddy/
+# 例外：项目级 Agent Skills 属团队资产，随仓库分发（见 .workbuddy/skills/screenwriting-SOURCE.md）
+.workbuddy/*
+!.workbuddy/skills/
 .phase1/
 
 # 编辑器 / IDE
