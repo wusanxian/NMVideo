@@ -262,7 +262,11 @@
             <div v-for="e in engines" :key="e.id" class="engine-card"
                  :class="{ active: genForm.engine === e.id, disabled: e.status !== 'ready' }"
                  @click="e.status === 'ready' && (genForm.engine = e.id)">
-              <div class="ec-name"><span class="dot" :class="e.status"></span>{{ e.name }}</div>
+              <div class="ec-name">
+                <span class="dot" :class="e.status"></span>{{ e.name }}
+                <span v-if="e.is_default" class="ec-badge">默认</span>
+                <span v-else-if="e.execution_channel === 'native'" class="ec-badge fallback">兜底</span>
+              </div>
               <div class="ec-desc">{{ e.description }}</div>
               <div v-if="e.note" class="ec-note">⚠ {{ e.note }}</div>
             </div>
@@ -280,12 +284,12 @@
           <div class="param-grid" style="margin-top: 12px">
             <div class="field">
               <div class="range-label"><span>帧数</span><b>{{ genForm.num_frames }}</b></div>
-              <input type="range" min="8" :max="['wan22','h3'].includes(genForm.engine) ? 121 : 32" step="2"
+              <input type="range" min="8" :max="['wan22','h3','h3_native'].includes(genForm.engine) ? 121 : 32" step="2"
                      v-model.number="genForm.num_frames" />
             </div>
             <div class="field">
               <div class="range-label"><span>帧率 FPS</span><b>{{ genForm.fps }}</b></div>
-              <input type="range" min="4" :max="['wan22','h3'].includes(genForm.engine) ? 24 : 16" step="1"
+              <input type="range" min="4" :max="['wan22','h3','h3_native'].includes(genForm.engine) ? 24 : 16" step="1"
                      v-model.number="genForm.fps" />
             </div>
             <div class="field">
@@ -294,16 +298,16 @@
             </div>
             <div class="field">
               <div class="range-label"><span>CFG</span><b>{{ genForm.guidance }}</b></div>
-              <input type="range" min="1" :max="['wan22','h3'].includes(genForm.engine) ? 10 : 15" step="0.5"
+              <input type="range" min="1" :max="['wan22','h3','h3_native'].includes(genForm.engine) ? 10 : 15" step="0.5"
                      v-model.number="genForm.guidance" />
             </div>
             <div class="field">
               <label>宽度</label>
-              <input type="number" v-model.number="genForm.width" min="256" :max="['wan22','h3'].includes(genForm.engine) ? 1344 : 1024" step="16" />
+              <input type="number" v-model.number="genForm.width" min="256" :max="['wan22','h3','h3_native'].includes(genForm.engine) ? 1344 : 1024" step="16" />
             </div>
             <div class="field">
               <label>高度</label>
-              <input type="number" v-model.number="genForm.height" min="256" :max="['wan22','h3'].includes(genForm.engine) ? 768 : 1024" step="16" />
+              <input type="number" v-model.number="genForm.height" min="256" :max="['wan22','h3','h3_native'].includes(genForm.engine) ? 768 : 1024" step="16" />
             </div>
             <div class="field">
               <label>随机种子（-1 随机）</label>
@@ -311,8 +315,14 @@
             </div>
           </div>
           <p v-if="genForm.engine === 'h3'" class="comfy-hint">
-            H3 是 guidance 蒸馏模型：<b>固定 8 步、无 CFG</b>，上方「步数 / CFG」两项不生效；
-            模型最少出 5 秒画面，更短的镜头会自动截取到设定时长。宽高按 32 对齐，帧数自动吸附到 17n+5。
+            走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>freevideo_h3_*</b> 预设并固化快照。
+            宽高按 32 对齐、帧数吸附到 17n+5；步数与 CFG 由工作流节点决定（8 步蒸馏图通常固定 8 步）。
+            ComfyUI 侧缺 FreeVideo 节点时这张卡会标记不可用。
+          </p>
+          <p v-else-if="genForm.engine === 'h3_native'" class="comfy-hint">
+            原生兜底通道（进程内推理）：H3 是 guidance 蒸馏模型，<b>固定 8 步、无 CFG</b>，
+            上方「步数 / CFG」两项不生效；模型最少出 5 秒画面，更短的镜头会自动截取到设定时长。
+            宽高按 32 对齐，帧数自动吸附到 17n+5。
           </p>
           <p v-if="genForm.engine === 'comfyui'" class="comfy-hint">
             将按 <b>ComfyUI 工作流模板</b> 的节点映射注入以上参数与参考图；

@@ -1,8 +1,16 @@
-"""MiniMax H3 原生推理引擎（diffusers ModularPipeline，零插件依赖）
+"""MiniMax H3 原生推理引擎（diffusers ModularPipeline）——**兜底通道**
 
-**不依赖 ComfyUI，也不依赖 FreeVideo 插件**：模型以 diffusers modular 组件形式
-发布在 OpenVDN/vdn-minimax-h3，diffusers 0.36+ 原生包含 MiniMaxH3ModularPipeline，
-我们直接用 ``ModularPipeline.from_pretrained(...)`` 在本进程内推理。
+架构口径：ComfyUI 是唯一视频生成底座，H3 的正路是 ``engines/h3_comfy.py``
+（id = ``h3``，走 ComfyUI 工作流 + ``freevideo_h3_*`` 预设）。本模块退为兜底：
+
+- 引擎 id 为 ``h3_native``，**不是默认引擎**，只在 ComfyUI 不可用时手动选用；
+- 与 ComfyUI 路径**不承诺同参数同结果**（工作流图、采样器、蒸馏档位由 ComfyUI
+  侧决定），保留它是为了历史结果可复现 + 无 ComfyUI 环境仍能出片；
+- 8GB 量化档（int4/int8 分级）仍在这里，是「没有 ComfyUI 但想跑 H3」的通道。
+
+实现本身仍不依赖 ComfyUI、也不依赖 FreeVideo 插件：模型以 diffusers modular
+组件形式发布在 OpenVDN/vdn-minimax-h3，diffusers 0.36+ 原生包含
+MiniMaxH3ModularPipeline，用 ``ModularPipeline.from_pretrained(...)`` 进程内推理。
 
 模型链路（8 步蒸馏版，官方 headline 配置）：::
 
@@ -59,18 +67,17 @@ H3_STEPS = 9
 
 class H3Engine(BaseEngine):
     meta = EngineMeta(
-        id="h3",
-        name="MiniMax H3（VDN-H3 原生）",
+        id="h3_native",
+        name="MiniMax H3（原生兜底）",
         description=(
-            "MiniMax H3 本机直连推理 · 8 步出片 · 无需 ComfyUI / FreeVideo 插件 · "
-            "需 NVIDIA 显卡（int8 约需 80GB 内存；int4 实验档约需 52GB 内存）· "
-            f"模型约 {SIZE_TOTAL:.0f}GB"
+            "VDN-H3 8 步蒸馏在 NMVideo 进程内直连推理（含 8GB 量化档）· 不需要 "
+            "ComfyUI / FreeVideo 插件 · 需 NVIDIA 显卡（int8 约需 80GB 内存；"
+            f"int4 实验档约需 52GB 内存）· 模型约 {SIZE_TOTAL:.0f}GB"
         ),
         status="ready",
         supported_modes=("t2v", "i2v", "first_last", "continuation"),
         # 兜底通道：进程内推理，仅 ComfyUI 不可用时使用（非默认引擎）。
-        # 架构口径要求 H3 最终也走 ComfyUI 工作流；本实现保留是为了不破坏
-        # 已产出的历史结果，不再作为默认引擎。
+        # H3 的正路是 engines/h3_comfy.py（id = h3，走 ComfyUI 预设）。
         execution_channel="native",
     )
 

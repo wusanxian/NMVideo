@@ -6,8 +6,9 @@ ComfyUI（/prompt + WS 进度 + history 对账 + 产物归档）执行，NMVideo
 描述、首尾帧双槽、多参考图、预览转正、队列状态），不复制其运行时，也不把
 它的插件节点当作引擎身份——`freevideo_h3_*` 只是「可选工作流之一」。
 
-所以注册表按执行通道排序：ComfyUI 通道在前且是默认引擎；进程内推理的
-anime / wan22 / h3 退为 fallback（历史通道，ComfyUI 不可用时才用）。
+所以注册表按执行通道排序：ComfyUI 通道在前且是默认引擎（`comfyui` 通用工作流 +
+`h3` 专用 H3 预设）；进程内推理的 `h3_native` / `anime` / `wan22` 退为 fallback
+（历史通道，ComfyUI 不可用时才用）。
 """
 from .anime import AnimeEngine
 from .base import (
@@ -20,11 +21,14 @@ from .base import (
 )
 from .comfy import ComfyEngine
 from .h3 import H3Engine
+from .h3_comfy import H3ComfyEngine
 from .wan import WanEngine
 
 ENGINES: dict = {
     # 默认通道：提交 ComfyUI 工作流，模型与节点由 ComfyUI 侧管理
     ComfyEngine.meta.id: ComfyEngine,
+    # 同一通道的专用引擎：H3 按模式套用内置 freevideo_h3_* 预设
+    H3ComfyEngine.meta.id: H3ComfyEngine,
     # ---- 以下为兜底通道（进程内推理，非默认） ----
     H3Engine.meta.id: H3Engine,
     AnimeEngine.meta.id: AnimeEngine,

@@ -100,10 +100,11 @@
             <option value="standard">标准档</option>
             <option value="high">精细档</option>
           </select>
-          <select v-model="submitForm.engine" class="sel" title="ComfyUI 是默认生成通道；AnimeDiff / MiniMax H3 属本机兜底通道，仅在 ComfyUI 不可用时使用">
+          <select v-model="submitForm.engine" class="sel" title="ComfyUI 是默认生成通道（H3 走 ComfyUI 预设）；AnimeDiff / H3 原生属本机兜底通道，仅在 ComfyUI 不可用时使用">
             <option value="comfyui">ComfyUI 工作流（默认）</option>
+            <option value="h3">MiniMax H3（ComfyUI 预设）</option>
             <option value="anime">AnimeDiff（本机兜底）</option>
-            <option value="h3">MiniMax H3（原生推理·兜底）</option>
+            <option value="h3_native">MiniMax H3 原生（兜底）</option>
           </select>
           <button class="btn btn-primary" :disabled="submitting" @click="submitBatch">
             {{ submitting ? '提交中…' : (submitForm.kind === 'preview' ? '▶ 提交预览批次' : '▶ 提交正式批次') }}

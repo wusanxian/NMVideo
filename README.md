@@ -2,7 +2,7 @@
 
 Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.4.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。
 
-**架构口径：ComfyUI 是唯一视频生成底座。** 所有视频生成都提交到 ComfyUI 执行（`/prompt` + WS 进度 + `/history` 对账 + 产物归档），NMVideo 只负责编排、资产、版本、剪辑与导出；模型与节点由 ComfyUI 侧管理。**FreeVideo 只作为产品能力的参考对象**——工作流能力描述、首尾帧双槽、多参考图、预览转正、队列状态这些设计借鉴它的思路，但不复制它的运行时、不把它的插件节点当引擎身份：`freevideo_h3_*` 只是内置工作流之一，缺节点时会在提交前如实阻断并列出安装缺项。0.1.4 引入的 anime / wan22 / h3 进程内推理（diffusers）保留为**兜底通道**，仅在 ComfyUI 未连接时使用，不再是默认引擎，也不承诺与 ComfyUI 路径同参数同结果。详见[架构定位](docs/architecture.md)。
+**架构口径：ComfyUI 是唯一视频生成底座。** 所有视频生成都提交到 ComfyUI 执行（`/prompt` + WS 进度 + `/history` 对账 + 产物归档），NMVideo 只负责编排、资产、版本、剪辑与导出；模型与节点由 ComfyUI 侧管理。**FreeVideo 只作为产品能力的参考对象**——工作流能力描述、首尾帧双槽、多参考图、预览转正、队列状态这些设计借鉴它的思路，但不复制它的运行时、不把它的插件节点当引擎身份：`freevideo_h3_*` 只是内置工作流之一，缺节点时会在提交前如实阻断并列出安装缺项。0.1.4 引入的 anime / wan22 与 H3 原生推理（`h3_native`，diffusers）保留为**兜底通道**，仅在 ComfyUI 未连接时使用，不再是默认引擎，也不承诺与 ComfyUI 路径同参数同结果。详见[架构定位](docs/architecture.md)。
 
 本地运行的 AI 文生视频生成器，**以 ComfyUI 为生成底座、可插拔引擎架构**。产品设计参考 FreeVideo 的低显存哲学：硬件自适应（模型选择/量化/卸载全自动）、四档质量、两遍采样、视频自带参数。
 
@@ -11,8 +11,9 @@ Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/r
 | 引擎 | 模型 | 最低硬件 | 出片速度 |
 |---|---|---|---|
 | **ComfyUI 工作流（默认通道）** | 由你的 ComfyUI 安装决定（H3 / Wan / AnimateDiff 等任意图） | 一台运行中的 ComfyUI 服务器 | 取决于服务端 GPU 与所选工作流 |
+| **MiniMax H3（ComfyUI 通道）** | `freevideo_h3_*` 内置预设（FreeVideo 节点） | ComfyUI + FreeVideo 插件，官方最低 8GB 显存 | 取决于 ComfyUI 服务端 GPU |
 | AnimeDiff 动漫（兜底） | dreamlike-anime + AnimateDiff v3 | 纯 CPU，8GB 内存 | 256px 8 帧 12 步 ≈ 4 分钟（i5 CPU） |
-| MiniMax H3 原生（兜底） | VDN-H3 8 步蒸馏 + Qwen3-VL 编码器 | **16GB 显存 + 32GB 内存**，模型 139GB | 24GB 卡：5 秒镜头分钟级（8 步前向） |
+| MiniMax H3 原生（兜底 `h3_native`） | VDN-H3 8 步蒸馏 + Qwen3-VL 编码器 | **8~16GB 显存**，内存 int8 ≈ 80GB / int4 ≈ 52GB，模型 139GB | 24GB 卡：5 秒镜头分钟级（8 步前向） |
 | Wan 2.2 文生视频（兜底） | Wan2.2-TI2V-5B | **8GB 显存 + 32GB 内存** | 480p 33 帧 20 步 ≈ 10-30 分钟（8GB 卡） |
 | Wan 2.2 画质档（兜底） | Wan2.2-T2V-A14B（MoE 双专家） | 20GB+ 显存 + 60GB+ 内存 | 720p 81 帧 30 步 ≈ 30-90 分钟 |
 
@@ -72,12 +73,16 @@ Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/r
 
 | 硬件 | 自动方案 | 磁盘需求 |
 |---|---|---|
-| ≥16GB 显存 + ≥32GB 内存 | MiniMax H3（VDN-H3 8 步，diffusers 兜底通道） | ~139GB |
+| ≥10GB 显存 + ≥80GB 内存 | MiniMax H3 **原生兜底**（VDN-H3 8 步 + int8 量化） | ~150GB |
 | ≥22GB 显存 + ≥60GB 内存 | Wan2.2-T2V-A14B（画质标杆） | ~135GB |
 | ≥8GB 显存 + ≥32GB 内存 | Wan2.2-TI2V-5B（int8/fp8 + 逐层卸载） | ~42GB |
 | 无 NVIDIA 显卡 | AnimeDiff 动漫引擎（CPU 可跑） | ~14GB |
+| 要 H3（正路） | 不自动安装：装 ComfyUI + FreeVideo 节点，权重由 ComfyUI 侧管理 | — |
 
-运行时数据放在 **exe 同级 `runtime/` 目录**（venv、模型、数据库、生成产物都在里面），删掉它再运行 = 全新安装；整个目录拷走 = 迁移到别的电脑。命令行参数：`--model auto|wan-ti2v|wan-a14b|anime`、`--torch auto|cuda|cpu`、`--port N`、`--no-download`、`--reinstall`。
+H3 正路是 **ComfyUI 通道**；装机矩阵里的 H3 分支只准备「原生兜底」通道（139GB 模型），
+需要在没有 ComfyUI 的机器上出片时才用。命令行 `--model h3` 可显式指定。
+
+运行时数据放在 **exe 同级 `runtime/` 目录**（venv、模型、数据库、生成产物都在里面），删掉它再运行 = 全新安装；整个目录拷走 = 迁移到别的电脑。命令行参数：`--model auto|h3|wan-ti2v|wan-a14b|anime`、`--torch auto|cuda|cpu`、`--port N`、`--no-download`、`--reinstall`。
 
 自己重新打包 exe：在开发机执行 `python packaging/build.py --no-fe`（需先 `cd frontend && npm run build`）。
 
@@ -325,8 +330,11 @@ aivideo/
   节点与模型。「ComfyUI 设置」页提供内置预设一键应用：**MiniMax H3 文/图生视频**（FreeVideo
   插件节点，可选）、**Wan 2.2 TI2V-5B**、**AnimateDiff Evolved**（需 VideoHelperSuite），也可粘贴
   自己的 API JSON。工作流缺少所需节点时，生成会在提交前被阻断并列出缺项，不会静默降级。
-- **anime / wan22 / h3 是兜底通道**：进程内 diffusers 推理，仅在 ComfyUI 未连接时使用，不再是
-  默认引擎。它们与 ComfyUI 路径不共享工作流快照，参数语义也不完全等价（例如 H3 固定 8 步、
+- **H3 也走 ComfyUI**：选「MiniMax H3（ComfyUI 通道）」时按模式自动套用 `freevideo_h3_*`
+  内置预设并固化快照；ComfyUI 侧没装 FreeVideo 节点时那张引擎卡会如实标记不可用并给安装指引。
+  也可以在「ComfyUI 设置」里改用 `minimax_h3_*`（MiniMax 官方 API 节点，按量计费）或自备 H3 图。
+- **h3_native / anime / wan22 是兜底通道**：进程内 diffusers 推理，仅在 ComfyUI 未连接时使用，
+  不是默认引擎。它们与 ComfyUI 路径不共享工作流快照，参数语义也不完全等价（例如 H3 固定 8 步、
   无 CFG），同一镜头换通道重新生成时不要指望逐帧一致。
 - LLM / 图像生成默认未配置（OpenAI 兼容协议，支持 DeepSeek/通义/Kimi/Ollama 及任意兼容端点），
   在「🧩 模型服务」页填写后即用；未配置时相关按钮会给出明确引导，不影响其余功能。

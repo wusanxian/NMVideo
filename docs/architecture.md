@@ -32,12 +32,17 @@
 | 通道 | 引擎 | 语义 |
 |---|---|---|
 | `comfyui` | `comfyui`（默认，`DEFAULT_ENGINE_ID`） | 入队即固化工作流快照；队列按 `(引擎, 服务地址)` 缓存；支持 prompt_id 恢复 |
-| `native` | `anime` / `wan22` / `h3` | 历史兜底通道，ComfyUI 不可用时才用；无工作流快照，不支持断点续算 |
+| `comfyui` | `h3`（专用预设） | 同一通道，按模式套 `freevideo_h3_*` 预设；`FreeVideoGenerate` 缺失时引擎卡如实不可用 |
+| `native` | `h3_native` / `anime` / `wan22` | 历史兜底通道，ComfyUI 不可用时才用；无工作流快照，不支持断点续算 |
 
 判断一律用 `engines.is_comfy_engine(engine_id)`，不要再写 `engine == "comfyui"`——新增 ComfyUI 通道引擎时不需要改队列。
 
 模板路由：`EngineMeta.workflow_presets`（mode → preset id）由引擎自己声明；未声明则用用户在「ComfyUI 设置」里 apply 的当前模板。`comfyui.resolve_template_for()` 不再按引擎 id 硬编码 FreeVideo 预设。
 
-## 5. 待收敛项（下一批）
+## 5. 收敛现状
 
-`anime` / `wan22` / `h3` 目前仍是 diffusers 进程内推理。按本口径，H3 最终应以 ComfyUI 工作流形式提供（`execution_channel=comfyui` + `workflow_presets`），本批只完成注册表与判断逻辑收敛，推理实现未改动。
+`h3` 已归位 ComfyUI 通道：`engines/h3_comfy.py` 继承 `ComfyEngine`（提交 / 进度 / 归档 / 断线恢复全部复用），只额外声明 `workflow_presets` 与节点探测。FreeVideo 节点是这一张图的依赖，不是引擎身份——缺节点时 `H3ComfyEngine.describe()` 返回不可用并给安装指引，也可以在 ComfyUI 设置里换成 `minimax_h3_*`（API 计费）或自备 H3 图。
+
+原生 diffusers H3 改名为 `h3_native`，仍是兜底通道：实现未改动，8GB 量化档保留在它这里。装机矩阵**保留** H3 自动分支（`c91ad05` 的量化成果），但文案明确标注「兜底 / 正路走 ComfyUI」——这是有意偏离 `8b939f9`（该提交原本要彻底移除自动安装），原因是不能被架构收敛抵消掉刚做好的小显存能力。
+
+剩余待收敛项只有 `anime` / `wan22` 两个进程内引擎。

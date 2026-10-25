@@ -58,11 +58,19 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
             params["width"], params["height"] = new_w, new_h
         if clamped:
             params["upgrade_clamped"] = "；".join(clamped)
+    # 兼容旧数据：h3 在「归位 ComfyUI 通道」之前是原生推理，那批预览没有工作流
+    # 快照。升级时退回原生兜底引擎（h3_native），别让历史预览彻底升不上去。
+    # 有快照的 h3（本批之后的 ComfyUI 通道）正常走上面的快照复用。
+    if (params.get("engine") == "h3"
+            and not Path(source.get("workflow_snapshot") or "").is_file()):
+        params["engine"] = "h3_native"
     params = normalize_generation(params, params)
 
     graph, template = None, None
-    # 只有 ComfyUI 通道有工作流快照可复用；兜底通道按原参数重新生成
-    if is_comfy_engine(source["engine"]):
+    # 只有 ComfyUI 通道有工作流快照可复用；兜底通道按原参数重新生成。
+    # 用 params["engine"] 而不是 source["engine"]：上面可能刚把旧 h3 预览
+    # 降级成 h3_native（旧数据没有快照），这里必须跟着走兜底分支。
+    if is_comfy_engine(params.get("engine") or source["engine"]):
         path = Path(source.get("workflow_snapshot") or "")
         if not path.is_file():
             raise ValueError("原预览的工作流快照缺失，无法保留原输入；请恢复快照")

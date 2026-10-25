@@ -21,6 +21,8 @@
           >
             <div class="ec-name">
               <span class="dot" :class="e.status"></span>{{ e.name }}
+              <span v-if="e.is_default" class="ec-badge">默认</span>
+              <span v-else-if="e.execution_channel === 'native'" class="ec-badge fallback">兜底</span>
             </div>
             <div class="ec-desc">{{ e.description }}</div>
             <div v-if="e.note" class="ec-note">⚠ {{ e.note }}</div>
@@ -98,11 +100,11 @@
       <div class="param-grid">
         <div class="field">
           <div class="range-label"><span>帧数（时长=帧数/帧率）</span><b>{{ form.num_frames }} 帧 / {{ (form.num_frames / form.fps).toFixed(1) }}s</b></div>
-          <input type="range" min="8" :max="['wan22','h3'].includes(form.engine) ? 121 : 32" :step="['wan22','h3'].includes(form.engine) ? 4 : 2" v-model.number="form.num_frames" />
+          <input type="range" min="8" :max="['wan22','h3','h3_native'].includes(form.engine) ? 121 : 32" :step="['wan22','h3','h3_native'].includes(form.engine) ? 4 : 2" v-model.number="form.num_frames" />
         </div>
         <div class="field">
           <div class="range-label"><span>帧率 FPS</span><b>{{ form.fps }}</b></div>
-          <input type="range" min="4" :max="['wan22','h3'].includes(form.engine) ? 24 : 16" step="1" v-model.number="form.fps" />
+          <input type="range" min="4" :max="['wan22','h3','h3_native'].includes(form.engine) ? 24 : 16" step="1" v-model.number="form.fps" />
         </div>
         <div class="field">
           <div class="range-label"><span>采样步数（越高越精细越慢）</span><b>{{ form.steps }}</b></div>
@@ -110,15 +112,15 @@
         </div>
         <div class="field">
           <div class="range-label"><span>提示词引导 CFG</span><b>{{ form.guidance }}</b></div>
-          <input type="range" min="1" :max="['wan22','h3'].includes(form.engine) ? 10 : 15" step="0.5" v-model.number="form.guidance" />
+          <input type="range" min="1" :max="['wan22','h3','h3_native'].includes(form.engine) ? 10 : 15" step="0.5" v-model.number="form.guidance" />
         </div>
         <div class="field">
           <label>宽度</label>
-          <input type="number" v-model.number="form.width" min="256" :max="['wan22','h3'].includes(form.engine) ? 1344 : 1024" step="16" />
+          <input type="number" v-model.number="form.width" min="256" :max="['wan22','h3','h3_native'].includes(form.engine) ? 1344 : 1024" step="16" />
         </div>
         <div class="field">
           <label>高度</label>
-          <input type="number" v-model.number="form.height" min="256" :max="['wan22','h3'].includes(form.engine) ? 768 : 1024" step="16" />
+          <input type="number" v-model.number="form.height" min="256" :max="['wan22','h3','h3_native'].includes(form.engine) ? 768 : 1024" step="16" />
         </div>
         <div class="field">
           <label>随机种子（-1 为随机）</label>
@@ -127,7 +129,7 @@
         <div class="field">
           <label>分辨率快捷</label>
           <div class="chips">
-            <template v-if="['wan22','h3'].includes(form.engine)">
+            <template v-if="['wan22','h3','h3_native'].includes(form.engine)">
               <span class="chip" @click="setSize(832, 480)">480p 横</span>
               <span class="chip" @click="setSize(480, 832)">480p 竖</span>
               <span class="chip" @click="setSize(1280, 720)">720p 横</span>
@@ -145,8 +147,13 @@
 
       <!-- 提交 -->
       <p v-if="form.engine === 'h3'" class="hint-text" style="margin: 0 0 10px">
-        H3 是 guidance 蒸馏模型：<b>固定 8 步、无 CFG</b>（上方「步数 / CFG」不生效）；最少出 5 秒画面，
-        更短的镜头会自动截取到设定时长；宽高按 32 对齐。
+        当前走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>freevideo_h3_*</b> 预设并固化快照。
+        宽高按 32 对齐、帧数吸附到 17n+5；步数与 CFG 由工作流节点决定（8 步蒸馏图通常固定 8 步、无 CFG）。
+        ComfyUI 侧缺 FreeVideo 节点时，这张卡会如实标记为不可用。
+      </p>
+      <p v-else-if="form.engine === 'h3_native'" class="hint-text" style="margin: 0 0 10px">
+        原生兜底通道（进程内推理，不经 ComfyUI）：H3 是 guidance 蒸馏模型，<b>固定 8 步、无 CFG</b>
+        （上方「步数 / CFG」不生效）；最少出 5 秒画面，更短的镜头会自动截取到设定时长；宽高按 32 对齐。
       </p>
       <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap">
         <button class="btn btn-primary" :disabled="store.submitting || !form.prompt.trim()" @click="submit">
