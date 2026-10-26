@@ -34,6 +34,11 @@ class JobQueue:
     # ---------- 生命周期 ----------
     def start(self):
         self._recover_stale_jobs()
+        # executor 被 stop() 关闭后无法复用（shutdown 不可逆）。lifespan 可能
+        # 多次 start/stop（测试 TestClient、热重载），这里惰性重建，避免单例
+        # 队列在第二轮 _run_job 里向已关闭的线程池提交任务而整体失败。
+        if self._executor is None or self._executor._shutdown:  # noqa: SLF001
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gen")
         if self._task is None:
             self._task = asyncio.create_task(self._worker())
 
@@ -222,6 +227,10 @@ class JobQueue:
             self._task.cancel()
             self._task = None
         self._executor.shutdown(wait=False)
+        # shutdown 不可逆：立刻换一个新池，保证 stop 之后直接调 _run_job
+        # （测试直接驱动、嵌入场景）不会向已关闭的线程池提交任务；
+        # 旧池线程随最后一个任务自然退出，不泄漏
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gen")
 
     # ---------- 外部操作 ----------
     async def submit(self, params: dict) -> str:
