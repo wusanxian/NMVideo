@@ -485,7 +485,9 @@ def ensure_python_env(rt: Path, reinstall: bool = False):
 def pip_install(py: Path, args: list, desc: str):
     """args: pip install 后的参数（可含 --index-url；已指定源时不再叠加默认镜像）"""
     ui.step(desc)
-    cmd = [str(py), "-m", "pip", "install", *args]
+    # --no-warn-script-location：内嵌 Python 的 Scripts 目录不进 PATH 是刻意的隔离设计，
+    # isympy.exe 之类的脚本位置警告对用户只是噪音
+    cmd = [str(py), "-m", "pip", "install", "--no-warn-script-location", *args]
     if not any(a == "-i" or a.startswith("--index-url") for a in args):
         cmd += ["-i", PIP_INDEX]
     proc = subprocess.run(cmd)
