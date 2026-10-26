@@ -142,6 +142,11 @@ export const api = {
   testLlm: () => request('/services/llm/test', { method: 'POST' }),
   testImagegen: () => request('/services/imagegen/test', { method: 'POST' }),
 
+  // ---------- MCP（AI 助手接入） ----------
+  mcpState: () => request('/services/mcp'),
+  mcpReveal: () => request('/services/mcp/reveal', { method: 'POST' }),
+  saveMcpConfig: (data) => request('/services/mcp', { method: 'PUT', body: JSON.stringify(data) }),
+
   llmScript: (data) => request('/llm/script', { method: 'POST', body: JSON.stringify(data) }),
   llmPolish: (data) => request('/llm/polish', { method: 'POST', body: JSON.stringify(data) }),
   llmDialogue: (data) => request('/llm/dialogue', { method: 'POST', body: JSON.stringify(data) }),

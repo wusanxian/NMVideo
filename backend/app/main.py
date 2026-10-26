@@ -30,7 +30,11 @@ async def lifespan(app: FastAPI):
     from . import novel_submit
     novel_submit.register_loop(asyncio.get_running_loop())
     job_queue.start()
-    yield
+    # MCP 子应用（/mcp）有自己的 lifespan（初始化 StreamableHTTP task group），
+    # Starlette 不会自动运行挂载子应用的 lifespan，这里手动链入
+    from .mcp_server import mcp_lifespan
+    async with mcp_lifespan():
+        yield
     job_queue.stop()
 
 
@@ -70,6 +74,16 @@ app.include_router(storyboard_router.router)
 app.include_router(assets_router.router)
 app.include_router(services_router.router)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
+
+# MCP 端点（外部 AI 助手接入）：Route 精确匹配 /mcp，
+# 必须在 SPA catch-all 之前注册（Mount("/mcp") 不匹配裸路径，会被 catch-all 抢走）
+from starlette.routing import Route  # noqa: E402
+
+from .mcp_server import build_mcp_asgi_app  # noqa: E402
+
+app.router.routes.append(
+    Route("/mcp", build_mcp_asgi_app(), methods=["GET", "POST", "DELETE"])
+)
 
 
 @app.get("/api/health")

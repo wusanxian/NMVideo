@@ -98,6 +98,38 @@ def put_comfy_config(data: ComfyConfig):
 
 
 # =====================================================================
+# MCP（AI 助手接入）
+# =====================================================================
+@router.get("/services/mcp")
+def get_mcp_state():
+    """MCP 接入状态（token 打码；完整值走 reveal）。"""
+    from .. import mcp_server
+
+    return mcp_server.get_state()
+
+
+@router.post("/services/mcp/reveal")
+def reveal_mcp_token():
+    """返回完整 MCP 连接地址与 token（供前端「复制」按钮；本机 UI 场景）。"""
+    from .. import mcp_server
+
+    return {"endpoint_path": "/mcp", "token": mcp_server.reveal_token()}
+
+
+class MCPConfig(BaseModel):
+    enabled: bool
+    regenerate: bool = False
+
+
+@router.put("/services/mcp")
+def put_mcp_config(data: MCPConfig):
+    """启用/停用 MCP 端点；regenerate=true 时强制换新 token。"""
+    from .. import mcp_server
+
+    return mcp_server.set_enabled(data.enabled, data.regenerate)
+
+
+# =====================================================================
 # 连通测试
 # =====================================================================
 @router.post("/services/llm/test")
