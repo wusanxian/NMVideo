@@ -37,7 +37,7 @@
             <span>📄 {{ n.chapter_count }} 章</span>
             <span>🔤 {{ fmtCount(n.char_count) }} 字</span>
           </div>
-          <div class="novel-sub">{{ n.encoding }} · {{ fmtTime(n.created_at) }} · #{{ n.content_sha256.slice(0, 8) }}</div>
+          <div class="novel-sub">{{ n.encoding || '—' }} · {{ fmtTime(n.created_at) }} · #{{ (n.content_sha256 || '').slice(0, 8) || '—' }}</div>
         </div>
       </aside>
 

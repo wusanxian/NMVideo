@@ -77,12 +77,16 @@ body {
 
 .nav-extra {
   display: flex;
-  gap: 4px;
+  /* 侧栏只有 150px 宽：两个入口竖排，避免「任务队列 / 作品画廊」被挤成断字换行 */
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   padding: 10px 12px 4px;
   border-top: 1px solid var(--border);
   margin-top: 8px;
 }
 .nav-extra a {
+  white-space: nowrap;
   font-size: 11.5px;
   color: var(--text-dim);
   text-decoration: none;
@@ -161,6 +165,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 /* ---------- 按钮 ---------- */
 .btn {
+  /* 按钮文字不换行：页头按钮被长描述挤压时会变成两行（如「← 返回工作台」） */
+  white-space: nowrap;
+  flex-shrink: 0;
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text);

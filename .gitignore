@@ -62,6 +62,7 @@ backend/settings.json
 
 # 前端缓存与日志
 .vite/
+frontend/.shots/
 coverage/
 npm-debug.log*
 yarn-debug.log*

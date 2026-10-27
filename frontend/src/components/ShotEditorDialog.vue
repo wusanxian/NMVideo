@@ -248,7 +248,7 @@
             <div v-if="shot.voices && shot.voices.length" class="voice-list">
               <div v-for="v in shot.voices" :key="v.id" class="voice-item">
                 <audio :src="v.audio_url" controls preload="metadata"></audio>
-                <span class="v-meta">{{ v.character_name || v.voice }} · {{ v.duration_s.toFixed(1) }}s · {{ v.engine }}</span>
+                <span class="v-meta">{{ v.character_name || v.voice }} · {{ (v.duration_s || 0).toFixed(1) }}s · {{ v.engine }}</span>
                 <button class="icon-btn danger" @click="$emit('delete-voice', v.id)">✕</button>
               </div>
             </div>

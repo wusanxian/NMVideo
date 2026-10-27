@@ -310,7 +310,7 @@
               <template v-if="voicesOf(item).length">
                 <div v-for="v in voicesOf(item)" :key="v.id" class="tr-clip">
                   <audio :src="v.audio_url" controls preload="metadata"></audio>
-                  <span class="clip-meta">{{ v.character_name || v.voice }} · {{ v.duration_s.toFixed(1) }}s</span>
+                  <span class="clip-meta">{{ v.character_name || v.voice }} · {{ (v.duration_s || 0).toFixed(1) }}s</span>
                   <!-- PR-11 后半：配音波形 -->
                   <div v-if="waveforms[v.audio_url]" class="wave-bars">
                     <span v-for="(p, i) in waveforms[v.audio_url]" :key="i" class="wave-bar"
@@ -510,6 +510,23 @@
       @saved="onCharacterSaved"
     />
   </div>
+
+  <!-- 项目读不到时不能白屏：给出原因和退路（删过的链接、后端换了库都会走到这里） -->
+  <div v-else class="page">
+    <header class="page-head">
+      <div>
+        <h1>项目</h1>
+        <div class="page-sub">{{ loadError ? '读取失败' : '正在读取项目…' }}</div>
+      </div>
+    </header>
+    <div class="panel">
+      <p v-if="loadError" class="form-msg">{{ loadError }}</p>
+      <p v-else class="dim">正在加载项目数据，请稍候…</p>
+      <p style="margin-top: 14px">
+        <router-link to="/projects" class="btn">← 返回项目列表</router-link>
+      </p>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -530,6 +547,7 @@ const store = useProjectStore()
 const jobsStore = useJobsStore()
 
 const project = computed(() => store.current)
+const loadError = ref('')
 const totalShots = computed(() =>
   (project.value?.scenes || []).reduce((n, s) => n + s.shots.length, 0))
 const approvedShots = computed(() =>
@@ -580,7 +598,19 @@ watch(() => route.query.tab, value => {
 })
 
 onMounted(async () => {
-  await store.openProject(route.params.id)
+  try {
+    await store.openProject(route.params.id)
+  } catch (e) {
+    // 项目不存在/后端不可用时，页面必须能说明原因并给退路，而不是一片空白
+    loadError.value = e.status === 404
+      ? '项目不存在，可能已被删除。'
+      : `读取项目失败：${e.message}`
+    return
+  }
+  if (!project.value) {
+    loadError.value = '项目数据为空，请返回列表重试。'
+    return
+  }
   // 支持 ?tab= 直接定位（侧栏导航跳转用）
   const qTab = route.query.tab
   if (qTab && VALID_TABS.includes(qTab)) tab.value = qTab
