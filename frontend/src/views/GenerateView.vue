@@ -10,24 +10,31 @@
     <div class="panel">
       <!-- 引擎选择 -->
       <div class="field">
-        <label>生成引擎</label>
-        <div class="engine-cards">
-          <div
-            v-for="e in engines"
-            :key="e.id"
-            class="engine-card"
-            :class="{ active: form.engine === e.id, disabled: e.status !== 'ready' }"
-            @click="e.status === 'ready' && (form.engine = e.id)"
-          >
-            <div class="ec-name">
-              <span class="dot" :class="e.status"></span>{{ e.name }}
-              <span v-if="e.is_default" class="ec-badge">默认</span>
-              <span v-else-if="e.execution_channel === 'native'" class="ec-badge fallback">兜底</span>
+        <label>生成引擎（两条通道都可用，按你的需要选）</label>
+        <div v-for="g in engineGroups" :key="g.key" class="engine-group">
+          <div class="engine-group-head">
+            <span class="eg-title">{{ g.label }}</span>
+            <span class="eg-hint">{{ g.hint }}</span>
+          </div>
+          <div class="engine-cards">
+            <div
+              v-for="e in g.items"
+              :key="e.id"
+              class="engine-card"
+              :class="{ active: form.engine === e.id, disabled: e.status !== 'ready' }"
+              @click="selectEngine(e)"
+            >
+              <div class="ec-name">
+                <span class="dot" :class="e.status"></span>{{ e.name }}
+                <span v-if="form.engine === e.id" class="ec-badge">当前选择</span>
+                <span v-else-if="e.status !== 'ready'" class="ec-badge fallback">不可用</span>
+              </div>
+              <div class="ec-desc">{{ e.description }}</div>
+              <div v-if="e.note" class="ec-note">⚠ {{ e.note }}</div>
             </div>
-            <div class="ec-desc">{{ e.description }}</div>
-            <div v-if="e.note" class="ec-note">⚠ {{ e.note }}</div>
           </div>
         </div>
+        <div v-if="engineNotice" class="engine-notice">{{ engineNotice }}</div>
       </div>
 
       <!-- 硬件面板（Wan 引擎按硬件自适应） -->
@@ -166,9 +173,10 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { engineName, getEnginePref, resolveEngine, setEnginePref } from '../enginePref'
 import { useJobsStore } from '../store/jobs'
 
 const PRESETS = [
@@ -205,11 +213,12 @@ const qualityPresets = ref([])
 const hardware = ref(null)
 const message = ref('')
 const activePreset = ref('')
+const engineNotice = ref('')
 
 const form = reactive({
-  // 默认引擎 = ComfyUI 通道（架构口径：ComfyUI 是唯一视频生成底座）。
-  // ComfyUI 未连接时由 onMounted 的可用性检查自动降级到兜底引擎。
-  engine: 'comfyui',
+  // 引擎由用户自选：默认 ComfyUI 通道，但记的是用户上一次的选择。
+  // 选中即写入偏好，其他入口（分镜弹窗 / 小说批量 / 快捷生成）沿用。
+  engine: getEnginePref(),
   prompt: '',
   negative_prompt: 'worst quality, low quality, blurry, watermark, signature',
   width: 512,
@@ -222,6 +231,24 @@ const form = reactive({
   preset: '',
   preview: false,
 })
+
+// 按执行通道分组：把"经 ComfyUI"和"本机进程内"分开摆，但两组都开放给用户选，
+// 产品只标注区别，不替用户做取舍。
+const engineGroups = computed(() => {
+  const comfy = engines.value.filter((e) => e.execution_channel !== 'native')
+  const native = engines.value.filter((e) => e.execution_channel === 'native')
+  return [
+    { key: 'comfyui', label: 'ComfyUI 通道', hint: '提交工作流给 ComfyUI 执行，模型与节点由它管理', items: comfy },
+    { key: 'native', label: '本机进程内通道', hint: '不依赖 ComfyUI，直接在本机加载模型推理', items: native },
+  ].filter((g) => g.items.length)
+})
+
+function selectEngine(e) {
+  if (e.status !== 'ready') return
+  form.engine = e.id
+  setEnginePref(e.id)
+  engineNotice.value = ''
+}
 
 function applyPreset(p) {
   form.prompt = p.prompt
@@ -276,12 +303,13 @@ async function submit() {
 onMounted(async () => {
   try {
     engines.value = await api.engines()
-    // 默认引擎是 ComfyUI（唯一视频生成底座）。ComfyUI 未连接时自动切到第一个
-    // 可用引擎（anime / wan22 / h3 属本机兜底通道），避免一打开就停在不可用引擎上。
-    const current = engines.value.find((e) => e.id === form.engine)
-    if (!current || current.status !== 'ready') {
-      const usable = engines.value.find((e) => e.status === 'ready')
-      if (usable) form.engine = usable.id
+    // 沿用用户上次的选择；只有它当前确实不可用，才临时切到别的可用引擎。
+    // 注意不回写偏好——引擎恢复后用户的选择应当自动生效。
+    const preferred = form.engine
+    const { engine, fallback } = resolveEngine(engines.value, preferred)
+    if (fallback) {
+      form.engine = engine
+      engineNotice.value = `你上次选的「${engineName(engines.value, preferred)}」当前不可用，本次先用「${engineName(engines.value, engine)}」；它恢复后会自动沿用你的选择。`
     }
   } catch {
     engines.value = []
@@ -305,6 +333,13 @@ onMounted(async () => {
       /* ignore */
     }
     localStorage.removeItem('aivideo:reuse')
+    // 复用的任务可能来自已不可用的引擎，这里再校一次可用性，别让表单停在坏引擎上
+    const reused = form.engine
+    const { engine, fallback } = resolveEngine(engines.value, reused)
+    if (fallback) {
+      form.engine = engine
+      engineNotice.value = `复用参数里的「${engineName(engines.value, reused)}」当前不可用，本次先用「${engineName(engines.value, engine)}」。`
+    }
   }
 })
 </script>

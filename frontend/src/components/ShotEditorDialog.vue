@@ -261,16 +261,17 @@
           <div class="engine-cards">
             <div v-for="e in engines" :key="e.id" class="engine-card"
                  :class="{ active: genForm.engine === e.id, disabled: e.status !== 'ready' }"
-                 @click="e.status === 'ready' && (genForm.engine = e.id)">
+                 @click="selectEngine(e)">
               <div class="ec-name">
                 <span class="dot" :class="e.status"></span>{{ e.name }}
-                <span v-if="e.is_default" class="ec-badge">默认</span>
-                <span v-else-if="e.execution_channel === 'native'" class="ec-badge fallback">兜底</span>
+                <span v-if="genForm.engine === e.id" class="ec-badge">当前选择</span>
+                <span v-else-if="e.status !== 'ready'" class="ec-badge fallback">不可用</span>
               </div>
               <div class="ec-desc">{{ e.description }}</div>
               <div v-if="e.note" class="ec-note">⚠ {{ e.note }}</div>
             </div>
           </div>
+          <div v-if="engineNotice" class="comfy-hint">{{ engineNotice }}</div>
 
           <div v-if="genForm.engine !== 'anime'" class="chips" style="margin-top: 12px">
             <span v-for="q in presets" :key="q.id" class="chip"
@@ -407,6 +408,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
+import { engineName, getEnginePref, resolveEngine, setEnginePref } from '../enginePref'
 
 const props = defineProps({
   shot: { type: Object, required: true },
@@ -517,23 +519,33 @@ function syncComposition() {
   if (Object.keys(facings).length) form.composition.character_facing = facings
 }
 
+const engineNotice = ref('')
+
 const genForm = reactive({
-  // 默认走 ComfyUI 通道；不可用时由下方 watch 自动降级到兜底引擎
-  engine: 'comfyui',
+  // 引擎由用户自选：沿用全局偏好（在生成页或这里选过都会记住）
+  engine: getEnginePref(),
   width: 512, height: 512,
   num_frames: 16, fps: 8, steps: 25, guidance: 7.5,
   seed: -1, preset: '', preview: false,
   use_character_images: true, use_character_lora: true,
 })
 
-// 默认引擎是 ComfyUI（唯一视频生成底座）；ComfyUI 未连接时自动降级到第一个
-// 可用引擎（anime/wan22/h3 属兜底通道），别让用户对着不可用卡片发呆。
+function selectEngine(e) {
+  if (e.status !== 'ready') return
+  genForm.engine = e.id
+  setEnginePref(e.id)
+  engineNotice.value = ''
+}
+
+// 偏好引擎当前不可用时临时换个可用的，但不回写偏好——
+// 引擎恢复后用户原来的选择自动生效。
 watch(() => props.engines, (list) => {
   if (!list || !list.length) return
-  const current = list.find((e) => e.id === genForm.engine)
-  if (!current || current.status !== 'ready') {
-    const usable = list.find((e) => e.status === 'ready')
-    if (usable) genForm.engine = usable.id
+  const preferred = genForm.engine
+  const { engine, fallback } = resolveEngine(list, preferred)
+  if (fallback) {
+    genForm.engine = engine
+    engineNotice.value = `你上次选的「${engineName(list, preferred)}」当前不可用，本次先用「${engineName(list, engine)}」。`
   }
 }, { immediate: true })
 

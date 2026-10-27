@@ -100,16 +100,17 @@
             <option value="standard">标准档</option>
             <option value="high">精细档</option>
           </select>
-          <select v-model="submitForm.engine" class="sel" title="ComfyUI 是默认生成通道（H3 走 ComfyUI 预设）；AnimeDiff / H3 原生属本机兜底通道，仅在 ComfyUI 不可用时使用">
-            <option value="comfyui">ComfyUI 工作流（默认）</option>
-            <option value="h3">MiniMax H3（ComfyUI 预设）</option>
-            <option value="anime">AnimeDiff（本机兜底）</option>
-            <option value="h3_native">MiniMax H3 原生（兜底）</option>
+          <select :value="submitForm.engine" class="sel" title="引擎由你自选：ComfyUI 通道（comfyui / h3）与本机进程内通道（h3_native / anime / wan22）都可用，选择会被记住" @change="onEngineChange">
+            <option v-if="!engines.length" :value="submitForm.engine">{{ submitForm.engine }}（引擎列表未加载）</option>
+            <option v-for="e in engines" :key="e.id" :value="e.id" :disabled="e.status !== 'ready'">
+              {{ e.name }} · {{ e.execution_channel === 'native' ? '本机进程内' : 'ComfyUI 通道' }}{{ e.status !== 'ready' ? '（不可用）' : '' }}
+            </option>
           </select>
           <button class="btn btn-primary" :disabled="submitting" @click="submitBatch">
             {{ submitting ? '提交中…' : (submitForm.kind === 'preview' ? '▶ 提交预览批次' : '▶ 提交正式批次') }}
           </button>
           <span class="dim">按镜头串行生成（续接镜头等前序完成）；正式批次前请先跑预览并在项目里逐镜审核采用</span>
+          <span v-if="engineNotice" class="dim">{{ engineNotice }}</span>
         </div>
         <div v-if="error" class="form-msg">{{ error }}</div>
 
@@ -247,6 +248,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { engineName, getEnginePref, resolveEngine, setEnginePref } from '../enginePref'
 
 const props = defineProps({
   novelId: { type: String, required: true },
@@ -279,8 +281,16 @@ const editForm = ref({})
 // PR-N05：提交批次
 const submissions = ref([])
 const submitting = ref(false)
-const submitForm = ref({ kind: 'preview', quality: 'draft', engine: 'comfyui' })
+// 引擎由用户自选：选项来自 /api/engines，默认沿用全局偏好
+const engines = ref([])
+const engineNotice = ref('')
+const submitForm = ref({ kind: 'preview', quality: 'draft', engine: getEnginePref() })
 let pollTimer = null
+
+function onEngineChange(ev) {
+  submitForm.value.engine = ev.target.value
+  setEnginePref(ev.target.value)
+}
 
 // PR-N06：一致性校验
 const validation = ref(null)
@@ -298,6 +308,18 @@ async function load() {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+  // 引擎列表单独取：失败不影响剧集加载，此时下拉框保留全局偏好值
+  try {
+    engines.value = await api.engines()
+    const preferred = submitForm.value.engine
+    const { engine, fallback } = resolveEngine(engines.value, preferred)
+    if (fallback) {
+      submitForm.value.engine = engine
+      engineNotice.value = `${engineName(engines.value, preferred)} 当前不可用，本批次先用 ${engineName(engines.value, engine)}`
+    }
+  } catch {
+    engines.value = []
   }
 }
 

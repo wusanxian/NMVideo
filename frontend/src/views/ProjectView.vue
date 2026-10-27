@@ -516,6 +516,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import { getEnginePref, engineName, resolveEngine } from '../enginePref'
 import { useJobsStore } from '../store/jobs'
 import { useProjectStore } from '../store/project'
 import ShotCard from '../components/ShotCard.vue'
@@ -709,8 +710,15 @@ async function quickGenerate(shot) {
     return
   }
   try {
-    // 快捷生成走默认通道（ComfyUI）；后端按引擎能力校验输入槽位
-    await store.generate(shot.id, { engine: 'comfyui' })
+    // 快捷生成沿用用户自选的引擎（在生成页 / 分镜弹窗里选过就记住了）；
+    // 仅在它当前不可用时临时换一个可用引擎，并告知用户。
+    const preferred = getEnginePref()
+    const { engine, fallback } = resolveEngine(engines.value, preferred)
+    await store.generate(shot.id, { engine })
+    if (fallback) {
+      message.value = `「${engineName(engines.value, preferred)}」当前不可用，已用「${engineName(engines.value, engine)}」生成`
+      setTimeout(() => (message.value = ''), 3500)
+    }
   } catch (e) {
     message.value = e.message
   }
