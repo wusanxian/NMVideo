@@ -1,5 +1,6 @@
 """任务队列：单 worker 顺序执行，SQLite 持久化，支持取消与进度回调"""
 import asyncio
+import contextlib
 import json
 import shutil
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 from . import db as db_module
 from . import hw_probe
 from . import resource_guard
+from . import resource_watch
 from . import storyboard as sb
 from .config import OUTPUTS_DIR
 from .engines import get_engine, is_comfy_engine
@@ -33,6 +35,10 @@ class JobQueue:
     def __init__(self):
         self._queue: asyncio.Queue = asyncio.Queue()
         self._cancelled: set = set()
+        # 看门狗中止的任务：job_id -> 原因。和 _cancelled 分开是因为语义不同
+        # ——用户取消是「我不要了」，资源中止是「机器要撑爆了」，落库文案和
+        # 镜头处置都要能区分开（前者标已取消，后者标失败并说明原因）。
+        self._aborts: dict = {}
         self._task = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="gen")
         self._engine_instances: dict = {}
@@ -367,6 +373,67 @@ class JobQueue:
             return {**job, "resource_note": decision.note}
         return job
 
+    # ---------- 运行中看门狗 ----------
+    def _cancel_remote(self, job_id: str, job: dict) -> str:
+        """资源告急时尽力停掉 ComfyUI 侧的任务（只在看门狗路径用）。
+
+        prompt_id 是引擎在 on_submitted 里写进库的，本地 job 字典可能是旧值，
+        所以从库里重读。停不掉也不影响本地的中止流程。
+        """
+        try:
+            row = db_module.db.get_job(job_id) or {}
+            prompt_id = row.get("prompt_id") or job.get("prompt_id") or ""
+            if not prompt_id:
+                return "no_prompt_id"
+            from .comfyui import ComfyUIClient
+
+            return ComfyUIClient(self._comfy_url(row or job)).cancel_prompt(prompt_id)
+        except Exception as e:  # noqa: BLE001
+            return f"error: {e}"
+
+    async def _watch_resources(self, job_id: str, job: dict):
+        """运行中采样系统可用内存，跌破硬底就中止本任务。
+
+        采样放进**默认线程池**：self._executor 只有 1 个 worker，此刻正被
+        generate 占着，丢进去要排队等任务跑完，等于不采样。
+        """
+        if not resource_watch.watchdog_enabled():
+            return
+        try:
+            need = resource_guard.estimate(job["engine"], self._guard_params(job))
+            watcher = resource_watch.Watcher(need_ram_gb=float(need.get("ram") or 0))
+        except Exception:  # noqa: BLE001 - 估算失败就按默认参数盯
+            watcher = resource_watch.Watcher()
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(watcher.interval_s)
+            try:
+                ram = await loop.run_in_executor(None, hw_probe.free_ram_gb)
+            except Exception:  # noqa: BLE001
+                ram = -1.0
+            verdict = watcher.observe(ram)
+            if verdict.level == "tight":
+                # 只写提示，不动阶段/进度（阶段名是给进度条看的，别抢）。
+                # Watcher 保证每个任务只提示一次；和入队时的降档说明拼接，
+                # 不要把「已自动降档」冲掉。
+                cur = (db_module.db.get_job(job_id) or {}).get("resource_note") or ""
+                note = verdict.reason if verdict.reason in cur else (
+                    f"{cur}；{verdict.reason}" if cur else verdict.reason
+                )
+                db_module.db.update_job(job_id, resource_note=note[:500])
+                continue
+            if verdict.level != "abort":
+                continue
+            self._aborts[job_id] = verdict.reason
+            print(f"[queue] 看门狗中止 {job_id}：可用内存 {ram:.1f}GB 跌破硬底")
+            db_module.db.update_job(
+                job_id, stage="内存告急，正在中止", resource_note=verdict.reason,
+            )
+            if is_comfy_engine(job.get("engine")):
+                how = await loop.run_in_executor(None, self._cancel_remote, job_id, job)
+                print(f"[queue] 远端任务处置：{how}")
+            return
+
     async def _run_job(self, job_id: str):
         job = db_module.db.get_job(job_id)
         if not job or job["status"] not in ("pending", "running"):
@@ -442,7 +509,9 @@ class JobQueue:
                 )
 
         def is_cancelled() -> bool:
-            return job_id in self._cancelled
+            # 两个来源都算「停」：用户点了取消，或看门狗判定机器快撑爆了。
+            # 引擎侧只关心「要不要退出」，具体原因由 _run_job 落库时区分。
+            return job_id in self._cancelled or job_id in self._aborts
 
         loop = asyncio.get_running_loop()
         # 2B：ComfyUI 恢复执行——job 带上 prompt_id 说明是重启恢复的任务，
@@ -456,6 +525,9 @@ class JobQueue:
             # 老任务没有该列，为空走轮询（兼容旧行为）
             resume_client_id = job.get("client_id") or ""
             workflow_snapshot = job.get("workflow_snapshot") or ""
+        # 看门狗：生成期间每 5s 采一次系统可用内存，跌破 1GB 硬底就翻
+        # is_cancelled，引擎在下一个检查点抛 GenerationCancelled 退出。
+        watch_task = asyncio.ensure_future(self._watch_resources(job_id, job))
         try:
             if is_cancelled():
                 raise GenerationCancelled()
@@ -486,6 +558,12 @@ class JobQueue:
             if is_cancelled():
                 raise GenerationCancelled()
         except GenerationCancelled:
+            abort_reason = self._aborts.pop(job_id, "")
+            if abort_reason and job_id not in self._cancelled:
+                # 资源中止 ≠ 用户取消：标失败 + 说清原因，镜头打回需重做
+                self._fail_resource(job_id, job, abort_reason)
+                db_module.db.update_job(job_id, resource_note=abort_reason)
+                return
             note = ("已取消（ComfyUI 任务可能仍在远端执行）"
                     if is_comfy_engine(engine_id) else "已取消")
             db_module.db.cancel_job(job_id, note=note)
@@ -499,6 +577,13 @@ class JobQueue:
                 sb.update_shot(shot_id, job_id="", note=str(e)[:200])
                 sb.set_shot_status(shot_id, "rework", review_stage="")
             return
+        finally:
+            watch_task.cancel()
+            # 等它真的退出：只 cancel 不 await，事件循环关闭时会留下
+            # "Task was destroyed but it is pending" 的噪音日志。
+            with contextlib.suppress(asyncio.CancelledError):
+                await watch_task
+            self._aborts.pop(job_id, None)
 
         # 2B：ComfyUI prompt_id 持久化——重启恢复与对账都靠它。
         # P0-01 起主路径是 on_submitted（提交即落库）；这里是兜底：

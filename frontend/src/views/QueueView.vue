@@ -29,8 +29,12 @@
           <div class="bar"><div class="bar-inner" :style="{ width: Math.round(job.progress * 100) + '%' }"></div></div>
           <span class="progress-text">{{ job.stage }} {{ Math.round(job.progress * 100) }}%</span>
         </div>
-        <div v-if="job.resource_note" class="job-resource" :title="job.resource_note">
-          <span class="res-tag">已自动降档</span>
+        <div
+          v-if="job.resource_note && job.resource_note !== job.error"
+          class="job-resource"
+          :title="job.resource_note"
+        >
+          <span class="res-tag">{{ noteTag(job.resource_note) }}</span>
           <span class="res-text">{{ job.resource_note }}</span>
         </div>
         <div v-if="job.error" class="job-error">⚠ {{ job.error }}</div>
@@ -72,6 +76,18 @@ function formatTime(iso) {
   if (!iso) return ''
   const d = new Date(iso)
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+// resource_note 现在是「一句话资源说明」，来源有五种（入队降档 / 入队提示 /
+// 运行中内存紧张 / 看门狗中止 / 装不下被拒），标签得跟着变——写死「已自动
+// 降档」会把中止也说成降档。关键字就是后端 resource_guard / resource_watch
+// 里那几个固定措辞，改后端文案时记得同步这里。
+function noteTag(note) {
+  const text = note || ''
+  if (text.includes('降档')) return '已自动降档'
+  if (text.includes('中止')) return '资源中止'
+  if (text.includes('接近') || text.includes('紧张')) return '内存紧张'
+  return '资源提示'
 }
 
 let timer = null

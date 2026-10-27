@@ -292,6 +292,38 @@ class ComfyUIClient:
             raise ComfyUIError(f"queue 接口状态码 {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    def cancel_prompt(self, prompt_id: str) -> str:
+        """尽力停掉**本任务**（不是全局中断）。返回处理方式，仅供日志。
+
+        - 排队中：`POST /queue {"delete": [prompt_id]}` 精确删除，无副作用；
+        - 运行中：先确认 queue_running 里跑的确实是本任务，才 `POST /interrupt`。
+          `/interrupt` 本身是全局的（HF-06：共享服务器会误伤别人），所以这里
+          加了「先核实再打断」的前置条件，并且**只给看门狗的资源告急路径用**
+          ——整机已经在换页假死时，留一个 20GB 的任务继续跑是最坏的选择。
+        - 查不到：什么都不做（可能刚好跑完，产物照常归档）。
+        """
+        try:
+            q = self.get_queue()
+        except Exception:
+            q = {}
+        running = [it for it in (q.get("queue_running") or [])
+                   if it and len(it) > 1 and it[1] == prompt_id]
+        pending = [it for it in (q.get("queue_pending") or [])
+                   if it and len(it) > 1 and it[1] == prompt_id]
+        try:
+            if pending:
+                requests.post(
+                    f"{self.base_url}/queue",
+                    json={"delete": [prompt_id]}, timeout=5,
+                )
+                return "deleted"
+            if running:
+                requests.post(f"{self.base_url}/interrupt", timeout=5)
+                return "interrupted"
+        except Exception as e:  # noqa: BLE001 - 停不掉也不能挡住中止流程
+            return f"error: {e}"
+        return "not_found"
+
     def object_info(self, node_names: Optional[list] = None) -> dict:
         """GET /object_info——ComfyUI 实际可用节点类型（PR-03 能力探测）。
 

@@ -945,6 +945,18 @@ class Database:
         return dict(row)
 
     # ---------- 备份 / 审计 / 显式修复 ----------
+    def close(self) -> None:
+        """显式关闭连接。
+
+        Windows 下不关会一直占着 .db 文件（测试里删临时目录、运维替换库文件
+        都会因此 WinError 32）。重复调用安全。
+        """
+        with self._lock:
+            try:
+                self._conn.close()
+            except Exception:  # noqa: BLE001 - 已关闭/已损坏都无需再抛
+                pass
+
     def backup(self, dest) -> Path:
         """SQLite 一致性备份（Backup API，与运行中的写入并存，见 SQLite 备份文档）"""
         dest = Path(dest)
