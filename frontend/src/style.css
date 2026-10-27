@@ -280,6 +280,31 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .job-prompt { font-size: 13.5px; line-height: 1.6; margin-bottom: 6px; word-break: break-all; }
 .job-params { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
 .job-error { font-size: 12.5px; color: var(--red); margin-top: 8px; word-break: break-all; }
+/* 资源守卫的自动降档说明：不抢眼但要看得见，用户得知道这次不是他要的分辨率 */
+.job-resource {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--yellow);
+  line-height: 1.5;
+}
+.job-resource .res-tag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--yellow);
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.job-resource .res-text {
+  /* 长说明最多两行，完整内容在 title 里 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .job-video { width: 100%; max-width: 480px; border-radius: 8px; margin-top: 10px; background: #000; }
 .job-actions { display: flex; flex-direction: column; gap: 8px; }
 

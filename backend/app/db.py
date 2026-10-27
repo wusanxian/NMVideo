@@ -135,6 +135,8 @@ class Database:
                 ("comfy_url", "TEXT DEFAULT ''"),  # 每个任务固定其执行服务，设置切换不迁移旧任务
                 ("use_character_images", "INTEGER DEFAULT 1"),
                 ("use_character_lora", "INTEGER DEFAULT 1"),
+                # 资源守卫说明：自动降档的原因与前后参数（空 = 未干预）
+                ("resource_note", "TEXT DEFAULT ''"),
             ):
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")

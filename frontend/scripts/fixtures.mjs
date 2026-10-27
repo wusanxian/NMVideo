@@ -33,7 +33,14 @@ export const PROJECT = {
 export const FIXTURES = {
   '/api/health': { status: 'ok', comfyui: true, version: '0.2.0' },
   '/api/engines': ENGINES,
-  '/api/jobs': [JOB, { ...JOB, id: 'job_2', status: 'running', progress: 0.42, stage: '采样中', video_url: null }],
+  '/api/jobs': [
+    JOB,
+    { ...JOB, id: 'job_2', status: 'running', progress: 0.42, stage: '采样中', video_url: null },
+    // 资源守卫自动降档的样例：队列里要显示「已自动降档 + 原因」
+    { ...JOB, id: 'job_3', status: 'pending', progress: 0, stage: '排队中', video_url: null,
+      width: 640, height: 352, num_frames: 121,
+      resource_note: '显存空闲 5.0GB，低于本任务需求 9.4GB（含 1GB 余量）。已自动降档 1280×720 / 121 帧 → 640×352 / 121 帧' },
+  ],
   '/api/presets': [
     { id: 'draft', name: '草稿', desc: '快速预览', width: 512, height: 512, num_frames: 16, fps: 8, steps: 12, guidance: 5 },
     { id: 'high', name: '精细', desc: '高质量', width: 832, height: 480, num_frames: 33, fps: 12, steps: 8, guidance: 7 },
@@ -61,7 +68,7 @@ export const FIXTURES = {
 export const PAGE_EXPECT = [
   ['/', ['测试项目']],
   ['/generate', ['ComfyUI 通道', '本机进程内通道', 'AnimeDiff']],
-  ['/queue', ['雨夜霓虹街景']],
+  ['/queue', ['雨夜霓虹街景', '已自动降档']],
   ['/gallery', ['雨夜霓虹街景']],
   ['/projects', ['测试项目']],
   ['/novel', ['长夜将至']],

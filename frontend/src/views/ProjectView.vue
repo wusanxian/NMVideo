@@ -721,14 +721,21 @@ async function onShotSaved(data, action) {
   const shotId = editingShot.value.id
   try {
     await store.saveShot(shotId, data)
+    let holdMs = 2500
     if (action && action.then === 'generate') {
-      await store.generate(shotId, action.params)
-      message.value = '已提交生成，可在任务队列查看进度'
+      const job = await store.generate(shotId, action.params)
+      // 资源守卫可能自动降档：本次实际用的参数与提交的不一样，必须说清楚
+      if (job && job.resource_note) {
+        message.value = job.resource_note
+        holdMs = 8000
+      } else {
+        message.value = '已提交生成，可在任务队列查看进度'
+      }
     } else {
       message.value = '已保存'
     }
     editingShot.value = null
-    setTimeout(() => (message.value = ''), 2500)
+    setTimeout(() => (message.value = ''), holdMs)
   } catch (e) {
     message.value = e.message
   }
@@ -744,8 +751,12 @@ async function quickGenerate(shot) {
     // 仅在它当前不可用时临时换一个可用引擎，并告知用户。
     const preferred = getEnginePref()
     const { engine, fallback } = resolveEngine(engines.value, preferred)
-    await store.generate(shot.id, { engine })
-    if (fallback) {
+    const job = await store.generate(shot.id, { engine })
+    if (job && job.resource_note) {
+      // 资源守卫自动降档：本次不是提交时那个分辨率，得让用户看见
+      message.value = job.resource_note
+      setTimeout(() => (message.value = ''), 8000)
+    } else if (fallback) {
       message.value = `「${engineName(engines.value, preferred)}」当前不可用，已用「${engineName(engines.value, engine)}」生成`
       setTimeout(() => (message.value = ''), 3500)
     }

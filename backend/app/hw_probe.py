@@ -6,6 +6,7 @@
   - 量化：40 系+ fp8 / 30 系 int8 weight-only / 其他不量化
   - offload：显存宽裕 model offload，紧张 sequential offload（层流式，8GB 可跑）
 """
+import ctypes
 import os
 import shutil
 import subprocess
@@ -55,6 +56,42 @@ class HardwareProfile:
         }
 
 
+class _MemoryStatusEx(ctypes.Structure):
+    """GlobalMemoryStatusEx 的输出结构（Windows 物理内存）。"""
+
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def _win_memory_gb() -> tuple:
+    """Windows 物理内存 (total_gb, available_gb)，纯 ctypes 实现。
+
+    为什么不靠 psutil / wmic：requirements.txt 里没有 psutil（装了才有，
+    没装就静默返回 -1，等于内存保护全失效）；wmic 在 Win11 已弃用，还常被
+    安全策略拦。而内存检查是防 OOM 的最后一道闸，不能依赖可选组件。
+    非 Windows 或调用失败返回 (-1, -1)。
+    """
+    if os.name != "nt":
+        return -1.0, -1.0
+    try:
+        stat = _MemoryStatusEx()
+        stat.dwLength = ctypes.sizeof(_MemoryStatusEx)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return -1.0, -1.0
+        return stat.ullTotalPhys / 2**30, stat.ullAvailPhys / 2**30
+    except Exception:
+        return -1.0, -1.0
+
+
 def _query_gpu():
     """nvidia-smi 查询显卡名与显存；无卡或命令不存在返回 None。"""
     if not shutil.which("nvidia-smi"):
@@ -78,7 +115,10 @@ def _query_ram():
         return psutil.virtual_memory().total / 2**30
     except Exception:
         pass
-    # Windows fallback：wmic
+    total, _ = _win_memory_gb()
+    if total > 0:
+        return total
+    # 最后的兜底：wmic（Win11 已弃用，部分环境被安全策略拦）
     try:
         out = subprocess.run(
             ["wmic", "ComputerSystem", "get", "TotalPhysicalMemory"],
@@ -100,6 +140,9 @@ def free_ram_gb() -> float:
         return psutil.virtual_memory().available / 2**30
     except Exception:
         pass
+    _, avail = _win_memory_gb()
+    if avail > 0:
+        return avail
     try:
         out = subprocess.run(
             ["wmic", "OS", "get", "FreePhysicalMemory"],
@@ -114,6 +157,23 @@ def free_ram_gb() -> float:
     return -1.0
 
 
+def ram_total_gb() -> float:
+    """物理内存总量（GB）。查不到返回 -1。
+
+    ComfyUI 通道判「装不装得下」用总量：ComfyUI 是独立进程，内存吃紧时会
+    走 pagefile / 卸载，用当时的可用量卡它会冤枉一台 32GB 的机器。
+    """
+    try:
+        import psutil
+        return psutil.virtual_memory().total / 2**30
+    except Exception:
+        pass
+    total, _ = _win_memory_gb()
+    if total > 0:
+        return total
+    return _query_ram() or -1.0
+
+
 def cuda_free_vram_gb() -> float:
     """当前进程可见的 CUDA 显存空闲（GB）；无 CUDA 或 torch 不可用返回 -1。"""
     try:
@@ -123,6 +183,44 @@ def cuda_free_vram_gb() -> float:
     except Exception:
         pass
     return -1.0
+
+
+def _smi_free_vram_gb() -> float:
+    """nvidia-smi 视角的整卡空闲显存（GB），多卡取最大；查不到返回 -1。
+
+    与 `cuda_free_vram_gb()` 的区别：不需要装 torch。资源守卫要判断「现在
+    有没有别的程序占着显卡」，装没装 torch 都得能问出来——否则纯 ComfyUI
+    部署下所有显存检查都会因为 -1 而静默跳过。
+    """
+    if not shutil.which("nvidia-smi"):
+        return -1.0
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode != 0:
+            return -1.0
+        values = [float(x.strip()) for x in out.stdout.splitlines() if x.strip()]
+        return max(values) / 1024.0 if values else -1.0
+    except Exception:
+        return -1.0
+
+
+def free_vram_gb() -> float:
+    """显存空闲（GB）：优先 torch（本进程视角），退到 nvidia-smi（整卡视角）。"""
+    vram = cuda_free_vram_gb()
+    if vram >= 0:
+        return vram
+    return _smi_free_vram_gb()
+
+
+def vram_total_gb() -> float:
+    """显卡总显存（GB），多卡取最大；无卡返回 -1。"""
+    gpu = _query_gpu()
+    if not gpu:
+        return -1.0
+    return float(gpu[1])
 
 
 def _query_disk(path="."):
@@ -167,7 +265,9 @@ def probe() -> HardwareProfile:
         import psutil
         p.available_ram_gb = psutil.virtual_memory().available / 2**30
     except (ImportError, OSError):
-        pass
+        _, avail = _win_memory_gb()
+        if avail > 0:
+            p.available_ram_gb = avail
     p.disk_free_gb = _query_disk()
     p.compute_cap = _compute_cap_from_torch()
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import db as db_module
 from . import hw_probe
+from . import resource_guard
 from . import storyboard as sb
 from .config import OUTPUTS_DIR
 from .engines import get_engine, is_comfy_engine
@@ -24,11 +25,10 @@ class JobQueue:
     # HF-04：恢复扫描分页大小（原来 limit=1000 硬截断，pending 过多会丢任务）
     _RECOVER_PAGE = 200
 
-    # 生成前资源余量（GB）：低于阈值直接拒绝执行，防止 OOM 拖垮整机。
-    # 内存余量保护的是系统本身（生成进程 + 模型权重都吃它）；
-    # 显存余量只查进程内推理通道——ComfyUI 通道的显存由 ComfyUI 自己管理。
-    RAM_HEADROOM_GB = 2.0
-    VRAM_HEADROOM_GB = 1.5
+    # 生成前的资源守卫已抽到 resource_guard：按「固定占用 + 像素帧数」估算
+    # 本任务峰值需求，与实测余量比对（够用放行 / 进程内通道自动降档 /
+    # 装不下则拒绝）。原来这里只有 2GB / 1.5GB 的固定地板阈值——空闲 3GB
+    # 也放行，然后加载 20GB 权重照样 OOM，等于没拦。
 
     def __init__(self):
         self._queue: asyncio.Queue = asyncio.Queue()
@@ -287,35 +287,85 @@ class JobQueue:
                 )
 
     @staticmethod
-    def _probe_free(name: str) -> float:
-        """安全读取余量查询函数；缺失/异常一律 -1（= 无数据，不拦人）。"""
-        fn = getattr(hw_probe, name, None)
-        if fn is None:
-            return -1.0
-        try:
-            return float(fn())
-        except Exception:  # noqa: BLE001
-            return -1.0
+    def _guard_params(job: dict) -> dict:
+        """把任务行里参与资源估算的字段收成一份参数字典。"""
+        return {
+            "width": job.get("width"),
+            "height": job.get("height"),
+            "num_frames": job.get("num_frames"),
+            "fps": job.get("fps"),
+            "mode": job.get("mode") or "t2v",
+            "preview": job.get("preview"),
+            "comfy_url": job.get("comfy_url") or "",
+        }
 
-    def _resource_headroom_ok(self, engine_id: str) -> tuple:
-        """生成前检查系统可用内存（全部引擎）与显存余量（仅进程内推理通道）。
+    def _fail_resource(self, job_id: str, job: dict, reason: str) -> None:
+        """资源不足导致的中止：落库 + 联动镜头打回（与原守卫行为一致）。"""
+        db_module.db.update_job(
+            job_id, status="failed", error=reason, stage="失败",
+            finished_at=_utcnow(),
+        )
+        shot_id = job.get("shot_id") or ""
+        if shot_id and sb.get_shot(shot_id):
+            sb.update_shot(shot_id, job_id="", note=reason[:200])
+            sb.set_shot_status(shot_id, "rework", review_stage="")
 
-        返回 (ok, 原因)。查询失败（-1）时放行——没有数据不拦人，只拦确认不够的。
+    def _guard_before_run(self, job_id: str, job: dict):
+        """执行前的资源复核：返回（可能降过档的）job；资源不足返回 None。
+
+        两条通道策略不同：
+        - 进程内通道（h3_native / anime / wan22）：引擎按参数现算，可以就地
+          降档，改完落库让用户看得见本次实际用了什么参数。
+        - ComfyUI 通道：工作流快照在入队时已冻结（PR-06 可复现），降档等于
+          换一份工作流 → 只等余量释放，不擅改参数。容量本身就装不下的，
+          等待也没意义，直接失败并说明原因。
         """
-        ram = self._probe_free("free_ram_gb")
-        if ram >= 0 and ram < self.RAM_HEADROOM_GB:
-            return False, (
-                f"系统可用内存仅 {ram:.1f}GB，低于 {self.RAM_HEADROOM_GB}GB 安全余量，"
-                "已拒绝本次生成以防内存耗尽拖垮系统。请关闭其他程序（或浏览器标签）后重试。"
+        engine_id = job["engine"]
+        params = self._guard_params(job)
+
+        if is_comfy_engine(engine_id):
+            first = resource_guard.plan(
+                engine_id, params, comfy_url=self._comfy_url(job),
+                allow_downgrade=False,
             )
-        if not is_comfy_engine(engine_id):
-            vram = self._probe_free("cuda_free_vram_gb")
-            if vram >= 0 and vram < self.VRAM_HEADROOM_GB:
-                return False, (
-                    f"显存空闲仅 {vram:.1f}GB，低于 {self.VRAM_HEADROOM_GB}GB 安全余量，"
-                    "已拒绝本次生成以防显存溢出。可降低分辨率/时长，或关闭占用显存的程序后重试。"
-                )
-        return True, ""
+            if first.ok:
+                return job
+            need_v = float(first.need.get("vram") or 0)
+            total = float(first.available.get("vram_total", -1) or -1)
+            if total > 0 and total < need_v + resource_guard.VRAM_RESERVE_GB:
+                # 显卡容量装不下：等多久都不会变，直接说明
+                self._fail_resource(job_id, job, first.reason)
+                return None
+            decision = resource_guard.wait_for_headroom(
+                engine_id, params, comfy_url=self._comfy_url(job),
+                on_wait=lambda elapsed: db_module.db.update_job(
+                    job_id, stage=f"等待显存/内存释放（已等 {elapsed:.0f}s）",
+                ),
+            )
+            if not decision.ok:
+                self._fail_resource(job_id, job, decision.reason)
+                return None
+            db_module.db.update_job(job_id, stage="资源就绪，开始生成")
+            return job
+
+        decision = resource_guard.plan(engine_id, params, allow_downgrade=True)
+        if not decision.ok:
+            self._fail_resource(job_id, job, decision.reason)
+            return None
+        if decision.changed:
+            fields = {
+                "width": decision.params["width"],
+                "height": decision.params["height"],
+                "num_frames": decision.params["num_frames"],
+                "preset": "",
+                "resource_note": decision.note,
+            }
+            db_module.db.update_job(job_id, **fields)
+            return {**job, **fields}
+        if decision.note:
+            db_module.db.update_job(job_id, resource_note=decision.note)
+            return {**job, "resource_note": decision.note}
+        return job
 
     async def _run_job(self, job_id: str):
         job = db_module.db.get_job(job_id)
@@ -329,17 +379,14 @@ class JobQueue:
         # 分镜工作台联动：该 job 若由分镜发起，全程同步镜头状态
         shot_id = job.get("shot_id") or ""
 
-        # ---------- 生成前资源守卫：内存/显存不足时明确拒绝，不硬冲 ----------
-        ok, reason = self._resource_headroom_ok(job["engine"])
-        if not ok:
-            db_module.db.update_job(
-                job_id, status="failed", error=reason, stage="失败",
-                finished_at=_utcnow(),
-            )
-            if shot_id and sb.get_shot(shot_id):
-                sb.update_shot(shot_id, job_id="", note=reason[:200])
-                sb.set_shot_status(shot_id, "rework", review_stage="")
-            return
+        # ---------- 生成前资源守卫：需求 vs 余量，不足则降档或明确拒绝 ----------
+        # resume（prompt_id 已存在）= ComfyUI 侧已经在跑/已算完，这里再拦只会
+        # 把已有结果丢掉，直接放行等产物。
+        if not job.get("prompt_id"):
+            guarded = self._guard_before_run(job_id, job)
+            if guarded is None:
+                return
+            job = guarded
 
         # 引擎实例缓存（模型常驻内存，切任务不重载）
         engine_id = job["engine"]

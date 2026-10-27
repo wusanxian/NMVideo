@@ -22,6 +22,7 @@ from ..quality import normalize_generation
 from ..generation import prepare_comfy_workflow, persist_prepared_job
 from .. import db as db_module
 from .. import motion
+from .. import resource_guard
 from ..export import start_export
 from ..queue_manager import job_queue
 
@@ -515,6 +516,17 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
                                "voice_id", "voice_name")}
         for c in characters
     ], ensure_ascii=False)
+
+    # 资源守卫：入队前按「本任务要多少 vs 本机剩多少」定档；降档必须在固化
+    # 工作流快照之前完成，保证快照里的分辨率与任务参数一致。
+    decision = resource_guard.plan(
+        params["engine"], params, comfy_url=params.get("comfy_url") or "",
+    )
+    if not decision.ok:
+        raise HTTPException(409, decision.reason)
+    params = decision.params
+    if decision.note:
+        params["resource_note"] = decision.note
 
     graph, template = None, None
     try:

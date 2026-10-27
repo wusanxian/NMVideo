@@ -29,6 +29,10 @@
           <div class="bar"><div class="bar-inner" :style="{ width: Math.round(job.progress * 100) + '%' }"></div></div>
           <span class="progress-text">{{ job.stage }} {{ Math.round(job.progress * 100) }}%</span>
         </div>
+        <div v-if="job.resource_note" class="job-resource" :title="job.resource_note">
+          <span class="res-tag">已自动降档</span>
+          <span class="res-text">{{ job.resource_note }}</span>
+        </div>
         <div v-if="job.error" class="job-error">⚠ {{ job.error }}</div>
         <video v-if="job.status === 'done'" class="job-video" :src="job.video_url" :poster="job.poster_url" controls preload="metadata"></video>
       </div>

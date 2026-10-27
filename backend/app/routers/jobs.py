@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as db_module
+from .. import resource_guard
 from .. import storyboard as sb
 from ..config import OUTPUTS_DIR
 from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine
@@ -55,6 +56,18 @@ async def create_job(data: JobCreate):
 
     if params["seed"] < 0:
         params["seed"] = random.randint(0, 2**31 - 1)
+
+    # 资源守卫：入队前就按「本任务要多少 vs 本机剩多少」定档。降档必须发生在
+    # 固化工作流快照之前，否则快照里的分辨率与任务参数不一致。
+    decision = resource_guard.plan(
+        params["engine"], params, comfy_url=params.get("comfy_url") or "",
+    )
+    if not decision.ok:
+        raise HTTPException(409, decision.reason)
+    params = decision.params
+    if decision.note:
+        params["resource_note"] = decision.note
+
     graph, template = None, None
     try:
         # ComfyUI 通道（默认引擎，以及未来任何声明 execution_channel=comfyui 的

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from . import resource_guard
 from .comfyui import build_shot_workflow, verify_snapshot_payload
 from .engines import is_comfy_engine
 from .quality import QUALITY_PRESETS, normalize_generation
@@ -65,6 +66,15 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
             and not Path(source.get("workflow_snapshot") or "").is_file()):
         params["engine"] = "h3_native"
     params = normalize_generation(params, params)
+
+    # 资源守卫：升级是「同 seed 提到更高档」，最容易一上手就超过本机余量。
+    # 降档必须发生在下面 build_shot_workflow 之前——节点图用的是 params 里的数值。
+    decision = resource_guard.plan(params.get("engine") or source["engine"], params)
+    if not decision.ok:
+        raise ValueError(decision.reason)
+    params = decision.params
+    if decision.note:
+        params["resource_note"] = decision.note
 
     graph, template = None, None
     # 只有 ComfyUI 通道有工作流快照可复用；兜底通道按原参数重新生成。
