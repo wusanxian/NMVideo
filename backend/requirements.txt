@@ -23,6 +23,7 @@ websockets>=12.0       # ComfyUI 工作流进度推送（WS）
 requests>=2.31         # ComfyUI HTTP API 客户端
 edge-tts>=7.0          # TTS 配音主引擎（神经网络中文音色，需联网）
 pyttsx3>=2.90          # TTS 离线兜底（Windows SAPI5 系统语音）
+mcp>=2.0               # 内置 MCP 端点（/mcp）：外部 AI 助手（WorkBuddy/Claude Code）直连出片
 
 # 开发/测试（运行时不强制安装：pip install -r requirements.txt pytest）
 pytest>=8.0

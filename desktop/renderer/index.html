@@ -20,6 +20,7 @@
         <button id="service-start-btn" class="lang-btn" data-i18n="startService">开启服务</button>
         <button id="service-stop-btn" class="lang-btn" data-i18n="stopService">关闭服务</button>
       </div>
+      <button id="mcp-btn" class="lang-btn mcp-btn" data-i18n="mcpBtn" aria-expanded="false" aria-controls="mcp-modal">🤖 AI 连接</button>
       <button id="system-btn" class="lang-btn" data-i18n="system" aria-expanded="false" aria-controls="system-panel">系统管理</button>
       <button id="lang-btn" class="lang-btn" title="Language">中文</button>
       <div class="win-buttons">
@@ -147,6 +148,45 @@
       </div>
     </div>
   </aside>
+
+  <!-- AI 助手连接（MCP）弹框：顶栏按钮直达，复制地址 + 实时连接状态 -->
+  <div id="mcp-modal" class="mcp-modal" hidden>
+    <div id="mcp-backdrop" class="mcp-backdrop"></div>
+    <div class="mcp-dialog" role="dialog" aria-label="AI 助手连接">
+      <div class="mcp-head">
+        <span class="mcp-title">🤖 <span data-i18n="mcpTitle">AI 助手连接</span></span>
+        <button id="mcp-close-btn" class="term-btn" data-i18n="close">关闭</button>
+      </div>
+      <div class="mcp-body">
+        <div class="mcp-row">
+          <span id="mcp-state-dot" class="mcp-dot off"></span>
+          <span id="mcp-state-text" data-i18n="mcpOff">未开启</span>
+          <button id="mcp-toggle-btn" class="btn primary">开启</button>
+        </div>
+        <div class="mcp-row mcp-url-row">
+          <input id="mcp-url" class="mcp-url" readonly placeholder="开启后显示连接地址" />
+          <button id="mcp-copy-btn" class="btn primary" disabled data-i18n="mcpCopy">复制地址</button>
+        </div>
+        <p class="mcp-hint" data-i18n="mcpHint">复制地址粘贴到 AI 助手（WorkBuddy / Claude Code 等），即可对话直接生成视频。地址含访问令牌，请勿外传。</p>
+        <details class="mcp-config">
+          <summary data-i18n="mcpConfig">配置示例</summary>
+          <p class="mcp-config-label">WorkBuddy（自定义 MCP 连接器）：</p>
+          <pre id="mcp-snippet-wb" class="mcp-code"></pre>
+          <p class="mcp-config-label">Claude Code：</p>
+          <pre id="mcp-snippet-cc" class="mcp-code"></pre>
+        </details>
+        <div class="mcp-live">
+          <div class="mcp-live-head">
+            <span data-i18n="mcpLive">连接状态</span>
+            <span id="mcp-session-count" class="mcp-session-count"></span>
+          </div>
+          <div id="mcp-sessions" class="mcp-sessions"></div>
+          <div class="mcp-live-head"><span data-i18n="mcpRecent">最近调用</span></div>
+          <div id="mcp-activity" class="mcp-activity"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

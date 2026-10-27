@@ -130,6 +130,38 @@
       </p>
       <p class="hint" v-if="tts.note">{{ tts.note }}</p>
     </section>
+
+    <!-- MCP：AI 助手接入 -->
+    <section class="panel">
+      <div class="card-head">
+        <span class="dot" :class="mcpState.enabled ? 'ready' : 'unavailable'"></span>
+        <h3>🤖 AI 助手接入 · MCP</h3>
+        <span class="tag" :class="mcpState.enabled ? 'ok' : 'off'">{{ mcpState.enabled ? '已开启' : '未开启' }}</span>
+        <button class="btn" :disabled="busy.mcp" @click="toggleMcp">
+          {{ mcpState.enabled ? '关闭' : '开启' }}
+        </button>
+        <button class="btn ghost" :disabled="busy.mcp || !mcpState.enabled" @click="regenMcp">换新令牌</button>
+      </div>
+      <p class="hint">
+        开启后，把下面的连接地址复制粘贴到 AI 助手（WorkBuddy 自定义连接器 / Claude Code 等），
+        即可在对话里直接生成视频：助手会自动查状态 → 出片 → 汇报进度与成片链接。
+      </p>
+      <template v-if="mcpState.enabled">
+        <div class="mcp-url-row">
+          <input class="mcp-url" readonly :value="mcpUrl" @focus="$event.target.select()" />
+          <button class="btn" @click="copyMcpUrl">{{ copied ? '已复制 ✓' : '复制连接' }}</button>
+        </div>
+        <details class="mcp-help">
+          <summary>接入方法（点开看示例）</summary>
+          <p class="hint">WorkBuddy：连接器管理 → 自定义 MCP → 粘贴以下配置：</p>
+          <pre class="mcp-code">{ "mcpServers": { "nmvideo": { "url": "{{ mcpUrl }}" } } }</pre>
+          <p class="hint">Claude Code 命令行：</p>
+          <pre class="mcp-code">claude mcp add --transport http nmvideo "{{ mcpUrl }}"</pre>
+          <p class="hint">连上后可以直接说：「帮我把‘雨夜霓虹街道上飞驰的机车’生成一段 8 秒视频」。</p>
+        </details>
+      </template>
+      <p class="hint" v-else>开启后应用会在本机 {{ mcpUrl ? mcpUrl.split('/mcp')[0] : '' }}/mcp 提供一个带令牌鉴权的接口，仅本机可访问。</p>
+    </section>
   </div>
 </template>
 
@@ -140,9 +172,15 @@ import { api } from '../api'
 const status = ref({ comfyui: {}, llm: {}, imagegen: {}, tts: {} })
 const config = ref({ llm: {}, imagegen: {}, comfy_url: '' })
 
-const busy = reactive({ comfy: false, llm: false, imagegen: false, llmTest: false, imagegenTest: false })
+const busy = reactive({ comfy: false, llm: false, imagegen: false, llmTest: false, imagegenTest: false, mcp: false })
 const msg = reactive({ llm: '', imagegen: '' })
 const testResults = reactive({ llm: { ok: false }, imagegen: { ok: false } })
+
+// MCP（AI 助手接入）
+const mcpState = ref({ enabled: false, token_masked: '', has_token: false })
+const mcpToken = ref('')
+const copied = ref(false)
+const mcpUrl = computed(() => (mcpToken.value ? `${window.location.origin}/mcp?token=${mcpToken.value}` : `${window.location.origin}/mcp`))
 
 const comfyForm = reactive({ comfy_url: '' })
 const llmForm = reactive({ base_url: '', api_key: '', model: '' })
@@ -180,6 +218,51 @@ async function refreshAll() {
   } catch {
     /* ignore */
   }
+  try {
+    mcpState.value = await api.mcpState()
+    if (mcpState.value.enabled) {
+      const r = await api.mcpReveal()
+      mcpToken.value = r.token || ''
+    } else {
+      mcpToken.value = ''
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function toggleMcp() {
+  busy.mcp = true
+  try {
+    await api.saveMcpConfig({ enabled: !mcpState.value.enabled })
+    await refreshAll()
+  } catch (e) {
+    alert(e.message)
+  } finally {
+    busy.mcp = false
+  }
+}
+
+async function regenMcp() {
+  busy.mcp = true
+  try {
+    await api.saveMcpConfig({ enabled: true, regenerate: true })
+    await refreshAll()
+  } catch (e) {
+    alert(e.message)
+  } finally {
+    busy.mcp = false
+  }
+}
+
+async function copyMcpUrl() {
+  try {
+    await navigator.clipboard.writeText(mcpUrl.value)
+  } catch {
+    /* 剪贴板权限被拒时退化为选中文本让用户 Ctrl+C */
+  }
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 2000)
 }
 
 async function saveComfy() {
@@ -269,6 +352,20 @@ onMounted(refreshAll)
 </script>
 
 <style scoped>
+/* MCP 接入卡片 */
+.mcp-url-row { display: flex; gap: 8px; margin: 8px 0; }
+.mcp-url {
+  flex: 1; font-size: 12.5px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg, transparent); color: var(--text); font-family: monospace;
+}
+.mcp-help summary { cursor: pointer; font-size: 12.5px; color: var(--text-dim); margin: 6px 0; }
+.mcp-code {
+  font-size: 12px; font-family: monospace; padding: 8px 12px; margin: 4px 0 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2, rgba(0,0,0,.15));
+  white-space: pre-wrap; word-break: break-all; user-select: all;
+}
+
 .overview {
   display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
   padding: 14px 20px;

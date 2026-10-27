@@ -93,6 +93,38 @@ def _query_ram():
     return 0.0
 
 
+def free_ram_gb() -> float:
+    """系统当前可用内存（GB）。查不到返回 -1（调用方跳过检查）。"""
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 2**30
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(
+            ["wmic", "OS", "get", "FreePhysicalMemory"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in out.stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int(line) * 1024 / 2**30  # wmic 单位是 KB
+    except Exception:
+        pass
+    return -1.0
+
+
+def cuda_free_vram_gb() -> float:
+    """当前进程可见的 CUDA 显存空闲（GB）；无 CUDA 或 torch 不可用返回 -1。"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return torch.cuda.mem_get_info()[0] / 2**30
+    except Exception:
+        pass
+    return -1.0
+
+
 def _query_disk(path="."):
     try:
         usage = shutil.disk_usage(path)
