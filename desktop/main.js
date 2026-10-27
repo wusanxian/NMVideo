@@ -349,8 +349,22 @@ handle('backend:retry', () => {
   if (stopRequest) return stopRequest
   return startBackend()
 })
+/** 等待后端就绪；未启动则先触发启动（enable 幂等），超时返回 false */
+async function ensureBackendOnline(timeoutMs = 30000) {
+  if (backend?.online) return true
+  if (!backend || !backend.stopping) startBackend()
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    if (backend?.online) return true
+    if (!backend?.enabled) return false
+  }
+  return false
+}
+
 handle('backend:hardware', async () => {
-  if (!backend?.online) throw new Error('本地服务尚未连接，请重试连接后检测。')
+  const online = await ensureBackendOnline()
+  if (!online) throw new Error('本地服务未就绪，请先点击「开启服务」，就绪后再检测。')
   const response = await fetch(`http://127.0.0.1:${launcherPort}/api/hardware`, { signal: AbortSignal.timeout(20000), redirect: 'error' })
   if (!response.ok) throw new Error(`硬件检测失败：HTTP ${response.status}`)
   return response.json()

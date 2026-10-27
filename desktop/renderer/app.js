@@ -683,7 +683,7 @@
       state.paths = await window.desk.paths()
       if (state.paths) {
         el.runtimePath.textContent = state.paths.runtime
-        el.enginePath.textContent = 'AI 视频工坊 · AnimeDiff / Wan 2.2 / ComfyUI'
+        el.enginePath.textContent = 'NMVideo · AnimeDiff / Wan 2.2 / ComfyUI'
         el.comfyPath.textContent = 'http://127.0.0.1:8188'
       }
       el.versionTag.textContent = 'v' + (await window.desk.version())
