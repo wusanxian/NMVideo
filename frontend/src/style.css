@@ -1,13 +1,20 @@
 :root {
-  --bg: #0f1115;
-  --bg-panel: #151923;
-  --bg-card: #1a1f2b;
-  --bg-hover: #222839;
-  --border: #2a3142;
-  --text: #e6e9f0;
-  --text-dim: #8b94a8;
-  --accent: #8b5cf6;
-  --accent-2: #6366f1;
+  /* 蓝黑配色：底色偏蓝的深色，强调色用系统蓝 + 青蓝（进度/渐变）。
+     紫灰那套（var(--accent) / var(--accent-2)）2026-10-27 换掉，全局只认这几个变量，
+     需要半透明时用 --accent-rgb，别再写死十六进制。 */
+  --bg: #070c16;
+  --bg-panel: #0c1424;
+  --bg-card: #111c2f;
+  --bg-hover: #17263e;
+  --border: #1d2b45;
+  --border-strong: #2a3d5c;
+  --text: #e8eef9;
+  --text-dim: #8496b0;
+  --accent: #3b82f6;
+  --accent-2: #38bdf8;
+  --accent-rgb: 59, 130, 246;
+  --accent-2-rgb: 56, 189, 248;
+  --accent-soft: #93c5fd;
   --green: #34d399;
   --yellow: #fbbf24;
   --red: #f87171;
@@ -19,7 +26,10 @@ html, body, #app { height: 100%; }
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* 顶部一层很淡的蓝光，避免纯色大块显得发闷 */
+  background:
+    radial-gradient(1200px 520px at 50% -12%, rgba(var(--accent-2-rgb), .07), transparent 62%),
+    var(--bg);
   color: var(--text);
   font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   font-size: 14px;
@@ -66,9 +76,9 @@ body {
 
 .sidebar nav a.nav-item.active,
 .sidebar nav a.router-link-active {
-  background: linear-gradient(135deg, rgba(139, 92, 246, .18), rgba(99, 102, 241, .18));
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), .18), rgba(var(--accent-2-rgb), .18));
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(139, 92, 246, .35);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35);
 }
 
 .sidebar nav a.nav-item { display: flex; align-items: center; gap: 9px; cursor: pointer; }
@@ -181,7 +191,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   display: inline-block;
 }
 
-.btn:hover { background: var(--bg-hover); border-color: #3a4358; }
+.btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .btn-primary {
@@ -212,11 +222,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 
 .chip:hover { color: var(--text); border-color: var(--accent); }
-.chip.active { background: rgba(139, 92, 246, .16); border-color: var(--accent); color: var(--text); }
+.chip.active { background: rgba(var(--accent-rgb), .16); border-color: var(--accent); color: var(--text); }
 
 .badge { font-size: 11.5px; border-radius: 6px; padding: 2px 9px; font-weight: 600; }
 .badge.pending { background: rgba(251, 191, 36, .14); color: var(--yellow); }
-.badge.running { background: rgba(99, 102, 241, .18); color: #a5b4fc; }
+.badge.running { background: rgba(var(--accent-2-rgb), .18); color: var(--accent-soft); }
 .badge.done { background: rgba(52, 211, 153, .14); color: var(--green); }
 .badge.failed { background: rgba(248, 113, 113, .14); color: var(--red); }
 .badge.cancelled { background: rgba(139, 148, 168, .14); color: var(--text-dim); }
@@ -235,14 +245,14 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 }
 
 .engine-card:hover:not(.disabled) { border-color: var(--accent); }
-.engine-card.active { border-color: var(--accent); background: rgba(139, 92, 246, .08); }
+.engine-card.active { border-color: var(--accent); background: rgba(var(--accent-rgb), .08); }
 .engine-card.disabled { opacity: .55; cursor: not-allowed; }
 
 .engine-card .ec-name { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
 /* 通道徽章：默认（ComfyUI 底座）/ 兜底（进程内推理，非默认） */
 .engine-card .ec-badge {
   font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 999px;
-  background: rgba(139, 92, 246, .18); color: #c4b5fd;
+  background: rgba(var(--accent-rgb), .18); color: var(--accent-soft);
 }
 .engine-card .ec-badge.fallback { background: rgba(139, 148, 168, .16); color: var(--text-dim); }
 .engine-card .ec-desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }

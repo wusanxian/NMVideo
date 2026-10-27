@@ -244,8 +244,8 @@ onUnmounted(() => clearInterval(pollTimer))
   width: 62px;
   height: 62px;
   border-radius: 50%;
-  background: rgba(139, 92, 246, 0.16);
-  border: 1px solid rgba(139, 92, 246, 0.45);
+  background: rgba(var(--accent-rgb), 0.16);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
   color: var(--accent);
   font-size: 24px;
   display: flex;
@@ -278,7 +278,7 @@ onUnmounted(() => clearInterval(pollTimer))
 .status-chip.approved { color: var(--green, #34d399); border-color: rgba(52, 211, 153, 0.4); }
 .status-chip.review { color: var(--yellow, #fbbf24); border-color: rgba(251, 191, 36, 0.4); }
 .status-chip.rework { color: var(--red, #f87171); border-color: rgba(248, 113, 113, 0.4); }
-.status-chip.generating, .status-chip.queued { color: var(--accent); border-color: rgba(139, 92, 246, 0.45); }
+.status-chip.generating, .status-chip.queued { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.45); }
 
 /* ---------- 分镜时间线 ---------- */
 .tl-block { margin-bottom: 26px; }

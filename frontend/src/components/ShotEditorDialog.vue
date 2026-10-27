@@ -793,7 +793,7 @@ function generate() {
   padding: 5px 13px; color: var(--text-dim); transition: all 0.15s;
 }
 .char-chip:hover { border-color: var(--accent); }
-.char-chip.on { border-color: var(--accent); color: var(--text); background: rgba(99, 102, 241, 0.12); }
+.char-chip.on { border-color: var(--accent); color: var(--text); background: rgba(var(--accent-2-rgb), 0.12); }
 .char-chip em { font-style: normal; font-size: 11px; color: var(--text-dim); }
 .char-dot { width: 8px; height: 8px; border-radius: 50%; }
 
@@ -819,7 +819,7 @@ function generate() {
   padding: 10px 12px; cursor: pointer; transition: all 0.15s;
 }
 .mode-card:hover { border-color: #3a4358; }
-.mode-card.active { border-color: var(--accent); background: rgba(99, 102, 241, 0.1); }
+.mode-card.active { border-color: var(--accent); background: rgba(var(--accent-2-rgb), 0.1); }
 .mc-name { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
 .mc-desc { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
 
@@ -869,7 +869,7 @@ function generate() {
   border-radius: 999px; padding: 3px 12px; cursor: pointer; color: var(--text-dim);
 }
 .chip:hover { border-color: var(--accent); color: var(--text); }
-.chip.active { border-color: var(--accent); color: var(--accent); background: rgba(99, 102, 241, 0.12); }
+.chip.active { border-color: var(--accent); color: var(--accent); background: rgba(var(--accent-2-rgb), 0.12); }
 .range-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
 .range-label input { width: 100%; }
 .version-list { display: flex; flex-direction: column; gap: 12px; }

@@ -1212,7 +1212,7 @@ async function loadHistory() {
 }
 .track-head.video { border-left: 3px solid var(--accent); }
 .track-head.dialogue { border-left: 3px solid var(--green); }
-.track-head.music { border-left: 3px solid #a78bfa; }
+.track-head.music { border-left: 3px solid var(--accent-soft); }
 .track-head.sfx { border-left: 3px solid var(--yellow); }
 .track-head.subtitle { border-left: 3px solid #38bdf8; }
 .tr-name { font-size: 13px; font-weight: 700; }
@@ -1340,7 +1340,7 @@ async function loadHistory() {
   background: var(--bg-panel); border: 1px solid var(--border); color: var(--text-dim);
 }
 .badge.pending { color: var(--yellow); border-color: rgba(251, 191, 36, 0.4); }
-.badge.running { color: var(--accent); border-color: rgba(99, 102, 241, 0.4); }
+.badge.running { color: var(--accent); border-color: rgba(var(--accent-2-rgb), 0.4); }
 .badge.done { color: var(--green); border-color: rgba(52, 211, 153, 0.4); }
 .badge.failed { color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
 .badge.cancelled { color: var(--text-dim); }

@@ -14,6 +14,7 @@ from .quality import list_presets
 from .routers import assets as assets_router
 from .routers import engines as engines_router
 from .routers import jobs as jobs_router
+from .routers import launch as launch_router
 from .routers import novel as novel_router
 from .routers import novel_bible as novel_bible_routers
 from .routers import novel_script as novel_script_routers
@@ -63,6 +64,7 @@ app.add_middleware(
 
 app.include_router(engines_router.router)
 app.include_router(jobs_router.router)
+app.include_router(launch_router.router)
 app.include_router(novel_router.router)
 app.include_router(novel_bible_routers.router)
 app.include_router(novel_bible_routers.bible_router)

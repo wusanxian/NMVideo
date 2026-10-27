@@ -470,7 +470,7 @@ loadBible()
 .badge-err { color: #f87171; background: rgba(248, 113, 113, 0.14); }
 .card {
   padding: 14px 16px;
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a3345);
   border-radius: 12px;
 }
@@ -501,7 +501,7 @@ loadBible()
 }
 .progress-inner {
   height: 100%;
-  background: var(--accent, #8b5cf6);
+  background: var(--accent);
   transition: width 0.3s;
 }
 .empty-hint {
@@ -509,7 +509,7 @@ loadBible()
   text-align: center;
   font-size: 13px;
   color: var(--text-dim, #9aa5b8);
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px dashed var(--border, #2a3345);
   border-radius: 12px;
 }
@@ -550,7 +550,7 @@ loadBible()
   min-width: 70px;
   box-sizing: border-box;
 }
-.row-adding td { background: rgba(139, 92, 246, 0.06); }
+.row-adding td { background: rgba(var(--accent-rgb), 0.06); }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
   padding: 1px 7px;
@@ -564,7 +564,7 @@ loadBible()
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chip:hover { border-color: var(--accent, #8b5cf6); }
+.chip:hover { border-color: var(--accent); }
 .chip.dead { color: #f87171; cursor: help; }
 .ver-row {
   display: flex;
@@ -592,7 +592,7 @@ loadBible()
   max-width: 92vw;
   max-height: 84vh;
   overflow: auto;
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a3345);
   border-radius: 14px;
 }

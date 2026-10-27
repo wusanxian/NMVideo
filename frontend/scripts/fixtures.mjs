@@ -46,6 +46,28 @@ export const FIXTURES = {
     { id: 'high', name: '精细', desc: '高质量', width: 832, height: 480, num_frames: 33, fps: 12, steps: 8, guidance: 7 },
   ],
   '/api/hardware': { gpu_name: 'RTX 3060', vram_gb: 12, ram_gb: 32, model_id: 't2v-a14b', quant: 'fp8', offload: 'model', notes: [] },
+  // 启动页：首启现场（ComfyUI 还没起来）——正是要验收的那个状态
+  '/api/launch/status': {
+    ok: false,
+    ready: false,
+    version: '0.1.9',
+    progress: 0.333,
+    steps: [
+      { key: 'backend', label: '本地服务', state: 'done', detail: '已就绪 · v0.1.9' },
+      { key: 'comfyui', label: 'ComfyUI', state: 'blocked', detail: '未检测到 http://127.0.0.1:8188——请先启动 ComfyUI（桌面端「系统管理」或命令行）' },
+      { key: 'engine', label: '生成引擎', state: 'blocked', detail: '默认引擎 comfyui 走 ComfyUI 通道，服务未连接时无法出片' },
+    ],
+    comfyui: { url: 'http://127.0.0.1:8188', online: false, vram_total_gb: 0, vram_free_gb: 0, ram_free_gb: 0, queue_running: 0, queue_pending: 0 },
+    paths: {
+      project: 'D:\\work\\NMVideo',
+      backend: 'D:\\work\\NMVideo\\backend',
+      db: 'D:\\work\\NMVideo\\backend\\aivideo.db',
+      models: { path: 'D:\\work\\NMVideo\\backend\\models', size_gb: 16.1, files: 128 },
+      outputs: { path: 'D:\\work\\NMVideo\\backend\\outputs', size_gb: 3.4, files: 260 },
+    },
+    disk: { free_gb: 116.1, total_gb: 300 },
+    hardware: { gpu_name: 'NVIDIA GeForce RTX 4060', vram_gb: 8, free_vram_gb: 1.9, ram_gb: 32, available_ram_gb: 17.3, device: 'cuda' },
+  },
   '/api/projects': [{ id: 'demo-project', name: '测试项目', description: '用于渲染验收的样例项目', created_at: '2026-10-27T10:00:00' }],
   '/api/projects/demo-project': PROJECT,
   '/api/gallery': [JOB],
@@ -67,6 +89,7 @@ export const FIXTURES = {
 /** 页面 → 渲染完成后正文必须出现的标记 */
 export const PAGE_EXPECT = [
   ['/', ['测试项目']],
+  ['/launch', ['工作空间', '安装信息', '正在启动 ComfyUI']],
   ['/generate', ['ComfyUI 通道', '本机进程内通道', 'AnimeDiff']],
   ['/queue', ['雨夜霓虹街景', '已自动降档']],
   ['/gallery', ['雨夜霓虹街景']],

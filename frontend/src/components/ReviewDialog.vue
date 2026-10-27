@@ -171,7 +171,7 @@ async function act(action) {
 }
 .stage-badge.design { background: rgba(96, 165, 250, 0.15); color: #60a5fa; border-color: transparent; }
 .stage-badge.generation { background: rgba(251, 191, 36, 0.15); color: var(--yellow); border-color: transparent; }
-.stage-badge.video { background: rgba(167, 139, 250, 0.15); color: #a78bfa; border-color: transparent; }
+.stage-badge.video { background: rgba(var(--accent-rgb), 0.15); color: var(--accent-soft); border-color: transparent; }
 .modal-body { overflow-y: auto; padding: 20px 22px; }
 .modal-foot {
   display: flex; align-items: center; gap: 10px;

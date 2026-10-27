@@ -745,7 +745,7 @@ function fmtTime(iso) {
   background: var(--bg-secondary, #222a3a);
 }
 .shot-row.editing {
-  background: rgba(139, 92, 246, 0.06);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 .c-seq {
   color: var(--text-dim, #9aa5b8);
@@ -781,7 +781,7 @@ function fmtTime(iso) {
   color: var(--text-dim, #9aa5b8);
 }
 .chip.char {
-  color: #8b5cf6;
+  color: var(--accent);
 }
 .chip.pos, .chip.ch {
   color: #38bdf8;
@@ -795,7 +795,7 @@ function fmtTime(iso) {
   border-radius: 999px;
   background: var(--bg-secondary, #222a3a);
 }
-.mode-chip.t2v { color: #8b5cf6; }
+.mode-chip.t2v { color: var(--accent); }
 .mode-chip.i2v { color: #38bdf8; }
 .mode-chip.first_last { color: #f0b429; }
 .mode-chip.continuation { color: #4ade80; }

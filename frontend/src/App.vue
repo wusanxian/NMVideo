@@ -83,6 +83,7 @@ const showOfflineCard = computed(() => !backendOnline.value)
 // ---------- 侧栏导航（按创作流：作品 → 剧本 → 资产 → 生成 → 剪辑 → 声音 → 设置） ----------
 const pid = computed(() => projectStore.currentProjectId)
 const navItems = computed(() => [
+  { icon: '🚀', label: '启动', to: '/launch', route: '/launch' },
   { icon: '📚', label: '小说改编', to: '/novel', route: '/novel' },
   { icon: '🗂', label: '我的作品', to: '/projects', route: '/projects' },
   { icon: '📖', label: '剧本与分镜', tab: 'shots', needsProject: true },
@@ -167,8 +168,8 @@ onUnmounted(() => {
   padding: 9px 18px;
   font-size: 13px;
   color: var(--text, #e8ecf3);
-  background: var(--bg-card, #1a1f2b);
-  border: 1px solid var(--accent, #8b5cf6);
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
 }
@@ -188,7 +189,7 @@ onUnmounted(() => {
 .offline-card {
   max-width: 520px;
   padding: 36px 40px;
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a3345);
   border-radius: 14px;
   text-align: center;

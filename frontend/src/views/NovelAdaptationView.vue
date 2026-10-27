@@ -357,15 +357,15 @@ function fmtTime(iso) {
 }
 .tab:hover { color: var(--text, #e5e9f0); }
 .tab.active {
-  color: var(--accent, #8b5cf6);
-  border-bottom-color: var(--accent, #8b5cf6);
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 .stage-hint {
   padding: 12px 16px;
   margin-bottom: 16px;
   font-size: 13px;
   line-height: 1.7;
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a3345);
   border-radius: 10px;
 }
@@ -386,13 +386,13 @@ function fmtTime(iso) {
 }
 .novel-card {
   padding: 12px 14px;
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a3345);
   border-radius: 10px;
   cursor: pointer;
 }
 .novel-card.active {
-  border-color: var(--accent, #8b5cf6);
+  border-color: var(--accent);
 }
 .novel-card-head {
   display: flex;
@@ -416,7 +416,7 @@ function fmtTime(iso) {
 }
 .chapter-panel {
   padding: 16px;
-  background: var(--bg-card, #1a1f2b);
+  background: var(--bg-card);
   border: 1px solid var(--border, #2a3345);
   border-radius: 12px;
 }
@@ -460,7 +460,7 @@ function fmtTime(iso) {
   cursor: pointer;
 }
 .chapter-title:hover {
-  color: var(--accent, #8b5cf6);
+  color: var(--accent);
 }
 .ch-meta {
   font-size: 11px;

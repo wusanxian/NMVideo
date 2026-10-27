@@ -171,7 +171,7 @@ function playPreview() {
 .stage-chip.design { background: rgba(96, 165, 250, 0.15); color: #60a5fa; border-color: transparent; }
 .stage-chip.design_ok { background: rgba(52, 211, 153, 0.15); color: var(--green); border-color: transparent; }
 .stage-chip.generation { background: rgba(251, 191, 36, 0.15); color: var(--yellow); border-color: transparent; }
-.stage-chip.video { background: rgba(167, 139, 250, 0.15); color: #a78bfa; border-color: transparent; }
+.stage-chip.video { background: rgba(var(--accent-rgb), 0.15); color: var(--accent-soft); border-color: transparent; }
 
 .icon-btn {
   background: transparent; border: none; color: var(--text-dim);
@@ -237,7 +237,7 @@ function playPreview() {
   background: var(--bg-card); border: 1px solid var(--border); color: var(--text-dim);
 }
 .badge.pending { color: var(--yellow); border-color: rgba(251, 191, 36, 0.4); }
-.badge.running { color: var(--accent); border-color: rgba(99, 102, 241, 0.4); }
+.badge.running { color: var(--accent); border-color: rgba(var(--accent-2-rgb), 0.4); }
 .badge.done { color: var(--green); border-color: rgba(52, 211, 153, 0.4); }
 .badge.failed { color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
 .badge.cancelled { color: var(--text-dim); }

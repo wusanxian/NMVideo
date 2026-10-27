@@ -31,6 +31,7 @@ async function request(path, options = {}) {
 
 export const api = {
   health: () => request('/health'),
+  launchStatus: () => request('/launch/status'),
   engines: () => request('/engines'),
   jobs: () => request('/jobs?limit=200'),
   createJob: (data) => request('/jobs', { method: 'POST', body: JSON.stringify(data) }),

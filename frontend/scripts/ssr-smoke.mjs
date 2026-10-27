@@ -13,6 +13,7 @@ import { createRouter, createMemoryHistory } from 'vue-router'
 
 const PAGES = [
   ['/', 'HomeView'],
+  ['/launch', 'LaunchView'],
   ['/generate', 'GenerateView'],
   ['/queue', 'QueueView'],
   ['/gallery', 'GalleryView'],

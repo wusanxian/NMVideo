@@ -470,7 +470,7 @@ function fmtTime(iso) {
   cursor: pointer;
 }
 .ep-card.active {
-  border-color: var(--accent, #8b5cf6);
+  border-color: var(--accent);
 }
 .ep-card-head {
   display: flex;

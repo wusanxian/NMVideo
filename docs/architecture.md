@@ -148,3 +148,28 @@ ctypes 这一层是必需的：`requirements.txt` 里没有 psutil，装了才�
 
 任何探测失败一律**放行**（fail-open）：没有数据不拦人，只拦确认不够的。
 看门狗同理——「没有数据」绝不等于「中止任务」。
+
+## 8. 启动 / 工作空间页（2026-10-27）
+
+侧栏第一项「启动」（`/launch`），对应 `LaunchView.vue` + `GET /api/launch/status`。
+
+**只报实况，不编进度。** 桌面端有启动器进程，能报真实的
+`preparing / installing / models / ready` 阶段；浏览器端看不到那个进程，所以
+这里不假装「正在安装依赖 43%」。三件事各自独立探测，进度 = 几件事已经通了：
+
+| 步骤 | 判据 | 拿不到时的说法 |
+|---|---|---|
+| 本地服务 | 这个接口能被调到（本身就是证据） | —— |
+| ComfyUI | `ComfyUIClient.is_available()` + `/system_stats` + `/queue` | 「未检测到 {url}，请先启动 ComfyUI」 |
+| 生成引擎 | ComfyUI 在线则通道可用；否则默认引擎无法出片 | 说明依赖关系，不谎报可用 |
+
+ComfyUI 未连接是**正常首启状态**，接口必须 200 + 原因，不能 500（`test_launch_status`
+钉住了这条）。轮询成本靠缓存压住：目录体积 60s、硬件探测 30s——模型目录几百 GB
+时每 2 秒 walk 一遍会把磁盘拖死。
+
+路径与体积都来自后端实况（`paths.models/outputs`、磁盘可用、显卡/内存），
+点击路径可复制。就绪后轮询从 2s 放宽到 10s。
+
+配色（2026-10-27 用户要求）：全局换蓝黑，强调色 `--accent #3b82f6` /
+`--accent-2 #38bdf8`，半透明一律用 `--accent-rgb` / `--accent-2-rgb`，不再写死
+十六进制；`desktop/renderer/styles.css` 与前端共用同一套值，壳层与页面不打架。
