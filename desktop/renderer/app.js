@@ -49,6 +49,14 @@
       serviceIdle: '已释放本软件的后台占用，需要时点击“开启服务”。',
       serviceExternal: '外部服务 · 原窗口关闭',
       serviceHint: '不用生成时可关闭本地服务，释放本软件的内存与显存。独立启动的 ComfyUI 需在原窗口关闭。',
+      mcpBtn: '🤖 AI 连接', mcpTitle: 'AI 助手连接',
+      mcpOn: '已开启 · 等待 AI 助手接入', mcpOff: '未开启',
+      mcpEnable: '一键开启', mcpDisable: '关闭', mcpCopy: '复制地址', mcpCopied: '已复制 ✓',
+      mcpHint: '复制地址粘贴到 AI 助手（WorkBuddy / Claude Code 等），即可对话直接生成视频。地址含访问令牌，请勿外传。',
+      mcpConfig: '配置示例', mcpLive: '连接状态', mcpRecent: '最近调用',
+      mcpNoClient: '还没有 AI 助手连入。粘贴地址并对话后，这里会实时显示连接与工具调用。',
+      mcpNoActivity: '暂无调用记录',
+      mcpBackendOffline: '后端服务未就绪，开启服务后再试。',
     },
     en: {
       appName: 'NMVideo',
@@ -84,6 +92,14 @@
       serviceIdle: 'Background resources released. Start the service when needed.',
       serviceExternal: 'External service · stop in its launcher',
       serviceHint: 'Stop the local service to release its RAM and GPU memory. Close independently launched ComfyUI in its own window.',
+      mcpBtn: '🤖 AI Link', mcpTitle: 'AI Assistant Link',
+      mcpOn: 'Enabled · waiting for an AI client', mcpOff: 'Disabled',
+      mcpEnable: 'Enable', mcpDisable: 'Disable', mcpCopy: 'Copy URL', mcpCopied: 'Copied ✓',
+      mcpHint: 'Paste the URL into your AI assistant (WorkBuddy / Claude Code, etc.) to generate videos by chat. The URL contains an access token — keep it private.',
+      mcpConfig: 'Config examples', mcpLive: 'Connections', mcpRecent: 'Recent tool calls',
+      mcpNoClient: 'No AI client connected yet. Paste the URL and chat — connections and tool calls will show up here live.',
+      mcpNoActivity: 'No calls yet',
+      mcpBackendOffline: 'Backend is not ready. Start the service first.',
     },
   }
   let lang = localStorage.getItem('aivideo.lang') || 'zh'
@@ -146,6 +162,14 @@
     serviceStatus: $('#service-status'),
     serviceStart: $('#service-start-btn'), serviceStop: $('#service-stop-btn'),
     serviceMessage: $('#service-message'),
+    // AI 助手连接（MCP）弹框
+    mcpBtn: $('#mcp-btn'),
+    mcpModal: $('#mcp-modal'), mcpBackdrop: $('#mcp-backdrop'), mcpClose: $('#mcp-close-btn'),
+    mcpStateDot: $('#mcp-state-dot'), mcpStateText: $('#mcp-state-text'), mcpToggle: $('#mcp-toggle-btn'),
+    mcpUrl: $('#mcp-url'), mcpCopy: $('#mcp-copy-btn'),
+    mcpSnippetWb: $('#mcp-snippet-wb'), mcpSnippetCc: $('#mcp-snippet-cc'),
+    mcpSessionCount: $('#mcp-session-count'),
+    mcpSessions: $('#mcp-sessions'), mcpActivity: $('#mcp-activity'),
   }
 
   // ---------------- 渲染 ----------------
@@ -505,13 +529,138 @@
     state.logs.push({ text: '[ERROR] ' + text, ts: Date.now() })
     renderTerminal()
   })
-  window.desk.on('backend:port', ({ port }) => { state.appUrl = `http://127.0.0.1:${port}` })
+  window.desk.on('backend:port', ({ port }) => {
+    state.appUrl = `http://127.0.0.1:${port}`
+    mcp.url = ''  // 端口变了，旧连接地址作废，下次打开弹框重新取
+  })
   window.desk.on('backend:tick', ({ seconds }) => {
     // 服务计时器（启动/重连期间的已耗时，MM:SS）
     const total = Number(seconds) || 0
     el.serviceTimer.textContent =
       String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0')
     el.serviceTimer.style.display = ['ready', 'stopped', 'stopping'].includes(state.bootState) ? 'none' : ''
+  })
+
+  // ---------------- AI 助手连接（MCP）：顶栏按钮 → 弹框，复制即用 + 实时连接状态 ----------------
+  const mcp = { open: false, timer: null, busy: false, url: '' }
+
+  async function mcpApi(path, opts) {
+    const r = await fetch(state.appUrl + path, opts)
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    return r.json()
+  }
+
+  function fmtTime(ts) {
+    const d = new Date(ts * 1000)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+  }
+
+  function renderMcp() {
+    if (!mcp.state) return
+    const on = Boolean(mcp.state.enabled)
+    el.mcpStateDot.className = 'mcp-dot ' + (on ? 'on' : 'off')
+    el.mcpStateText.textContent = on ? t('mcpOn') : t('mcpOff')
+    el.mcpToggle.textContent = on ? t('mcpDisable') : t('mcpEnable')
+    el.mcpUrl.value = mcp.url
+    el.mcpCopy.disabled = !on || !mcp.url
+    const u = mcp.url || '<连接地址>'
+    el.mcpSnippetWb.textContent = JSON.stringify({ mcpServers: { nmvideo: { url: u } } }, null, 2)
+    el.mcpSnippetCc.textContent = `claude mcp add --transport http nmvideo "${u}"`
+  }
+
+  function renderMcpActivity(act) {
+    const sessions = (act && act.sessions) || []
+    el.mcpSessionCount.textContent = sessions.length
+      ? (lang === 'zh' ? `${sessions.length} 个 AI 助手已连入` : `${sessions.length} client(s) connected`)
+      : ''
+    if (!sessions.length) {
+      el.mcpSessions.innerHTML = `<div class="mcp-empty">${t('mcpNoClient')}</div>`
+    } else {
+      el.mcpSessions.innerHTML = sessions.map((s) => `
+        <div class="mcp-session">
+          <span class="mcp-dot on"></span>
+          <span class="mcp-session-sid">AI 助手 · ${s.sid}</span>
+          <span class="mcp-session-meta">${s.calls} 次调用 · ${s.last_tool || '—'}</span>
+        </div>`).join('')
+    }
+    const recent = (act && act.recent) || []
+    if (!recent.length) {
+      el.mcpActivity.innerHTML = `<div class="mcp-empty">${t('mcpNoActivity')}</div>`
+    } else {
+      el.mcpActivity.innerHTML = recent.map((a) => `
+        <div class="mcp-call ${a.ok ? '' : 'fail'}">
+          <span class="mcp-call-time">${fmtTime(a.ts)}</span>
+          <span class="mcp-call-kind">${a.kind === 'tool' ? '🔧' : a.kind === 'connect' ? '🔌' : '⛔'} ${a.tool || a.kind}</span>
+          <span class="mcp-call-detail">${a.detail || ''}</span>
+        </div>`).join('')
+    }
+  }
+
+  async function mcpRefresh() {
+    try {
+      mcp.state = await mcpApi('/api/services/mcp')
+      if (mcp.state.enabled && !mcp.url) {
+        const rev = await mcpApi('/api/services/mcp/reveal', { method: 'POST' })
+        mcp.url = `${state.appUrl}/mcp?token=${rev.token}`
+      } else if (!mcp.state.enabled) {
+        mcp.url = ''
+      }
+      renderMcp()
+      if (mcp.open) {
+        renderMcpActivity(await mcpApi('/api/services/mcp/activity'))
+      }
+    } catch { /* 后端离线时保持现状 */ }
+  }
+
+  function setMcpOpen(open) {
+    mcp.open = open
+    el.mcpModal.hidden = !open
+    el.mcpBtn.setAttribute('aria-expanded', String(open))
+    el.mcpBtn.classList.toggle('active', open)
+    clearInterval(mcp.timer)
+    if (open) {
+      mcpRefresh()
+      mcp.timer = setInterval(mcpRefresh, 3000)
+    } else {
+      mcp.timer = null
+    }
+  }
+
+  el.mcpBtn.addEventListener('click', () => setMcpOpen(!mcp.open))
+  el.mcpClose.addEventListener('click', () => setMcpOpen(false))
+  el.mcpBackdrop.addEventListener('click', () => setMcpOpen(false))
+
+  el.mcpToggle.addEventListener('click', async () => {
+    if (mcp.busy || !mcp.state) return
+    mcp.busy = true
+    el.mcpToggle.disabled = true
+    try {
+      const enable = !mcp.state.enabled
+      mcp.state = await mcpApi('/api/services/mcp', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enable }),
+      })
+      mcp.url = ''
+      if (enable) {
+        // 开启即出地址，方便直接复制
+        const rev = await mcpApi('/api/services/mcp/reveal', { method: 'POST' })
+        mcp.url = `${state.appUrl}/mcp?token=${rev.token}`
+      }
+      renderMcp()
+    } catch {
+      el.mcpStateText.textContent = t('mcpBackendOffline')
+    } finally {
+      mcp.busy = false
+      el.mcpToggle.disabled = false
+    }
+  })
+
+  el.mcpCopy.addEventListener('click', async () => {
+    if (!mcp.url) return
+    try { await navigator.clipboard.writeText(mcp.url) } catch { el.mcpUrl.select(); document.execCommand('copy') }
+    el.mcpCopy.textContent = t('mcpCopied')
+    setTimeout(() => { el.mcpCopy.textContent = t('mcpCopy') }, 1400)
   })
 
   // ---------------- 更新事件 ----------------
