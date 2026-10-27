@@ -10,14 +10,16 @@
 """
 import json
 import secrets
+import time
 import urllib.parse
+from collections import deque
 from typing import Optional
 
 from mcp.server.mcpserver import MCPServer
 from starlette.responses import JSONResponse
 
 from . import db as db_module
-from .engines import ENGINES
+from .engines import list_engines
 from .routers.jobs import (
     JobCreate,
     cancel_job as _api_cancel_job,
@@ -67,6 +69,50 @@ def _ensure_token() -> str:
     return token
 
 
+# ---------------------------------------------------------------- 连接活动（UI 实时展示）
+
+# 会话与最近调用只存内存：应用重启即清零，无隐私持久化
+_SESSIONS: dict = {}   # sid -> {sid, first, last, calls, last_tool}
+_ACTIVITY: deque = deque(maxlen=100)  # {ts, kind, tool, detail, ok}
+
+
+def _record(kind: str, tool: str = "", detail: str = "", ok: bool = True) -> None:
+    """记录一条 MCP 活动（connect / disconnect / tool），失败不影响主流程。"""
+    try:
+        _ACTIVITY.append({
+            "ts": round(time.time(), 3), "kind": kind,
+            "tool": tool, "detail": (detail or "")[:120], "ok": bool(ok),
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _touch_session(sid: str) -> None:
+    """新会话登记 / 旧会话续期（按 mcp-session-id 请求头）。"""
+    now = time.time()
+    s = _SESSIONS.get(sid)
+    if s is None:
+        if len(_SESSIONS) > 64:  # 防御异常客户端刷会话
+            stale = sorted(_SESSIONS.items(), key=lambda kv: kv[1]["last"])[:16]
+            for k, _ in stale:
+                _SESSIONS.pop(k, None)
+        _SESSIONS[sid] = {"sid": sid[:12], "first": now, "last": now,
+                          "calls": 0, "last_tool": ""}
+        _record("connect", detail=f"会话 {sid[:12]} 已连接")
+    else:
+        s["last"] = now
+
+
+def activity() -> dict:
+    """连接状态总览：活跃会话 + 最近调用（给顶栏弹框实时展示）。"""
+    now = time.time()
+    for sid in [k for k, v in _SESSIONS.items() if now - v["last"] > 1800]:
+        _SESSIONS.pop(sid, None)
+    sessions = sorted(_SESSIONS.values(), key=lambda s: -s["last"])[:20]
+    recent = list(_ACTIVITY)[-40:][::-1]
+    return {"session_count": len(_SESSIONS), "sessions": sessions, "recent": recent}
+
+
 # ---------------------------------------------------------------- MCP 服务与工具
 
 mcp = MCPServer("NMVideo")
@@ -87,18 +133,18 @@ async def app_status() -> dict:
     生成视频前先调用本工具确认引擎可用；不可用时会说明原因（缺显卡/缺模型/ComfyUI 未启动）。
     """
     engines = {}
-    for eid, eng in ENGINES.items():
-        try:
-            d = eng.describe()
-            engines[eid] = {"name": d.get("name", eid), "status": d.get("status"),
-                            "note": d.get("note", "")}
-        except Exception as exc:  # noqa: BLE001
-            engines[eid] = {"name": eid, "status": "unavailable", "note": str(exc)}
+    # 复用 list_engines()：它处理了「类 vs 实例」与「无 describe 的引擎回退 meta」，
+    # 与前端引擎列表完全同源（此前误写 eng.describe() 把类当实例调，全部报 unavailable）
+    for item in list_engines():
+        engines[item["id"]] = {"name": item.get("name", item["id"]),
+                               "status": item.get("status"),
+                               "note": item.get("note", "")}
     jobs = db_module.db.list_jobs(limit=200)
     counts = {}
     for j in jobs:
         counts[j["status"]] = counts.get(j["status"], 0) + 1
     sec = get_section("llm") or {}
+    _record("tool", tool="app_status", detail="查询应用状态")
     return {
         "app": "NMVideo",
         "engines": engines,
@@ -161,7 +207,9 @@ async def create_video(
     try:
         job = await _api_create_job(JobCreate(**params))
     except Exception as exc:  # noqa: BLE001
+        _record("tool", tool="create_video", detail=str(getattr(exc, "detail", exc))[:80], ok=False)
         return _err(exc)
+    _record("tool", tool="create_video", detail=f"建任务 {job['id']}：{job['prompt'][:60]}")
     return {"job_id": job["id"], "status": job["status"], "engine": job["engine"],
             "prompt": job["prompt"],
             "hint": "已入队。用 get_job 轮询；本地浏览器可打开 video_url 观看成片。"}
@@ -178,7 +226,9 @@ async def list_jobs(status: Optional[str] = None, limit: int = 20) -> dict:
     try:
         rows = _api_list_jobs(status=status, limit=max(1, min(int(limit), 100)))
     except Exception as exc:  # noqa: BLE001
+        _record("tool", tool="list_jobs", detail=str(getattr(exc, "detail", exc))[:80], ok=False)
         return _err(exc)
+    _record("tool", tool="list_jobs", detail=f"列出任务（{len(rows)} 条）")
     return {"jobs": [
         {"job_id": r["id"], "status": r["status"], "progress": round(r.get("progress") or 0, 2),
          "stage": r.get("stage", ""), "engine": r.get("engine", ""),
@@ -197,7 +247,9 @@ async def get_job(job_id: str) -> dict:
     try:
         job = _api_get_job(job_id)
     except Exception as exc:  # noqa: BLE001
+        _record("tool", tool="get_job", detail=f"{job_id}: {str(getattr(exc, 'detail', exc))[:60]}", ok=False)
         return _err(exc)
+    _record("tool", tool="get_job", detail=f"{job_id} → {job['status']}")
     out = {
         "job_id": job["id"], "status": job["status"],
         "progress": round(job.get("progress") or 0, 2), "stage": job.get("stage", ""),
@@ -224,7 +276,9 @@ async def cancel_job(job_id: str) -> dict:
     try:
         _api_cancel_job(job_id)
     except Exception as exc:  # noqa: BLE001
+        _record("tool", tool="cancel_job", detail=f"{job_id}: {str(getattr(exc, 'detail', exc))[:60]}", ok=False)
         return _err(exc)
+    _record("tool", tool="cancel_job", detail=f"取消 {job_id}")
     return {"ok": True, "job_id": job_id,
             "hint": "已请求取消。注意：部分引擎（如 H3 原生推理）在去噪阶段无法即时中断。"}
 
@@ -258,6 +312,18 @@ class _TokenGuard:
                 {"error": "MCP token 无效。请在「模型服务」页复制完整连接地址。"},
                 status_code=401,
             )(scope, receive, send)
+        # 会话追踪：MCP Streamable HTTP 用 mcp-session-id 头标识客户端会话
+        sid = None
+        for k, v in scope.get("headers") or []:
+            if k == b"mcp-session-id":
+                sid = v.decode("utf-8", "ignore").strip()
+                break
+        if sid:
+            if scope.get("method") == "DELETE":  # 客户端主动断开
+                _SESSIONS.pop(sid, None)
+                _record("disconnect", detail=f"会话 {sid[:12]} 已断开")
+            else:
+                _touch_session(sid)
         await self.inner(scope, receive, send)
 
 

@@ -55,6 +55,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "null",  # 桌面壳标题栏（file:// 页面）调 /api/services/mcp* 用
     ],
     allow_methods=["*"],
     allow_headers=["*"],

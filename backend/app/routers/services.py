@@ -121,6 +121,14 @@ class MCPConfig(BaseModel):
     regenerate: bool = False
 
 
+@router.get("/services/mcp/activity")
+def get_mcp_activity():
+    """MCP 连接活动：活跃会话 + 最近工具调用（顶栏弹框实时展示用）。"""
+    from .. import mcp_server
+
+    return mcp_server.activity()
+
+
 @router.put("/services/mcp")
 def put_mcp_config(data: MCPConfig):
     """启用/停用 MCP 端点；regenerate=true 时强制换新 token。"""
