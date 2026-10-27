@@ -24,6 +24,12 @@ class JobQueue:
     # HF-04：恢复扫描分页大小（原来 limit=1000 硬截断，pending 过多会丢任务）
     _RECOVER_PAGE = 200
 
+    # 生成前资源余量（GB）：低于阈值直接拒绝执行，防止 OOM 拖垮整机。
+    # 内存余量保护的是系统本身（生成进程 + 模型权重都吃它）；
+    # 显存余量只查进程内推理通道——ComfyUI 通道的显存由 ComfyUI 自己管理。
+    RAM_HEADROOM_GB = 2.0
+    VRAM_HEADROOM_GB = 1.5
+
     def __init__(self):
         self._queue: asyncio.Queue = asyncio.Queue()
         self._cancelled: set = set()
@@ -280,6 +286,37 @@ class JobQueue:
                     stage="失败", finished_at=_utcnow(),
                 )
 
+    @staticmethod
+    def _probe_free(name: str) -> float:
+        """安全读取余量查询函数；缺失/异常一律 -1（= 无数据，不拦人）。"""
+        fn = getattr(hw_probe, name, None)
+        if fn is None:
+            return -1.0
+        try:
+            return float(fn())
+        except Exception:  # noqa: BLE001
+            return -1.0
+
+    def _resource_headroom_ok(self, engine_id: str) -> tuple:
+        """生成前检查系统可用内存（全部引擎）与显存余量（仅进程内推理通道）。
+
+        返回 (ok, 原因)。查询失败（-1）时放行——没有数据不拦人，只拦确认不够的。
+        """
+        ram = self._probe_free("free_ram_gb")
+        if ram >= 0 and ram < self.RAM_HEADROOM_GB:
+            return False, (
+                f"系统可用内存仅 {ram:.1f}GB，低于 {self.RAM_HEADROOM_GB}GB 安全余量，"
+                "已拒绝本次生成以防内存耗尽拖垮系统。请关闭其他程序（或浏览器标签）后重试。"
+            )
+        if not is_comfy_engine(engine_id):
+            vram = self._probe_free("cuda_free_vram_gb")
+            if vram >= 0 and vram < self.VRAM_HEADROOM_GB:
+                return False, (
+                    f"显存空闲仅 {vram:.1f}GB，低于 {self.VRAM_HEADROOM_GB}GB 安全余量，"
+                    "已拒绝本次生成以防显存溢出。可降低分辨率/时长，或关闭占用显存的程序后重试。"
+                )
+        return True, ""
+
     async def _run_job(self, job_id: str):
         job = db_module.db.get_job(job_id)
         if not job or job["status"] not in ("pending", "running"):
@@ -291,6 +328,18 @@ class JobQueue:
 
         # 分镜工作台联动：该 job 若由分镜发起，全程同步镜头状态
         shot_id = job.get("shot_id") or ""
+
+        # ---------- 生成前资源守卫：内存/显存不足时明确拒绝，不硬冲 ----------
+        ok, reason = self._resource_headroom_ok(job["engine"])
+        if not ok:
+            db_module.db.update_job(
+                job_id, status="failed", error=reason, stage="失败",
+                finished_at=_utcnow(),
+            )
+            if shot_id and sb.get_shot(shot_id):
+                sb.update_shot(shot_id, job_id="", note=reason[:200])
+                sb.set_shot_status(shot_id, "rework", review_stage="")
+            return
 
         # 引擎实例缓存（模型常驻内存，切任务不重载）
         engine_id = job["engine"]
