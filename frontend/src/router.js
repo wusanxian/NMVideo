@@ -10,7 +10,10 @@ const routes = [
   { path: '/novel', name: 'novel', component: () => import('./views/NovelAdaptationView.vue') },
   { path: '/projects/:id', name: 'project', component: () => import('./views/ProjectView.vue'), props: true },
   { path: '/comfy', name: 'comfy', component: () => import('./views/ComfySetupView.vue') },
-  { path: '/services', name: 'services', component: () => import('./views/ServicesSetupView.vue') },
+  // 设置页：服务 / 环境 / 偏好三段（版式对齐 FreeVideo 设置弹窗）
+  { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue') },
+  // 老链接不断：原来「模型服务」页的入口统一并进设置页
+  { path: '/services', redirect: (to) => ({ path: '/settings', query: { ...to.query, tab: 'services' } }) },
 ]
 
 export default createRouter({

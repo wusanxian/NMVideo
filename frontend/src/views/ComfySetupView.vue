@@ -22,7 +22,7 @@
       </div>
       <p class="hint">
         未连接时：请先在本机启动 ComfyUI（默认 127.0.0.1:8188），
-        或到「🧩 模型服务」页把地址改成你的 ComfyUI 服务器。
+        或到<router-link to="/settings?tab=env">设置 · 环境</router-link>把地址改成你的 ComfyUI 服务器。
       </p>
     </div>
 
@@ -286,6 +286,7 @@ code {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
   padding: 1px 6px; font-size: 12px; font-family: ui-monospace, monospace;
 }
+.hint a { color: var(--accent-soft); }
 .wf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .wf-area {
   width: 100%; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.6;

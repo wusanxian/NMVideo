@@ -16,6 +16,8 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from .. import hw_probe
+from .. import resource_guard
+from .. import resource_watch
 from ..comfyui import ComfyUIClient
 from ..config import BASE_DIR, DB_PATH, MODELS_DIR, OUTPUTS_DIR, PROJECT_DIR
 from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine
@@ -179,6 +181,13 @@ def launch_status():
             "db": str(DB_PATH),
         },
         "disk": disk,
+        # 设置页「兼容性」要显示的是实际生效的策略，不是文档里的默认值
+        "resource": {
+            "guard": resource_guard.guard_mode(),
+            "watchdog": resource_watch.watchdog_enabled(),
+            "ram_floor_gb": resource_watch.DEFAULT_FLOOR_GB,
+            "ram_tight_gb": resource_watch.DEFAULT_FLOOR_GB + resource_watch.TIGHT_MARGIN_GB,
+        },
         "hardware": {
             "gpu_name": hw.get("gpu_name") or "",
             "vram_gb": hw.get("vram_gb") or 0,

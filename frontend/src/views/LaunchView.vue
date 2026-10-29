@@ -105,7 +105,7 @@
         target="_blank"
         rel="noreferrer"
       >打开 ComfyUI</a>
-      <router-link class="btn" to="/services">模型与设置</router-link>
+      <router-link class="btn" to="/settings">模型与设置</router-link>
       <span class="launch-tip">{{ error || autoTip }}</span>
     </footer>
   </div>

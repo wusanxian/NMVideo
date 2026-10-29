@@ -238,6 +238,57 @@ for (const [route] of PAGE_EXPECT) {
   s.ws.close()
 }
 
+// 设置页：点 tab → URL 跟着变 + 面板真的换掉（别只是样式动了）
+{
+  const target = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent('about:blank')}`, { method: 'PUT' })).json()
+  const s = await connect(target.webSocketDebuggerUrl)
+  await s.send('Runtime.enable')
+  await s.send('Page.enable')
+  await s.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/settings` })
+  await wait(1800)
+
+  const result = JSON.parse(
+    (
+      await s.send('Runtime.evaluate', {
+        expression: `(() => {
+          const tabs = [...document.querySelectorAll('.set-tabs button')];
+          const env = tabs.find((b) => b.textContent.trim() === '环境');
+          if (!env) return JSON.stringify({ ok: false, why: '没找到环境 tab', tabs: tabs.length });
+          env.click();
+          return JSON.stringify({ ok: true, tabs: tabs.map((b) => b.textContent.trim()) });
+        })()`,
+        returnByValue: true,
+      })
+    ).result.value,
+  )
+  await wait(500)
+
+  const state = JSON.parse(
+    (
+      await s.send('Runtime.evaluate', {
+        expression: `JSON.stringify({
+          url: location.pathname + location.search,
+          active: (document.querySelector('.set-tabs button.active')?.textContent || '').trim(),
+          hasGuard: document.body.innerText.includes('资源守卫档位'),
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        })`,
+        returnByValue: true,
+      })
+    ).result.value,
+  )
+
+  const ok = result.ok && state.active === '环境' && state.url.includes('tab=env')
+    && state.hasGuard && state.overflow <= 1
+  if (ok) {
+    console.log(`OK    交互：设置页切「环境」→ URL ${state.url} · 渲染出资源守卫档位`)
+  } else {
+    failed++
+    console.log(`ISSUE 交互：设置页 tab 切换失败 ${JSON.stringify({ result, ...state })}`)
+  }
+  await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${target.id}`)
+  s.ws.close()
+}
+
 cleanup()
 console.log(`\n${PAGE_EXPECT.length - failed}/${PAGE_EXPECT.length} 页面无异常`)
 process.exit(failed ? 1 : 0)

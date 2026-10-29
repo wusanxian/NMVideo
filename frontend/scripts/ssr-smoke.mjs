@@ -21,7 +21,10 @@ const PAGES = [
   ['/novel', 'NovelAdaptationView'],
   ['/projects/demo-project', 'ProjectView'],
   ['/comfy', 'ComfySetupView'],
-  ['/services', 'ServicesSetupView'],
+  // 设置页三段各渲染一遍：服务面板默认挂载，环境/偏好靠 query 切
+  ['/settings', 'SettingsView'],
+  ['/settings?tab=env', 'SettingsView'],
+  ['/settings?tab=prefs', 'SettingsView'],
 ]
 
 // ---- 浏览器 API 打桩 ----

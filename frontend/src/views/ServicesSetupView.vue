@@ -1,4 +1,10 @@
 <template>
+  <!--
+    2026-10-29 起本页不再挂路由：内容并入 /settings（服务 / 环境 / 偏好），
+    版式也换成设置页的「分组标签 + 卡片 + 行」。文件保留是为了留住原来的
+    MCP 说明、测试连接等文案，等你确认新版没问题再删。
+    路由 /services 现在直接重定向到 /settings?tab=services。
+  -->
   <div class="page">
     <header class="page-head">
       <div>

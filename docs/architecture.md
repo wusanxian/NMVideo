@@ -173,3 +173,29 @@ ComfyUI 未连接是**正常首启状态**，接口必须 200 + 原因，不能 
 配色（2026-10-27 用户要求）：全局换蓝黑，强调色 `--accent #3b82f6` /
 `--accent-2 #38bdf8`，半透明一律用 `--accent-rgb` / `--accent-2-rgb`，不再写死
 十六进制；`desktop/renderer/styles.css` 与前端共用同一套值，壳层与页面不打架。
+
+## 9. 设置页（2026-10-29）
+
+路由 `/settings`，三段等宽 tab：**服务 / 环境 / 偏好**（版式照 FreeVideo 的设置弹窗：
+顶部 tab → 分组小标签 → 圆角卡片 → 「左标题+副说明 / 右控件」的行）。
+`/services` 重定向到 `/settings?tab=services`，`/comfy`（工作流模板编辑器）保留——
+模板 JSON 与参数映射那块太重，塞进设置页会变成一屏半的输入框。
+
+| tab | 内容 | 数据来源 |
+|---|---|---|
+| 服务 | ComfyUI 地址与队列、LLM、图像生成、TTS、MCP 接入 | `/services/status`、`/services/config`、`/services/mcp` |
+| 环境 | ComfyUI 地址、目录（程序/模型/输出/DB）、模板编辑器入口、兼容性 | `/launch/status` + `/services/config` |
+| 偏好 | 语言、配色、更新（桌面端）、存储占用、关于 | `/launch/status` |
+
+原则与启动页一致：**只显示实况，不做假开关**。
+
+- 目录只读：目录由后端环境变量决定，界面只展示/复制/打开，避免界面和进程各记一份。
+- 资源守卫与看门狗只显示实际生效值（`launch/status` 新增 `resource` 字段：
+  `guard / watchdog / ram_floor_gb / ram_tight_gb`）。改档位要动环境变量并重启后端，
+  所以不放切换开关——放了也改不动正在跑的进程。
+- 更新按钮仅在桌面端可用（`window.desk.checkUpdate`），浏览器打开时按钮是灰的并写明原因。
+- 语言只做「简体中文」，English 显式 disabled：没做多语言就不给一个点了没反应的按钮。
+
+样式类在 `style.css`（`.set-tabs / .set-group / .set-card / .set-row / .set-seg /
+.set-switch / .set-badge`），组件在 `components/settings/`；分段控件是
+`components/Segmented.vue`（`variant="tabs"` 走顶部大分段，默认是表单里的小分段）。

@@ -91,7 +91,7 @@ const navItems = computed(() => [
   { icon: '🎬', label: '视频生成', to: '/generate', route: '/generate' },
   { icon: '✂️', label: '剪辑工作台', tab: 'timeline', needsProject: true },
   { icon: '🎧', label: '声音制作', tab: 'timeline', needsProject: true },
-  { icon: '⚙️', label: '模型与设置', to: '/services', route: '/services' },
+  { icon: '⚙️', label: '模型与设置', to: '/settings', route: '/settings' },
 ])
 
 function itemHref(item) {
