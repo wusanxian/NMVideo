@@ -4,7 +4,7 @@
 
 appId: com.aivideo.studio
 productName: NMVideo
-copyright: Copyright (c) 2026 aivideo
+copyright: Copyright (c) 2026 wusanxian (NMVideo)
 
 directories:
   output: dist
@@ -19,9 +19,14 @@ files:
   - package.json
 
 # NMVideo.exe 放进 resources/launcher/，main.js 从这里 spawn
+# 协议文件随包分发（安装目录 resources/licenses/ 下）
 extraResources:
   - from: ../packaging/dist/NMVideo.exe
     to: launcher/NMVideo.exe
+  - from: ../LICENSE
+    to: licenses/LICENSE
+  - from: ../NOTICE
+    to: licenses/NOTICE
 
 # 本地 electron 发行 zip 目录（GitHub 不通时的关键配置）：
 # 目录内需直接存放 electron-v<版本>-win32-x64.zip（build-desktop.bat 会自动准备）
