@@ -73,23 +73,46 @@ export const FIXTURES = {
     },
     // 引擎推荐：本机 8G/32G 的真实结论——H3 内存不够，落到 Wan 2.2
     recommend: {
-      recommended: 'wan22',
-      summary: 'H3 需 52GB 内存 / 139GB 磁盘，本机 32GB 内存 / 116GB 磁盘不满足 → 推荐 Wan 2.2 TI2V-5B',
+      recommended: 'h3',
+      // 口径：H3 走 ComfyUI 插件通道（FreeVideo/VDN-H3），8GB 显存 / 16GB 内存起；
+      // 原生通道（52GB 内存 / 139GB 磁盘）只作为说明出现，不参与推荐。
+      summary: '推荐 MiniMax H3（ComfyUI 插件通道：8GB 显存 / 32GB 内存即可，需下载 92GB 素材）',
       options: [
         {
-          id: 'h3', name: 'MiniMax H3', subtitle: '画质旗舰 · 走 ComfyUI 通道',
-          available: false, tier: 'int4', tier_label: 'int4（不可用）',
-          weights_gb: 37.8, need_ram_gb: 52, need_disk_gb: 139, max_pixels: 196608,
-          note: 'int4 需要 52GB 内存，当前 32GB。',
-          blockers: ['内存不足：即使 int4 量化也要约 38GiB 权重常驻内存（含余量 52GiB），当前可用 32GiB。'],
+          id: 'h3', label: '画质优先', name: 'MiniMax H3', subtitle: '走 ComfyUI 插件通道 · 分块流式，慢但画质最好',
+          channel: 'comfyui',
+          available: true, tier: 'plugin', tier_label: '插件分块流式',
+          weights_gb: 92.3, need_vram_gb: 8, need_ram_gb: 16, need_disk_gb: 100.3,
+          max_pixels: 0, disk_tight: false,
+          note: '8GB 显存按块流式运行：官方实测 4060 Ti 8GB + 64GB 内存，1344×768 10 秒约 10 分钟；内存越少回读磁盘的块越多、越慢',
+          blockers: [],
+          packs: [
+            { id: 'video', name: '视频模型', size_gib: 61.7, why: '生成画面的主体权重，按 50 块分片，按显存/内存/磁盘分级放置' },
+            { id: 'text', name: '文本编码器', size_gib: 14.6, why: '把提示词与参考图理解成模型输入，独立进程跑完即退出、不占推理内存' },
+            { id: 'decoder', name: '视频与音频解码器', size_gib: 10.3, why: '把潜变量还原成画面与声音，低显存下按块流式解码' },
+            { id: 'cache', name: '采样与加速缓存', size_gib: 5.7, why: '8 步蒸馏与画质提升所需的附加权重，装上才跑得动低步数' },
+          ],
+          native: {
+            available: false, min_ram_gb: 52, need_disk_gb: 139,
+            reason: '内存不足：即使 int4 量化也要约 38GiB 权重常驻内存（含余量 52GiB），当前可用 32GiB。',
+          },
         },
         {
-          id: 'wan22', name: 'Wan 2.2 TI2V-5B', subtitle: '低显存主力 · 480p / 5 秒',
+          id: 'wan22', label: '低显存 · 快速出片', name: 'Wan 2.2 TI2V-5B', subtitle: '480p / 5 秒档 · 8GB 显存直接跑，出片快',
           available: true, tier: 'fp8', tier_label: 'fp8',
           weights_gb: 0, need_ram_gb: 0, need_disk_gb: 0, max_pixels: 0,
           note: 'ti2v-5b · fp8 量化 · 8GB 显存可跑 480p', blockers: [],
         },
       ],
+      downloads: {
+        total_gib: 92.3, need_disk_gb: 100.3,
+        packs: [
+          { id: 'video', name: '视频模型', size_gib: 61.7, why: '生成画面的主体权重' },
+          { id: 'text', name: '文本编码器', size_gib: 14.6, why: '理解提示词与参考图' },
+          { id: 'decoder', name: '视频与音频解码器', size_gib: 10.3, why: '还原画面与声音' },
+          { id: 'cache', name: '采样与加速缓存', size_gib: 5.7, why: '8 步蒸馏与画质提升' },
+        ],
+      },
     },
     deps: [
       { id: 'torch', name: 'PyTorch', why: '视频生成推理底座', installed: true },

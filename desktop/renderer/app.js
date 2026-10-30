@@ -33,6 +33,8 @@
       stepGpuT: '安装显卡加速组件', stepGpuD: '让视频生成跑在显卡上，速度提升数倍',
       stepDepT: '安装运行依赖', stepDepD: '视频合成、音频处理需要的基础组件',
       stepResT: '下载生成资源', stepResD: '视频生成所需的本地资源包，装好后可离线生成',
+      // 资源包明细：体积与 backend/app/h3_freevideo.py 的 PACKS 同源，改一边要同步另一边
+      setupPacks: '共 4 个资源包，全新安装约 92GB（视频模型 62 · 文本编码器 15 · 解码器 10 · 缓存 6）；已装的会自动复用',
       stepSrvT: '启动本地服务', stepSrvD: '引擎在后台常驻，只在本机监听，不对外网开放',
       stepElapsed: (el) => `已用时 ${el}`,
       stepNoProgress: (el) => `已停滞 ${el} 无进展`,
@@ -91,6 +93,7 @@
       stepGpuT: 'Install GPU acceleration', stepGpuD: 'Run generation on the graphics card — several times faster',
       stepDepT: 'Install dependencies', stepDepD: 'Building blocks for video compositing and audio',
       stepResT: 'Download generation assets', stepResD: 'Local assets the engine needs; works offline afterwards',
+      setupPacks: '4 asset packs, about 92 GB for a fresh install (video 62 · text 15 · decoder 10 · cache 6); already-installed files are reused',
       stepSrvT: 'Start local service', stepSrvD: 'Engine runs in the background, listening on this machine only',
       stepElapsed: (el) => `${el} elapsed`,
       stepNoProgress: (el) => `No progress for ${el}`,
@@ -208,6 +211,7 @@
     bootView: $('#boot-view'),
     setupSteps: $('#setup-steps'),
     setupList: $('#setup-list'),
+    setupPacks: $('#setup-packs'),
     setupSummary: $('#setup-summary'),
     setupStall: $('#setup-stall'),
     systemBtn: $('#system-btn'),
@@ -305,6 +309,8 @@
     const s = state.bootState
     const total = SETUP_STEPS.length
     el.setupSteps.hidden = s === 'stopped'
+    // 装完了「要下多大」就是噪音；未开始/进行中/出错时保留，用户才知道总账
+    if (el.setupPacks) el.setupPacks.hidden = s === 'ready' || s === 'stopped' || s === 'stopping'
     stepEls.forEach((e, i) => {
       let cls
       let mark

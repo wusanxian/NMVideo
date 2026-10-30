@@ -64,7 +64,9 @@
       </div>
     </section>
 
-    <!-- ② 视频生成引擎：H3 / Wan 二选一，可用性来自本机实测 -->
+    <!-- ② 视频生成引擎：H3 / Wan 二选一，可用性来自本机实测。
+         H3 走 ComfyUI 插件通道（FreeVideo 那套资源包），门槛与原生通道差三倍，
+         所以这里按「通道」展示要求，不按单一内存数字一刀切。 -->
     <section class="tool-card">
       <div class="tc-top">
         <div class="tc-ico">🧠</div>
@@ -74,11 +76,12 @@
             <span class="tc-chip accent">已按配置推荐</span>
           </div>
           <div class="tc-desc">
-            显存决定画布上限，内存决定量化档位。选中的引擎会成为全站默认（生成页 / 分镜共用）。
+            插件通道按块流式（装不下的块回读磁盘），8GB 显存 / 16GB 内存即可；原生通道要权重常驻内存。
+            选中的引擎会成为全站默认（生成页 / 分镜共用）。
           </div>
         </div>
         <span class="tc-state" :class="currentOpt && currentOpt.available ? 'ok' : 'warn'">
-          {{ currentOpt ? currentOpt.name : '—' }}
+          {{ currentOpt ? (currentOpt.label || currentOpt.name) : '—' }}
         </span>
       </div>
 
@@ -96,9 +99,10 @@
         >
           <div class="opt-head">
             <span class="opt-radio" :class="{ on: currentOpt && currentOpt.id === opt.id }"></span>
-            <b>{{ opt.name }}</b>
+            <b>{{ opt.label || opt.name }}</b>
             <span v-if="rec.recommended === opt.id" class="opt-badge rec">推荐</span>
             <span v-else-if="!opt.available" class="opt-badge off">不可用</span>
+            <span class="opt-tech">{{ opt.name }}</span>
             <span class="opt-tier">{{ opt.tier_label }}</span>
           </div>
           <div class="opt-sub">{{ opt.subtitle }}</div>
@@ -108,11 +112,34 @@
           <div v-if="!opt.available && opt.blockers && opt.blockers.length > 1" class="opt-more">
             另：{{ opt.blockers[1] }}
           </div>
-          <div v-if="opt.available && opt.need_ram_gb" class="opt-meta">
+          <div v-if="opt.available && opt.channel === 'comfyui'" class="opt-meta">
+            素材 {{ opt.weights_gb }}GB（{{ (opt.packs || []).length }} 个资源包）
+            · 需显存 ≥{{ opt.need_vram_gb }}GB · 内存 ≥{{ opt.need_ram_gb }}GB
+            · 磁盘 ≥{{ opt.need_disk_gb }}GB
+          </div>
+          <div v-else-if="opt.available && opt.need_ram_gb" class="opt-meta">
             权重 {{ opt.weights_gb }}GiB · 需内存 {{ opt.need_ram_gb }}GB · 需磁盘 {{ opt.need_disk_gb }}GB
-            · 画布上限 {{ opt.max_pixels }}px
+            <template v-if="opt.max_pixels"> · 画布上限 {{ opt.max_pixels }}px</template>
           </div>
         </button>
+      </div>
+
+      <!-- 选中插件通道时把资源包摊开：装之前就该知道要下多大、每包干什么 -->
+      <div v-if="packs.length" class="pack-box">
+        <div class="pack-head">
+          <span>将下载 {{ packs.length }} 个资源包 · 共 {{ downloads.total_gib }}GB</span>
+          <span class="pack-disk">磁盘需 ≥{{ downloads.need_disk_gb || currentOpt.need_disk_gb }}GB</span>
+        </div>
+        <div v-for="p in packs" :key="p.id" class="pack-row">
+          <span class="pack-name">{{ p.name }}</span>
+          <span class="pack-size">{{ p.size_gib }}GB</span>
+          <span class="pack-why">{{ p.why }}</span>
+        </div>
+        <div v-if="nativeInfo && !nativeInfo.available" class="pack-native">
+          原生通道（不经插件、在本进程加载）也支持这个引擎，但要求内存
+          ≥{{ nativeInfo.min_ram_gb }}GB、磁盘 ≥{{ nativeInfo.need_disk_gb }}GB ——
+          本机不满足，所以这里只提供插件通道。
+        </div>
       </div>
 
       <div class="tc-msg" :class="engineMsg ? 'ok' : ''" v-if="engineMsg">{{ engineMsg }}</div>
@@ -240,7 +267,7 @@ const empty = {
     gpu_name: '', vram_gb: 0, ram_gb: 0, available_ram_gb: null,
     device: '', compute_cap: '', disk_free_gb: 0, torch_cuda_available: false,
   },
-  recommend: { recommended: '', summary: '', options: [] },
+  recommend: { recommended: '', summary: '', options: [], downloads: { total_gib: 0, packs: [] } },
   deps: [],
 }
 
@@ -273,6 +300,12 @@ const currentOpt = computed(() => {
   if (hit && hit.available) return hit
   return list.find((o) => o.id === rec.value.recommended) || list[0]
 })
+
+/** 选中引擎要下载的资源包（插件通道才有；界面按功能名列，不出现模型名）。 */
+const packs = computed(() => (currentOpt.value && currentOpt.value.packs) || [])
+const downloads = computed(() => rec.value.downloads || { total_gib: 0, packs: [] })
+/** 原生通道的门槛：用来解释「为什么只给插件通道」，不是说 H3 不支持。 */
+const nativeInfo = computed(() => (currentOpt.value && currentOpt.value.native) || null)
 
 const hwLine = computed(() => {
   const h = data.hardware || {}
@@ -529,6 +562,10 @@ onUnmounted(() => {
 }
 .opt-badge.rec { color: var(--green); background: rgba(52, 211, 153, .14); }
 .opt-badge.off { color: var(--yellow); background: rgba(251, 191, 36, .14); }
+.opt-tech {
+  font-size: 11px; color: var(--text-dim);
+  font-family: ui-monospace, monospace; opacity: .8;
+}
 .opt-tier {
   margin-left: auto; font-size: 11px; color: var(--text-dim);
   font-family: ui-monospace, monospace;
@@ -541,6 +578,40 @@ onUnmounted(() => {
   font-size: 11.5px; color: var(--text-dim);
   font-family: ui-monospace, monospace;
   margin-top: 6px;
+}
+
+/* ---------- 资源包清单（插件通道要下载的东西） ---------- */
+.pack-box {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .18);
+  padding: 10px 12px;
+}
+.pack-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12px; color: var(--text); font-weight: 600;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.pack-disk { font-weight: 400; color: var(--text-dim); font-family: ui-monospace, monospace; }
+.pack-row {
+  display: grid;
+  grid-template-columns: 96px 64px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed var(--border);
+}
+.pack-row:last-of-type { border-bottom: none; }
+.pack-name { color: var(--text); }
+.pack-size {
+  color: var(--accent-2); font-family: ui-monospace, monospace; text-align: right;
+}
+.pack-why { color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
+.pack-native {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  font-size: 11.5px; color: var(--text-dim); line-height: 1.7;
 }
 
 /* ---------- 依赖 ---------- */

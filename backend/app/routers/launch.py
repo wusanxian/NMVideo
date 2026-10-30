@@ -19,6 +19,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from .. import h3_freevideo
 from .. import hw_probe
 from .. import resource_guard
 from .. import resource_watch
@@ -86,8 +87,12 @@ def _hardware() -> dict:
 # =====================================================================
 # 环境准备清单（首启引导）：依赖探测 + 引擎推荐
 # =====================================================================
-# H3 权重 123.8GiB（14+14 分片）→ 磁盘实占 139GB（见 engines/h3_quant.py 文档实测）
-H3_DISK_GB = 139.0
+# H3 有**两条通道**，门槛差 3 倍，混在一起就会给出错误建议：
+#   - h3（ComfyUI 通道，FreeVideo 插件）：8GB 显存 / 16GB 内存 / 约 100GB 磁盘，
+#     插件按块流式，装不下的块回读磁盘 → 见 app/h3_freevideo.py 的实测量
+#   - h3_native（进程内 diffusers）：原生 bf16 权重 123.8GiB，内存决定档位，
+#     52GB 内存起步、磁盘 139GB → 见 engines/h3_quant.py
+H3_NATIVE_DISK_GB = 139.0
 
 # 运行依赖：只用 find_spec 查「在不在」，不 import——
 # import torch 要 2 秒起，启动页每 2 秒轮一次不能这么花。
@@ -115,25 +120,25 @@ def _dep_state() -> list:
 def _recommend_engine(hw: dict) -> dict:
     """按「显存 × 内存 × 磁盘」给出引擎建议。
 
-    口径跟 engines/h3_quant.py 一致：H3 的门槛是**内存**（权重要常驻），
-    显存只决定常驻还是按块流式。磁盘不够也装不下，所以单独算一条。
-    推荐结论不写死，全部由本机实测值推出来——写死 h3 会在 32GB 机器上
-    给出必然 OOM 的建议。
+    H3 有两条通道，门槛差三倍，必须分开算（否则就会给出「8GB+32GB 跑不了 H3」
+    这种错误建议）：
+
+    - ``h3`` 走 ComfyUI 插件（FreeVideo / VDN-H3 蒸馏权重）：8GB 显存 / 16GB
+      内存起，权重按块在「显存→内存→磁盘」之间摆，装不下的每步回读磁盘 →
+      能跑，只是慢。口径与体积见 ``app/h3_freevideo.py``。
+    - ``h3_native`` 进程内 diffusers 加载原生权重：123.8GiB，内存决定档位，
+      52GB 内存起步、磁盘 139GB → 32GB 机器上必然 OOM，只在 ``native`` 字段里
+      作为「为什么没给原生档」的说明出现，不参与推荐。
+
+    推荐结论全部由本机实测值推出，不写死。
     """
     vram = float(hw.get("vram_gb") or 0)
     ram = float(hw.get("ram_gb") or 0)
     cap = str(hw.get("compute_cap") or "")
     disk_free = float(hw.get("disk_free_gb") or 0)
-    plan = h3_quant.plan(vram, ram, cap)
 
-    h3_blockers = []
-    if not plan.available:
-        h3_blockers.append(plan.reason)
-    if 0 < disk_free < H3_DISK_GB:
-        h3_blockers.append(
-            f"磁盘可用 {disk_free:.0f}GB，小于 H3 权重所需 {H3_DISK_GB:.0f}GB。"
-        )
-    h3_ok = plan.available and not (0 < disk_free < H3_DISK_GB)
+    fv = h3_freevideo.plan(vram, ram, disk_free)
+    native = h3_quant.plan(vram, ram, cap)
 
     # probe() 只在「torch 认到卡」时才把 device 设成 cuda；
     # to_dict() 历史上没带 torch_cuda_available 字段，两个都认一下。
@@ -145,26 +150,45 @@ def _recommend_engine(hw: dict) -> dict:
     else:
         wan_note = "未检测到可用 CUDA：会退回 CPU 推理（小时级），先修驱动 / torch"
 
-    # H3QuantPlan 是 dataclass，档位中文名在 TIER_LABEL 里（to_dict() 才拼进去）
-    tier_label = h3_quant.TIER_LABEL.get(plan.tier, plan.tier or "不可用")
+    # 插件通道是 GPU 引擎，没 CUDA 一样跑不了——磁盘/内存够了也不能放行
+    h3_blockers = list(fv.blockers)
+    if not cuda_ok:
+        h3_blockers.insert(0, "未检测到可用 CUDA：插件通道需要可用的 NVIDIA 显卡")
+    h3_ok = fv.available and cuda_ok
+
     h3_option = {
         "id": "h3",
+        # label 是功能名（首启页优先显示这个），name 是技术标识（小号灰字）
+        "label": "画质优先",
         "name": "MiniMax H3",
-        "subtitle": "画质旗舰 · 走 ComfyUI 通道",
+        "subtitle": "走 ComfyUI 插件通道 · 分块流式，慢但画质最好",
+        "channel": "comfyui",
         "available": h3_ok,
-        "tier": plan.tier,
-        "tier_label": tier_label if h3_ok else f"{tier_label}（不可用）",
-        "weights_gb": round(plan.weights_gib, 1),
-        "need_ram_gb": plan.min_ram_gib,
-        "need_disk_gb": H3_DISK_GB,
-        "max_pixels": plan.max_pixels,
-        "note": plan.note if plan.available else plan.reason,
+        "tier": "plugin" if h3_ok else "unsupported",
+        "tier_label": "插件分块流式" if h3_ok else "不可用",
+        "weights_gb": round(fv.total_gib, 1),
+        "need_vram_gb": int(h3_freevideo.MIN_VRAM_GIB),
+        "need_ram_gb": int(h3_freevideo.MIN_RAM_GIB),
+        "need_disk_gb": round(fv.need_disk_gib, 1),
+        # 画布上限由插件按实机决定，这里只在原生档可跑时才报（避免报假数）
+        "max_pixels": native.max_pixels if native.available else 0,
+        "disk_tight": fv.disk_tight,
+        "note": fv.note,
         "blockers": h3_blockers,
+        # 四个资源包：界面按功能名列出（不出现模型名），并给出「要下多大」
+        "packs": h3_freevideo.packs(),
+        "native": {
+            "available": native.available,
+            "min_ram_gb": native.min_ram_gib,
+            "need_disk_gb": H3_NATIVE_DISK_GB,
+            "reason": "" if native.available else native.reason,
+        },
     }
     wan_option = {
         "id": "wan22",
+        "label": "低显存 · 快速出片",
         "name": "Wan 2.2 TI2V-5B",
-        "subtitle": "低显存主力 · 480p / 5 秒",
+        "subtitle": "480p / 5 秒档 · 8GB 显存直接跑，出片快",
         "available": cuda_ok,
         "tier": quant,
         "tier_label": quant,
@@ -177,13 +201,18 @@ def _recommend_engine(hw: dict) -> dict:
     }
 
     recommended = "h3" if h3_ok else "wan22"
-    if h3_ok:
-        summary = f"优先 MiniMax H3（{tier_label}，权重 {plan.weights_gib:.0f}GiB）"
-    elif cuda_ok:
+    if h3_ok and fv.disk_tight:
         summary = (
-            f"H3 需 {plan.min_ram_gib}GB 内存 / {H3_DISK_GB:.0f}GB 磁盘，"
-            f"本机 {ram:.0f}GB 内存 / {disk_free:.0f}GB 磁盘不满足 → 推荐 Wan 2.2 TI2V-5B"
+            f"MiniMax H3 可跑，但磁盘只剩 {disk_free:.0f}GB（需 {fv.need_disk_gib:.0f}GB），"
+            f"装完基本写满 → 建议先清理，或用 Wan 2.2 省空间"
         )
+    elif h3_ok:
+        summary = (
+            f"推荐 MiniMax H3（ComfyUI 插件通道：{vram:.0f}GB 显存 / {ram:.0f}GB 内存即可，"
+            f"需下载 {fv.total_gib:.0f}GB 素材）"
+        )
+    elif cuda_ok:
+        summary = f"H3 这次跑不了：{h3_blockers[0]} → 推荐 Wan 2.2 TI2V-5B"
     else:
         summary = "未检测到可用 CUDA，先把显卡 / torch 修好再看引擎"
 
@@ -191,6 +220,12 @@ def _recommend_engine(hw: dict) -> dict:
         "recommended": recommended,
         "summary": summary,
         "options": [h3_option, wan_option],
+        # 下载清单单独给一份：安装前先让用户知道要下多大
+        "downloads": {
+            "total_gib": round(fv.total_gib, 1),
+            "need_disk_gb": round(fv.need_disk_gib, 1),
+            "packs": h3_freevideo.packs(),
+        },
     }
 
 
