@@ -1,4 +1,4 @@
-/* NMVideo - 桌面壳样式（对齐 FreeVideo 示意图） */
+/* NMVideo - 桌面壳样式 */
 :root {
   /* 蓝黑配色：与前端 style.css 保持同一套值，壳层和页面别打架 */
   --bg: #070c16;

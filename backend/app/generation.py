@@ -23,16 +23,16 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         params.get("engine") or "", params.get("mode") or "t2v")
     if not isinstance(template.get("prompt"), dict) or not template["prompt"]:
         raise ValueError("工作流模板为空或缺少 prompt 节点图")
-    from . import freevideo
-    native = freevideo.is_freevideo(template)
+    from . import h3_protocol
+    native = h3_protocol.is_h3_protocol(template)
     if native:
-        freevideo.normalize_request(params)
+        h3_protocol.normalize_request(params)
         info = client.object_info(node_names=["FreeVideoGenerate"])
         schema = ((info or {}).get("FreeVideoGenerate") or {}).get("input") or {}
         available = set(schema.get("required") or {}) | set(schema.get("optional") or {})
         needed = {"text", "width", "height", "seconds", "seed", "base_steps", "two_pass", "frames", "preview", "refine_from"}
         if not needed.issubset(available):
-            raise ValueError(f"FreeVideo 节点接口不兼容，缺少输入：{'、'.join(sorted(needed - available))}")
+            raise ValueError(f"H3 节点接口不兼容，缺少输入：{'、'.join(sorted(needed - available))}")
     mode = params.get("mode") or "t2v"
     cap = capability_from_template(template)
     if cap:
@@ -116,7 +116,7 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
 
     graph = comfyui.build_shot_workflow(inject, template=template)
     if native:
-        graph = freevideo.attach_characters(graph, params, client,
+        graph = h3_protocol.attach_characters(graph, params, client,
             upload_image=lambda url: upload_condition(params, client, url, "character_reference", output_dir))
     return graph, template
 

@@ -455,6 +455,12 @@ def load_preset_template(preset_id: str) -> dict:
     与 apply_preset 的区别：apply 会覆盖全局当前模板，本函数仅按需读取——
     供引擎按 ``EngineMeta.workflow_presets`` 声明式路由（见 resolve_template_for）。
     """
+    # 历史别名：预设改名前（0.1.9 及更早）的 id 仍可加载，旧记录不失效
+    preset_id = {
+        "freevideo_h3_t2v": "nmvideo_h3_t2v",
+        "freevideo_h3_i2v": "nmvideo_h3_i2v",
+        "freevideo_h3_first_last": "nmvideo_h3_first_last",
+    }.get(preset_id, preset_id)
     path = PRESETS_DIR / f"{preset_id}.json"
     if not path.exists():
         raise ComfyUIError(f"预设不存在: {preset_id}")
@@ -468,9 +474,9 @@ def load_preset_template(preset_id: str) -> dict:
 
 
 # 内置预设不再按引擎 id 硬编码路由：引擎用 EngineMeta.workflow_presets 声明
-# 自己在各模式下用哪张内置工作流图（见 engines/base.py）。FreeVideo 的
-# freevideo_h3_* 只是「可选工作流之一」——用户在「ComfyUI 设置」里 apply 即可，
-# 与引擎身份解耦：装了 FreeVideo 插件的人能用，没装的人缺节点时会被
+# 自己在各模式下用哪张内置工作流图（见 engines/base.py）。内置 nmvideo_h3_*
+# 只是「可选工作流之一」——用户在「ComfyUI 设置」里 apply 即可，与引擎身份
+# 解耦：装了对应 H3 插件节点的人能用，没装的人缺节点时会被
 # workflow_capabilities 在提交前如实阻断。
 
 
@@ -649,7 +655,7 @@ def extract_output_files(entry: dict) -> list:
         for kind in ("videos", "gifs", "images"):
             for f in node_out.get(kind) or []:
                 if isinstance(f, dict) and f.get("filename"):
-                    # ComfyUI V3 PreviewVideo（FreeVideo 使用）把 MP4 放在 images 字段。
+                    # ComfyUI V3 PreviewVideo（H3 插件使用）把 MP4 放在 images 字段。
                     # 按真实扩展名分类，不能把原生视频当成 PNG 帧序列处理。
                     suffix = Path(f["filename"]).suffix.lower()
                     actual_kind = ("videos" if suffix in {".mp4", ".mov", ".webm", ".mkv", ".m4v", ".avi"}

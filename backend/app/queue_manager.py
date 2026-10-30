@@ -691,7 +691,7 @@ class JobQueue:
 
     @staticmethod
     def _job_metadata(job: dict, engine) -> dict:
-        """嵌入 MP4 的生成参数（FreeVideo 式视频自带工作流）"""
+        """嵌入 MP4 的生成参数（视频自带工作流）"""
         profile = getattr(engine, "_profile", None)
         hw = profile.to_dict() if profile is not None else hw_probe.probe().to_dict()
         return {

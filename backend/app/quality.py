@@ -1,4 +1,4 @@
-"""质量档位预设（借鉴 FreeVideo 四档设计）
+"""质量档位预设（四档设计）
 
 档位映射到具体生成参数。两遍采样：预览固定走「轻量」档，
 满意后用同 seed 升级到目标档位（画廊「升级渲染」按钮）。
@@ -89,8 +89,8 @@ def normalize_generation(defaults: dict, explicit: dict) -> dict:
         # MiniMax H3 原生兜底通道：宽高 32 对齐 + 画布上限（1032192 像素 =
         # 1344×768）。帧数刻意保持请求值——引擎内部按 17n+5 生成（最少 5 秒）
         # 后再截回请求时长，所以存档的 num_frames/fps 就是最终视频的时长口径。
-        # ComfyUI 通道的 h3（freevideo_h3_* 预设）不在这里对齐：同一套规则由
-        # freevideo.normalize_request 在提交前执行，避免两处各改一遍。
+        # ComfyUI 通道的 h3（nmvideo_h3_* 预设）不在这里对齐：同一套规则由
+        # h3_protocol.normalize_request 在提交前执行，避免两处各改一遍。
         from .engines.h3 import H3Engine
         params["width"], params["height"] = H3Engine.normalize_size(
             int(params["width"]), int(params["height"]))

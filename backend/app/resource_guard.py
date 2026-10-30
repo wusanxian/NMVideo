@@ -41,7 +41,7 @@ ENGINE_PROFILES = {
     # ComfyUI 通用工作流（Wan TI2V-5B 一类）：ComfyUI 会按节点粒度卸载，
     # 峰值约等于「最大单个模块 + 激活」，不是全部权重的和
     "comfyui": (3.0, 3.5, 6.0, 4.0),
-    # MiniMax H3 走 ComfyUI + FreeVideo 节点
+    # MiniMax H3 走 ComfyUI + H3 插件节点
     "h3": (6.0, 4.0, 22.0, 4.0),
     # H3 原生（diffusers）：文本编码器也常驻内存，固定内存最高
     "h3_native": (8.0, 4.0, 32.0, 4.0),

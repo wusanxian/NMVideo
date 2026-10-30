@@ -70,7 +70,7 @@
         </div>
         <label class="check-line">
           <input type="checkbox" v-model="form.preview" />
-          <span>先出预览，满意后到画廊生成高清候选；FreeVideo 原生预览支持继续二采。</span>
+          <span>先出预览，满意后到画廊生成高清候选；H3 原生预览支持继续二采。</span>
         </label>
       </div>
       <div v-else class="anime-tip">
@@ -154,9 +154,9 @@
 
       <!-- 提交 -->
       <p v-if="form.engine === 'h3'" class="hint-text" style="margin: 0 0 10px">
-        当前走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>freevideo_h3_*</b> 预设并固化快照。
+        当前走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>nmvideo_h3_*</b> 预设并固化快照。
         宽高按 32 对齐、帧数吸附到 17n+5；步数与 CFG 由工作流节点决定（8 步蒸馏图通常固定 8 步、无 CFG）。
-        ComfyUI 侧缺 FreeVideo 节点时，这张卡会如实标记为不可用。
+        ComfyUI 侧缺 H3 插件节点时，这张卡会如实标记为不可用。
       </p>
       <p v-else-if="form.engine === 'h3_native'" class="hint-text" style="margin: 0 0 10px">
         原生兜底通道（进程内推理，不经 ComfyUI）：H3 是 guidance 蒸馏模型，<b>固定 8 步、无 CFG</b>

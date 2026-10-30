@@ -1,7 +1,7 @@
 """帧序列 → MP4 合成（使用 imageio-ffmpeg 自带的静态 ffmpeg，无需系统安装）
 
-支持把生成参数以 JSON 形式写入 MP4 的 comment 元数据（FreeVideo 式
-「视频自带工作流」）：画廊可读回参数一键复用/升级渲染。
+支持把生成参数以 JSON 形式写入 MP4 的 comment 元数据（视频自带
+工作流）：画廊可读回参数一键复用/升级渲染。
 """
 import json
 import re
@@ -68,7 +68,7 @@ def remux_video(src_path: Path, out_path: Path, metadata: dict = None) -> Path:
     ComfyUI 的 VHS_VideoCombine 等节点直接产出视频——旧流程把它拆成 PNG
     帧再 libx264 重编码，既慢又有画质损失。这里：
       - mp4/mov 容器：`-c copy` 直接拷贝原始流 + 写 comment 元数据
-        （码流原样、秒级完成，FreeVideo 式「视频自带参数」不丢）
+        （码流原样、秒级完成，「视频自带参数」不丢）
       - 其它容器（webm/gif）：video→video 转码（不经过 PNG 帧序列，
         仍远优于抽帧重编码）；remux 失败也自动降级到此分支
     """

@@ -341,7 +341,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .gallery-actions { display: flex; gap: 8px; }
 
 /* ---------- 设置页 ----------
-   版式抄 FreeVideo 的设置弹窗：顶部等宽分段 tab → 分组小标签 → 圆角卡片，
+   版式参考常见桌面应用的设置弹窗：顶部等宽分段 tab → 分组小标签 → 圆角卡片，
    卡片内是「左标题 + 右控件」的行，行与行之间一条极淡分隔线。
    颜色一律走变量，别再写死十六进制（紫色那套就是写死才换不干净）。 */
 .set-tabs {

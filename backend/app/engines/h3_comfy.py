@@ -4,8 +4,8 @@
 NMVideo 不在本进程加载 H3 权重，只按模式选图、注入参数、提交、收进度、归档——
 与其它引擎同一条链路（快照固化、prompt_id 持久化、断线恢复全部复用）。
 
-H3 的 ComfyUI 实现来自内置预设 ``freevideo_h3_*``（节点 ``FreeVideoGenerate``）。
-FreeVideo 在这里只是**可选适配器**：装了就能用；没装则在引擎卡如实标记不可用，
+H3 的 ComfyUI 实现来自内置预设 ``nmvideo_h3_*``（节点 ``FreeVideoGenerate``）。
+该插件节点在这里只是**可选适配器**：装了就能用；没装则在引擎卡如实标记不可用，
 提交前由能力中心阻断并给安装指引。节点缺失不会导致换掉执行底座——也可以在
 「ComfyUI 设置」里 apply 别的 H3 图（如 ``minimax_h3_*`` 官方 API 节点，按量计费），
 或直接粘贴自己的 H3 JSON。
@@ -19,13 +19,13 @@ import time
 from .base import EngineMeta
 from .comfy import ComfyEngine
 
-# mode -> 内置预设 id（FreeVideo 节点图）
+# mode -> 内置预设 id（H3 插件节点图）
 H3_PRESETS = {
-    "t2v": "freevideo_h3_t2v",
-    "i2v": "freevideo_h3_i2v",
-    # 续接（continuation）在 FreeVideo 侧就是以末帧为首帧的 i2v 输入
-    "continuation": "freevideo_h3_i2v",
-    "first_last": "freevideo_h3_first_last",
+    "t2v": "nmvideo_h3_t2v",
+    "i2v": "nmvideo_h3_i2v",
+    # 续接（continuation）在 H3 插件侧就是以末帧为首帧的 i2v 输入
+    "continuation": "nmvideo_h3_i2v",
+    "first_last": "nmvideo_h3_first_last",
 }
 
 # 预设依赖的节点：缺任一节点都无法执行
@@ -43,7 +43,7 @@ class H3ComfyEngine(ComfyEngine):
         name="MiniMax H3（ComfyUI 通道）",
         description=(
             "MiniMax H3 / VDN-H3 经 ComfyUI 工作流执行 · 按模式自动套用内置 H3 预设 · "
-            "需 ComfyUI 侧装有 FreeVideo 节点（官方最低 8GB 显存 / 16GB 内存）"
+            "需 ComfyUI 侧装有 H3 插件节点（8GB 显存 / 16GB 内存起）"
         ),
         status="ready",
         supported_modes=("t2v", "i2v", "first_last", "continuation"),
@@ -83,7 +83,7 @@ class H3ComfyEngine(ComfyEngine):
                 **base,
                 "status": "unavailable",
                 "note": (
-                    f"ComfyUI 侧未检测到 {'、'.join(missing)}：先安装 FreeVideo 插件再选 H3；"
+                    f"ComfyUI 侧未检测到 {'、'.join(missing)}：先安装 H3 插件节点再选 H3；"
                     "或在「ComfyUI 设置」里改用其它 H3 工作流（如 minimax_h3_* API 节点）"
                 ),
             }

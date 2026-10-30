@@ -1,9 +1,9 @@
 {
   "_meta": {
-    "name": "FreeVideo H3 本地 · 首尾帧",
-    "description": "两张图片分别连接官方 FreeVideo 的首帧与尾帧输入；需要先安装 FreeVideo，尚待实机出片验证。",
+    "name": "NMVideo H3 本地 · 图生视频与末帧续接",
+    "description": "使用 H3 插件节点消费首帧图片；续接采用上镜头末帧，不等同原生长视频上下文续接。需要先安装对应插件节点，尚待实机出片验证。",
     "requires": "FlashML-org/FreeVideo ComfyUI extension",
-    "mode": "first_last",
+    "mode": "i2v",
     "execution_kind": "local",
     "model_id": "vdn-minimax-h3",
     "required_nodes": [
@@ -11,10 +11,11 @@
       "LoadImage"
     ],
     "supports": [
-      "first_last"
+      "i2v",
+      "continuation"
     ],
     "min_vram_gb": 8,
-    "vram_hint": "FreeVideo manages runtime resources; official minimum: 8GB VRAM / 16GB RAM. Reference conditioning is experimental.",
+    "vram_hint": "The H3 plugin manages runtime resources; official minimum: 8GB VRAM / 16GB RAM. Reference conditioning is experimental.",
     "native_preview": true,
     "character_images": true,
     "character_lora": true,
@@ -39,20 +40,10 @@
         "first": [
           "2",
           0
-        ],
-        "last": [
-          "3",
-          0
         ]
       }
     },
     "2": {
-      "class_type": "LoadImage",
-      "inputs": {
-        "image": ""
-      }
-    },
-    "3": {
       "class_type": "LoadImage",
       "inputs": {
         "image": ""
@@ -98,10 +89,6 @@
     },
     "first_frame_image": {
       "node": "2",
-      "input": "image"
-    },
-    "last_frame_image": {
-      "node": "3",
       "input": "image"
     }
   }

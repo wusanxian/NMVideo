@@ -1,14 +1,14 @@
 """MiniMax H3 原生推理引擎（diffusers ModularPipeline）——**兜底通道**
 
 架构口径：ComfyUI 是唯一视频生成底座，H3 的正路是 ``engines/h3_comfy.py``
-（id = ``h3``，走 ComfyUI 工作流 + ``freevideo_h3_*`` 预设）。本模块退为兜底：
+（id = ``h3``，走 ComfyUI 工作流 + ``nmvideo_h3_*`` 预设）。本模块退为兜底：
 
 - 引擎 id 为 ``h3_native``，**不是默认引擎**，只在 ComfyUI 不可用时手动选用；
 - 与 ComfyUI 路径**不承诺同参数同结果**（工作流图、采样器、蒸馏档位由 ComfyUI
   侧决定），保留它是为了历史结果可复现 + 无 ComfyUI 环境仍能出片；
 - 8GB 量化档（int4/int8 分级）仍在这里，是「没有 ComfyUI 但想跑 H3」的通道。
 
-实现本身仍不依赖 ComfyUI、也不依赖 FreeVideo 插件：模型以 diffusers modular
+实现本身仍不依赖 ComfyUI、也不依赖 H3 插件节点：模型以 diffusers modular
 组件形式发布在 OpenVDN/vdn-minimax-h3，diffusers 0.36+ 原生包含
 MiniMaxH3ModularPipeline，用 ``ModularPipeline.from_pretrained(...)`` 进程内推理。
 
@@ -71,7 +71,7 @@ class H3Engine(BaseEngine):
         name="MiniMax H3（原生兜底）",
         description=(
             "VDN-H3 8 步蒸馏在 NMVideo 进程内直连推理（含 8GB 量化档）· 不需要 "
-            "ComfyUI / FreeVideo 插件 · 需 NVIDIA 显卡（int8 约需 80GB 内存；"
+            "ComfyUI H3 插件节点 · 需 NVIDIA 显卡（int8 约需 80GB 内存；"
             f"int4 实验档约需 52GB 内存）· 模型约 {SIZE_TOTAL:.0f}GB"
         ),
         status="ready",

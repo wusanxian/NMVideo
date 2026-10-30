@@ -279,7 +279,7 @@
           </div>
           <label v-if="genForm.engine !== 'anime'" class="check-line">
             <input type="checkbox" v-model="genForm.preview" />
-            先生成预览，满意后在画廊生成高清候选（FreeVideo 可继续二采）
+            先生成预览，满意后在画廊生成高清候选（H3 预设可继续二采）
           </label>
 
           <div class="param-grid" style="margin-top: 12px">
@@ -316,9 +316,9 @@
             </div>
           </div>
           <p v-if="genForm.engine === 'h3'" class="comfy-hint">
-            走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>freevideo_h3_*</b> 预设并固化快照。
+            走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>nmvideo_h3_*</b> 预设并固化快照。
             宽高按 32 对齐、帧数吸附到 17n+5；步数与 CFG 由工作流节点决定（8 步蒸馏图通常固定 8 步）。
-            ComfyUI 侧缺 FreeVideo 节点时这张卡会标记不可用。
+            ComfyUI 侧缺 H3 插件节点时这张卡会标记不可用。
           </p>
           <p v-else-if="genForm.engine === 'h3_native'" class="comfy-hint">
             原生兜底通道（进程内推理）：H3 是 guidance 蒸馏模型，<b>固定 8 步、无 CFG</b>，
@@ -330,9 +330,9 @@
             模板可在「ComfyUI 设置」中粘贴你自己导出的工作流。
           </p>
           <div v-if="genForm.engine === 'comfyui'" class="field">
-            <label><input type="checkbox" v-model="genForm.use_character_images" /> 本次使用角色参考图（FreeVideo 首尾帧/图生模式需关闭）</label>
+            <label><input type="checkbox" v-model="genForm.use_character_images" /> 本次使用角色参考图（H3 首尾帧/图生模式需关闭）</label>
             <label><input type="checkbox" v-model="genForm.use_character_lora" /> 本次使用角色 LoRA</label>
-            <p class="hint-text">自动角色视觉条件仅在 FreeVideo 本地预设中生效；其他模板需自行配置。</p>
+            <p class="hint-text">自动角色视觉条件仅在 H3 本地预设中生效；其他模板需自行配置。</p>
           </div>
         </section>
 

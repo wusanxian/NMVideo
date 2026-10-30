@@ -2,9 +2,9 @@
 
 架构口径（2026-10-22）：**ComfyUI 是唯一视频生成底座**。所有生成都经
 ComfyUI（/prompt + WS 进度 + history 对账 + 产物归档）执行，NMVideo 只做
-编排、资产、版本、剪辑、导出。FreeVideo 仅作为产品能力的参考对象（能力
+编排、资产、版本、剪辑、导出。外部参考项目仅用于借鉴产品设计（能力
 描述、首尾帧双槽、多参考图、预览转正、队列状态），不复制其运行时，也不把
-它的插件节点当作引擎身份——`freevideo_h3_*` 只是「可选工作流之一」。
+它的插件节点当作引擎身份——`nmvideo_h3_*` 只是「可选工作流之一」。
 
 所以注册表按执行通道排序：ComfyUI 通道在前且是默认引擎（`comfyui` 通用工作流 +
 `h3` 专用 H3 预设）；进程内推理的 `h3_native` / `anime` / `wan22` 退为 fallback
@@ -27,7 +27,7 @@ from .wan import WanEngine
 ENGINES: dict = {
     # 默认通道：提交 ComfyUI 工作流，模型与节点由 ComfyUI 侧管理
     ComfyEngine.meta.id: ComfyEngine,
-    # 同一通道的专用引擎：H3 按模式套用内置 freevideo_h3_* 预设
+    # 同一通道的专用引擎：H3 按模式套用内置 nmvideo_h3_* 预设
     H3ComfyEngine.meta.id: H3ComfyEngine,
     # ---- 以下为兜底通道（进程内推理，非默认） ----
     H3Engine.meta.id: H3Engine,

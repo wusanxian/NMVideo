@@ -1,6 +1,6 @@
 """NMVideo 内置 MCP 服务：让外部 AI 助手（WorkBuddy / Claude Code 等）直连出片。
 
-对齐 FreeVideo v0.4.0 的「AI Agent 独立生成视频」形态：
+对齐「AI Agent 独立生成视频」形态：
 - 应用在 /mcp 暴露 MCP Streamable HTTP 端点；
 - 「模型服务」页展示连接地址 + 访问令牌，用户复制粘到 AI 客户端即可对话操控；
 - 首批工具只做出片闭环：状态 / 生成 / 列表 / 查询 / 取消。
