@@ -11,7 +11,7 @@
     "dist:publish": "electron-builder --win --publish always"
   },
   "author": "aivideo",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "devDependencies": {
     "electron": "^37.10.3",
     "electron-builder": "^25.1.8",

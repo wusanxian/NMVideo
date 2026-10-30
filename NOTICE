@@ -1,0 +1,56 @@
+NMVideo
+Copyright 2026 wusanxian (NMVideo)
+
+This product includes software developed as part of the NMVideo project
+(https://github.com/wusanxian/NMVideo), licensed under the Apache License,
+Version 2.0.
+
+================================================================================
+模型许可声明（重要）
+================================================================================
+
+NMVideo 本身不分发任何模型权重。模型由启动器在首次运行时从 Hugging Face
+（经 hf-mirror.com 镜像）下载到本地。各模型受其自身许可协议约束，
+本项目的代码许可（Apache-2.0）不替代、不延伸、不修改任何模型许可。
+
+1. MiniMax H3 / VDN-H3（h3 引擎）
+   - 权重来源：OpenVDN/vdn-minimax-h3（经 FreeVideo 准备的 FP8 派生包）
+   - 许可：MiniMax H3 Community License Agreement（Copyright © 2026 MiniMax）
+   - 限制摘要：
+     * 仅在"适用区域"内授权使用（明确排除欧盟、英国、韩国、美国）；
+     * 年收入超过 2000 万美元的实体需另行取得书面授权；
+     * 使用 H3 的商业产品需在界面中展示 "MiniMax H3" 字样；
+     * 不得使用模型输出训练其他 AI 模型。
+   - 上游 VDN（Video DeltaNet）推理代码为 Apache License 2.0，
+     但该授权仅覆盖代码，不覆盖模型权重。
+   - 完整协议以权重包内 licenses/MiniMax-H3-Community-License-Agreement.txt 为准。
+   - 使用前请自行阅读并确认符合当地法律与协议条款。
+
+2. Wan 2.2（TI2V-5B / T2V-A14B，wan 引擎）
+   - 来源：Alibaba（Wan-AI）
+   - 许可：Apache License 2.0（无地域、无收入限制）
+
+3. AnimateDiff / 动漫兜底引擎（anime 引擎）
+   - AnimateDiff 代码与运动模块：Apache License 2.0（guoyww/animatediff）
+   - 底模 dreamlike-anime 派生自 Stable Diffusion 1.5，
+     受 CreativeML Open RAIL-M 许可及其使用限制约束。
+
+================================================================================
+第三方组件（择要）
+================================================================================
+
+- ComfyUI：GPL-3.0。NMVideo 仅通过 HTTP API 调用外部运行的 ComfyUI 服务，
+  不打包、不静态链接、不修改其源码，因此本仓库不被 GPL 传染。
+- FastAPI / Uvicorn / Pydantic：MIT 或 BSD
+- diffusers / transformers / accelerate / huggingface-hub：Apache License 2.0
+- PyTorch：BSD-style
+- torchao：BSD-style
+- Electron：MIT
+- Vue 3 / Pinia / Vite：MIT
+- edge-tts：LGPL-3.0（以 Python 动态导入方式使用，等同动态链接；
+  分发包不含该库本体，由启动器运行时经 pip 独立安装，用户可按 LGPL 条款
+  自行替换或升级，如 `pip install -U edge-tts`）
+- pyttsx3：MPL-2.0（文件级弱版权，进程内使用不要求本项目更改许可）
+- imageio-ffmpeg：BSD-2-Clause（附带静态 ffmpeg 构建）
+
+上述列表为摘要，完整授权文本以各组件官方仓库为准。

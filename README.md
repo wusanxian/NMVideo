@@ -344,3 +344,21 @@ aivideo/
 - TTS 配音默认走 edge-tts（需联网访问微软服务）；离线环境自动退到 Windows SAPI5 系统语音，
   音色自然度会下降。字幕烧录依赖 libass（imageio-ffmpeg 已内置），失败时自动改为软字幕。
 - 续接模式默认抽「上一镜头」末帧；跨场景续接需在编辑弹窗里手动选来源镜头。
+
+## 许可协议
+
+代码以 [Apache License 2.0](LICENSE) 发布。
+
+**模型与第三方组件受各自许可约束，代码许可不能替代它们：**
+
+| 组件 | 许可 | 备注 |
+|---|---|---|
+| 本仓库代码 | Apache-2.0 | 含专利授权条款 |
+| MiniMax H3 / VDN-H3 权重 | MiniMax H3 Community License | 地域限制（排除美/欧/英/韩）；商用需在界面展示 "MiniMax H3"；年收入 $2000 万+ 需书面授权；输出不得用于训练其他模型 |
+| Wan 2.2 权重 | Apache-2.0 | 无附加限制 |
+| AnimateDiff | Apache-2.0 | 底模 dreamlike-anime 受 CreativeML Open RAIL-M 约束 |
+| ComfyUI | GPL-3.0 | 外部程序，NMVideo 仅经 HTTP API 调用，不打包其源码 |
+| edge-tts | LGPL-3.0 | 运行时经 pip 独立安装，不随分发包分发 |
+
+本项目不分发任何模型权重：模型由启动器首次运行时从 Hugging Face 下载。
+详见 [NOTICE](NOTICE)。下载、运行模型前请自行阅读并遵守对应协议与当地法律。
