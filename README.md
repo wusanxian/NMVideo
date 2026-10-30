@@ -1,17 +1,17 @@
 # 🎬 NMVideo
 
-Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.4.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。
+Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/releases) 下载 **`aivideo-desktop-setup-0.1.9.exe`** 双击安装。目录内附启动器、校验值和使用说明；首次运行仍需联网准备依赖与模型。
 
-**架构口径：ComfyUI 是唯一视频生成底座。** 所有视频生成都提交到 ComfyUI 执行（`/prompt` + WS 进度 + `/history` 对账 + 产物归档），NMVideo 只负责编排、资产、版本、剪辑与导出；模型与节点由 ComfyUI 侧管理。**FreeVideo 只作为产品能力的参考对象**——工作流能力描述、首尾帧双槽、多参考图、预览转正、队列状态这些设计借鉴它的思路，但不复制它的运行时、不把它的插件节点当引擎身份：`freevideo_h3_*` 只是内置工作流之一，缺节点时会在提交前如实阻断并列出安装缺项。0.1.4 引入的 anime / wan22 与 H3 原生推理（`h3_native`，diffusers）保留为**兜底通道**，仅在 ComfyUI 未连接时使用，不再是默认引擎，也不承诺与 ComfyUI 路径同参数同结果。详见[架构定位](docs/architecture.md)。
+**架构口径：ComfyUI 是唯一视频生成底座。** 所有视频生成都提交到 ComfyUI 执行（`/prompt` + WS 进度 + `/history` 对账 + 产物归档），NMVideo 只负责编排、资产、版本、剪辑与导出；模型与节点由 ComfyUI 侧管理。工作流能力由模板自描述声明，缺节点时会在提交前如实阻断并列出安装缺项，不会静默降级。anime / wan22 与 H3 原生推理（`h3_native`，diffusers）保留为**兜底通道**，仅在 ComfyUI 未连接时使用，不承诺与 ComfyUI 路径同参数同结果。详见[架构定位](docs/architecture.md)。
 
-本地运行的 AI 文生视频生成器，**以 ComfyUI 为生成底座、可插拔引擎架构**。产品设计参考 FreeVideo 的低显存哲学：硬件自适应（模型选择/量化/卸载全自动）、四档质量、两遍采样、视频自带参数。
+本地运行的 AI 文生视频生成器，**以 ComfyUI 为生成底座、可插拔引擎架构**。核心设计：硬件自适应（模型选择/量化/卸载全自动）、四档质量、两遍采样、视频自带参数。
 
-2026-10-20 增量改造：统一生成参数与引擎模式校验、可靠工作流快照、保留镜头来源的预览升级、FreeVideo H3 本地节点预设、角色参考图/LoRA 接入、导出清单冻结，以及 Windows 中文元数据修复。使用范围与验证结果见[实施记录](docs/reports/20261020-optimization-implementation.md)。FreeVideo 是**可选工作流**：装了其 ComfyUI 插件的人可直接 apply 内置预设，没装的人用任意等价的 H3 工作流即可，缺失节点会在提交前阻断。
+2026-10-20 增量改造：统一生成参数与引擎模式校验、可靠工作流快照、保留镜头来源的预览升级、内置 H3 工作流预设、角色图/LoRA 接入、导出清单冻结，以及 Windows 中文元数据修复。使用范围与验证结果见[实施记录](docs/reports/20261020-optimization-implementation.md)。H3 走 ComfyUI 通道：装好对应工作流节点的人可直接应用内置预设，也可以用任意等价的 H3 工作流，缺失节点会在提交前阻断。
 
 | 引擎 | 模型 | 最低硬件 | 出片速度 |
 |---|---|---|---|
 | **ComfyUI 工作流（默认通道）** | 由你的 ComfyUI 安装决定（H3 / Wan / AnimateDiff 等任意图） | 一台运行中的 ComfyUI 服务器 | 取决于服务端 GPU 与所选工作流 |
-| **MiniMax H3（ComfyUI 通道）** | `freevideo_h3_*` 内置预设（FreeVideo 节点） | ComfyUI + FreeVideo 插件，官方最低 8GB 显存 | 取决于 ComfyUI 服务端 GPU |
+| **MiniMax H3（ComfyUI 通道）** | 内置 H3 工作流预设 | 一台装好 H3 工作流节点的 ComfyUI 服务器 | 取决于 ComfyUI 服务端 GPU |
 | AnimeDiff 动漫（兜底） | dreamlike-anime + AnimateDiff v3 | 纯 CPU，8GB 内存 | 256px 8 帧 12 步 ≈ 4 分钟（i5 CPU） |
 | MiniMax H3 原生（兜底 `h3_native`） | VDN-H3 8 步蒸馏 + Qwen3-VL 编码器 | **8~16GB 显存**，内存 int8 ≈ 80GB / int4 ≈ 52GB，模型 139GB | 24GB 卡：5 秒镜头分钟级（8 步前向） |
 | Wan 2.2 文生视频（兜底） | Wan2.2-TI2V-5B | **8GB 显存 + 32GB 内存** | 480p 33 帧 20 步 ≈ 10-30 分钟（8GB 卡） |
@@ -77,7 +77,7 @@ Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/r
 | ≥22GB 显存 + ≥60GB 内存 | Wan2.2-T2V-A14B（画质标杆） | ~135GB |
 | ≥8GB 显存 + ≥32GB 内存 | Wan2.2-TI2V-5B（int8/fp8 + 逐层卸载） | ~42GB |
 | 无 NVIDIA 显卡 | AnimeDiff 动漫引擎（CPU 可跑） | ~14GB |
-| 要 H3（正路） | 不自动安装：装 ComfyUI + FreeVideo 节点，权重由 ComfyUI 侧管理 | — |
+| 要 H3（正路） | 不自动安装：装 ComfyUI + H3 工作流节点，权重由 ComfyUI 侧管理 | — |
 
 H3 正路是 **ComfyUI 通道**；装机矩阵里的 H3 分支只准备「原生兜底」通道（139GB 模型），
 需要在没有 ComfyUI 的机器上出片时才用。命令行 `--model h3` 可显式指定。
@@ -176,7 +176,7 @@ Wan 2.2 是开源画质标杆，原生 720p/24fps。让它跑进 8GB 显存靠�
 | 精细 | 1280×720 · 81 帧 · 40 步 | 高质量 |
 | 极致 | 1280×720 · 121 帧 · 50 步 | 8GB 卡上以小时计 |
 
-**预览与高清候选**：普通 Wan 预览使用 416×256/17 帧/12 步；满意后在画廊点「生成高清候选」，沿用原镜头、提示词、seed、角色和工作流来源，用保存的目标参数重新生成。改变尺寸和帧数可能改变构图。FreeVideo 本地预设使用引擎原生预览，画廊的「继续二采」会引用原预览与 latent 缓存，沿用其目标尺寸。
+**预览与高清候选**：普通 Wan 预览使用 416×256/17 帧/12 步；满意后在画廊点「生成高清候选」，沿用原镜头、提示词、seed、角色和工作流来源，用保存的目标参数重新生成。改变尺寸和帧数可能改变构图。内置 H3 预设使用引擎原生预览，画廊的「继续二采」会引用原预览与 latent 缓存，沿用其目标尺寸。
 
 **视频自带参数**：每个 MP4 内嵌 JSON 生成参数（提示词/分辨率/种子/硬件配置），`GET /api/jobs/{id}/metadata` 可读回，换机器也能复用。
 
@@ -229,7 +229,7 @@ Wan 2.2 是开源画质标杆，原生 720p/24fps。让它跑进 8GB 显存靠�
 
 5. **「🎭 资产库」页**：给角色建**身份卡**——外貌、服装、正/侧/背/表情参考图、表情预设、
    **固定音色**、关联 LoRA。场景另存环境/光照/布局/风格。分镜绑定角色后，生成时自动把
-   外貌+服装拼进提示词（`角色: 外貌, wearing 服装 || 原提示词`）。FreeVideo 本地预设还会将角色参考图与 LoRA 接入实际节点；参考图条件属于实验能力，角色一致性需要逐镜头检查，其他引擎不会自动使用这些视觉条件。
+   外貌+服装拼进提示词（`角色: 外貌, wearing 服装 || 原提示词`）。内置 H3 预设还会将角色参考图与 LoRA 接入实际节点；参考图条件属于实验能力，角色一致性需要逐镜头检查，其他引擎不会自动使用这些视觉条件。
 6. **TTS 配音**：分镜编辑弹窗里选音色（edge-tts 14 个中文神经音色，联网；SAPI5 离线兜底）、
    调速，一键把对白念成 MP3；角色卡绑定的音色会被自动选中。对白轨可试听、删除、重生成。
 7. **多轨时间线**：视频轨 / 对白轨（TTS 按镜头位置自动落位）/ 音乐轨 / 音效轨 / 字幕轨
@@ -327,11 +327,11 @@ aivideo/
 - TI2V-5B 第一版仅文生视频（图生视频输入后续加）；A14B 需要 60GB+ 内存，32GB 机器别勉强。
 - Wan 2.2 权重为 fp32 存储（transformer 18.6GB），bf16 加载后约 10GB；量化在加载时进行，首次启动多等 1-2 分钟。
 - **ComfyUI 是默认且唯一的视频生成底座**：真实出片能力取决于你接的那台 ComfyUI 装了哪些
-  节点与模型。「ComfyUI 设置」页提供内置预设一键应用：**MiniMax H3 文/图生视频**（FreeVideo
-  插件节点，可选）、**Wan 2.2 TI2V-5B**、**AnimateDiff Evolved**（需 VideoHelperSuite），也可粘贴
+  节点与模型。「ComfyUI 设置」页提供内置预设一键应用：**MiniMax H3 文/图生视频**、
+  **Wan 2.2 TI2V-5B**、**AnimateDiff Evolved**（需 VideoHelperSuite），也可粘贴
   自己的 API JSON。工作流缺少所需节点时，生成会在提交前被阻断并列出缺项，不会静默降级。
-- **H3 也走 ComfyUI**：选「MiniMax H3（ComfyUI 通道）」时按模式自动套用 `freevideo_h3_*`
-  内置预设并固化快照；ComfyUI 侧没装 FreeVideo 节点时那张引擎卡会如实标记不可用并给安装指引。
+- **H3 也走 ComfyUI**：选「MiniMax H3（ComfyUI 通道）」时按模式自动套用内置 H3
+  预设并固化快照；ComfyUI 侧没装对应节点时那张引擎卡会如实标记不可用并给安装指引。
   也可以在「ComfyUI 设置」里改用 `minimax_h3_*`（MiniMax 官方 API 节点，按量计费）或自备 H3 图。
 - **h3_native / anime / wan22 是兜底通道**：进程内 diffusers 推理，仅在 ComfyUI 未连接时使用，
   不是默认引擎。它们与 ComfyUI 路径不共享工作流快照，参数语义也不完全等价（例如 H3 固定 8 步、
