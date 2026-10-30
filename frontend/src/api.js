@@ -31,7 +31,8 @@ async function request(path, options = {}) {
 
 export const api = {
   health: () => request('/health'),
-  launchStatus: () => request('/launch/status'),
+  // refresh=true 跳过服务端的探测缓存（「重新检测」按钮用，轮询时不带）
+  launchStatus: (refresh = false) => request(`/launch/status${refresh ? '?refresh=1' : ''}`),
   engines: () => request('/engines'),
   jobs: () => request('/jobs?limit=200'),
   createJob: (data) => request('/jobs', { method: 'POST', body: JSON.stringify(data) }),

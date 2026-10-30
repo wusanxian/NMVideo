@@ -21,6 +21,7 @@ from .. import resource_watch
 from ..comfyui import ComfyUIClient
 from ..config import BASE_DIR, DB_PATH, MODELS_DIR, OUTPUTS_DIR, PROJECT_DIR
 from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine
+from ..engines.comfy import forget_available, probe_available
 
 router = APIRouter(prefix="/api", tags=["launch"])
 
@@ -55,6 +56,16 @@ _HW_TTL = 30.0
 _hw_cache: dict = {}
 
 
+def warm_hardware() -> None:
+    """预热硬件探测缓存（main.py 启动时后台调用，别让首屏等 torch import）。"""
+    _hardware()
+
+
+def warm_comfy() -> None:
+    """预热 ComfyUI 可达性缓存：离线时这笔探测要等满 1.5s 连接超时。"""
+    probe_available(ComfyUIClient().base_url)
+
+
 def _hardware() -> dict:
     now = time.time()
     if _hw_cache.get("at") and now - _hw_cache["at"] < _HW_TTL:
@@ -68,10 +79,23 @@ def _hardware() -> dict:
 
 
 def _version() -> str:
-    """版本号：优先环境变量（打包时注入），否则读 desktop/package.json。"""
+    """版本号，按「打包后 / 开发态」两个世界各找一处：
+
+    1. `AIVIDEO_VERSION` 环境变量（外部注入）
+    2. 运行根目录的 `VERSION` 文件——PyInstaller 包里没有 desktop/ 目录，
+       只有 packaging/build.py 写的 `payload/VERSION`（内容 "0.1.9 2026-10-30"）
+    3. `desktop/package.json`（源码运行时才有）
+    """
     env = (os.environ.get("AIVIDEO_VERSION") or "").strip()
     if env:
         return env
+    stamp = PROJECT_DIR / "VERSION"
+    try:
+        first = stamp.read_text(encoding="utf-8").split()[0].strip()
+        if first:
+            return first
+    except Exception:  # noqa: BLE001 - 没有这个文件就走下一条
+        pass
     pkg = PROJECT_DIR / "desktop" / "package.json"
     try:
         return str(json.loads(pkg.read_text(encoding="utf-8")).get("version") or "")
@@ -84,8 +108,10 @@ def _comfy_state() -> dict:
     url = client.base_url
     online = False
     stats: dict = {}
+    # 走引擎层的共享缓存：启动页每 2s 轮一次，直连探测会让每次请求都等满超时
+    # （ComfyUI 没起时首次实测 8s）。缓存 10 秒，用户刚拉起 ComfyUI 也就差这 10 秒。
     try:
-        online = bool(client.is_available())
+        online = probe_available(url)
         if online:
             stats = client.system_stats() or {}
     except Exception:  # noqa: BLE001 - 探测失败按「未连接」报，不抛给前端
@@ -110,8 +136,14 @@ def _comfy_state() -> dict:
 
 
 @router.get("/launch/status")
-def launch_status():
-    """启动页轮询端点。三个步骤各自独立探测，互不阻塞。"""
+def launch_status(refresh: bool = False):
+    """启动页轮询端点。三个步骤各自独立探测，互不阻塞。
+
+    `refresh=1` 跳过探测缓存——「重新检测」按钮用：用户刚把 ComfyUI 拉起来，
+    不该让他等缓存过期。
+    """
+    if refresh:
+        forget_available()
     version = _version()
     steps = []
 

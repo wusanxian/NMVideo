@@ -1,5 +1,6 @@
 """FastAPI 应用入口"""
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -31,12 +32,26 @@ async def lifespan(app: FastAPI):
     from . import novel_submit
     novel_submit.register_loop(asyncio.get_running_loop())
     job_queue.start()
+    # 预热首屏要用的两类探测，别让打开页面的人等：
+    #  - 硬件：首次 probe() 要 import torch（约 2 秒）+ spawn nvidia-smi
+    #  - ComfyUI 可达性：离线时要等满 1.5s 连接超时
+    # 两个各起一个线程，互不排队；失败就算了，下次请求再探。
+    threading.Thread(target=_warm, args=(launch_router.warm_hardware,), daemon=True).start()
+    threading.Thread(target=_warm, args=(launch_router.warm_comfy,), daemon=True).start()
     # MCP 子应用（/mcp）有自己的 lifespan（初始化 StreamableHTTP task group），
     # Starlette 不会自动运行挂载子应用的 lifespan，这里手动链入
     from .mcp_server import mcp_lifespan
     async with mcp_lifespan():
         yield
     job_queue.stop()
+
+
+def _warm(fn) -> None:
+    """后台线程跑一个预热函数，出错吞掉（预热失败不该有任何副作用）。"""
+    try:
+        fn()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 app = FastAPI(title="AI 视频工坊", version="0.2.0", lifespan=lifespan)

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from .. import imagegen, llm, settings as settings_module, tts
 from ..comfyui import ComfyUIClient, ComfyUIError, apply_preset, list_presets
+from ..engines.comfy import probe_available
 
 router = APIRouter(prefix="/api", tags=["services"])
 
@@ -17,7 +18,9 @@ router = APIRouter(prefix="/api", tags=["services"])
 def services_status():
     """四类模型服务健康状态（前端设置页总览）"""
     client = ComfyUIClient()
-    comfy_ok = client.is_available()
+    # 与 /api/engines、/api/launch/status 共用同一份可达性缓存：设置页和启动页
+    # 都在这上面轮询，直连探测会让 ComfyUI 离线时每次请求都白等满超时。
+    comfy_ok = probe_available(client.base_url)
     tts_ok, tts_note = tts.tts_available()
     return {
         "comfyui": {

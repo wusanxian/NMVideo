@@ -43,6 +43,42 @@ from ..comfyui import (
 )
 from ..config import OUTPUTS_DIR
 
+# ComfyUI 可达性缓存：{base_url: (时间戳, 是否可达)}
+# 放在模块级而不是实例级——list_engines() 每次新建引擎实例，实例缓存永远打不中。
+_AVAIL_CACHE: dict = {}
+
+
+def probe_available(url: str, ttl: float = 20.0, timeout: float = 1.5) -> bool:
+    """探 ComfyUI 在不在，20 秒内复用结果。
+
+    ttl 给 20s 是为了让启动时的后台预热真正有用（10s 会被用户打开页面的时间
+    吃掉，等于没预热）。需要立刻看变化就走 `refresh=1` 或 forget_available()。
+
+    timeout 给 1.5s：本机 ComfyUI 要么立刻应答，要么端口没人听（Windows 上
+    防火墙 drop 时会一直等到超时）。列表页只需要「在不在」，为它等 2.5s
+    换不来更多信息。
+    """
+    import time as _time
+
+    now = _time.time()
+    hit = _AVAIL_CACHE.get(url)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    try:
+        ok = ComfyUIClient(url).is_available(timeout=timeout)
+    except Exception:  # noqa: BLE001 - 探测不该把接口带崩
+        ok = False
+    _AVAIL_CACHE[url] = (now, ok)
+    return ok
+
+
+def forget_available(url: str = "") -> None:
+    """清缓存：配置里改了 ComfyUI 地址、或用户点「重新检测」时调用。"""
+    if url:
+        _AVAIL_CACHE.pop(url.rstrip("/"), None)
+    else:
+        _AVAIL_CACHE.clear()
+
 
 class ComfyEngine(BaseEngine):
     meta = EngineMeta(
@@ -71,15 +107,14 @@ class ComfyEngine(BaseEngine):
         self.client.base_url = base_url
         self._avail_cache = (0.0, False)
 
-    def is_available_cached(self, ttl: float = 10.0) -> bool:
-        import time
+    def is_available_cached(self, ttl: float = 10.0, timeout: float = 1.5) -> bool:
+        """ComfyUI 可达性，带跨实例缓存。
 
-        now = time.time()
-        if now - self._avail_cache[0] < ttl:
-            return self._avail_cache[1]
-        ok = self.client.is_available()
-        self._avail_cache = (now, ok)
-        return ok
+        `list_engines()` 每次都 `c()` 新建实例，实例级缓存永远命中不了——所以
+        列表接口每次都要真探一遍，ComfyUI 离线时 /api/engines 实测 4.2s（生成页
+        一打开就转圈）。缓存挂在模块上、按 base_url 分键，多个引擎实例共享同一份。
+        """
+        return probe_available(self.client.base_url, ttl=ttl, timeout=timeout)
 
     def describe(self) -> dict:
         """动态状态：ComfyUI 服务器可达才算 ready"""

@@ -20,6 +20,9 @@ packaging/build/
 packaging/.build-dist/
 packaging/.build-work/
 packaging/payload/
+# PyInstaller spec 由 packaging/build.py 每次重新生成，内容是构建机的绝对路径
+# （D:\work\NMVideo\...），入库只会在别人克隆后指向不存在的目录
+packaging/*.spec
 frontend/dist/
 desktop/dist/
 release/

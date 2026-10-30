@@ -161,7 +161,8 @@ const gb1 = (v) => `${Number(v || 0).toFixed(1)} GB`
 async function refresh(manual = false) {
   if (manual) checking.value = true
   try {
-    const got = await api.launchStatus()
+    // 手动点「重新检测」时不走缓存：用户刚把 ComfyUI 拉起来，还要等缓存过期就太蠢了
+    const got = await api.launchStatus(manual)
     Object.assign(data, got)
     error.value = ''
     schedule(got.ready ? 10000 : 2000)

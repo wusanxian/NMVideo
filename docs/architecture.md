@@ -199,3 +199,52 @@ ComfyUI 未连接是**正常首启状态**，接口必须 200 + 原因，不能 
 样式类在 `style.css`（`.set-tabs / .set-group / .set-card / .set-row / .set-seg /
 .set-switch / .set-badge`），组件在 `components/settings/`；分段控件是
 `components/Segmented.vue`（`variant="tabs"` 走顶部大分段，默认是表单里的小分段）。
+
+## 10. 本地构建安装包（2026-10-30）
+
+```bash
+backend/.venv/Scripts/python.exe -m pip install pyinstaller -i https://pypi.tuna.tsinghua.edu.cn/simple
+cd desktop && npm install          # 首次；镜像见下
+cd .. && build-desktop.bat         # 前端 → launcher exe → NSIS
+```
+
+产物：`desktop/dist/aivideo-desktop-setup-<版本>.exe`（约 96MB）+ `latest.yml`。
+安装包内是 Electron 壳 + `resources/launcher/NMVideo.exe`（PyInstaller 单文件，
+内含前后端全部源码）；torch/模型由 exe 首启按硬件自动装。
+
+国内网络要点：`ELECTRON_BUILDER_BINARIES_MIRROR` 指 npmmirror，
+`desktop/electron-dist/` 放 `electron-v<版本>-win32-x64.zip`（构建脚本会自己下）；
+`signAndEditExecutable: false` 避开 winCodeSign（其 7z 内含 macOS symlink，
+非提权进程解压失败）。
+
+### 首启耗时（8GB 4060 / 32GB 内存实测）
+
+| 阶段 | 耗时 | 说明 |
+|---|---|---|
+| 解压载荷 + 硬件探测 | ~3s | 决策模型/torch/量化 |
+| 建 venv | ~1s | 优先系统 Python ≥3.10 |
+| 装 PyTorch CUDA | 8~15min | 2.5GB，`download.pytorch.org` |
+| 装 requirements | 3~5min | transformers/diffusers/fastapi 等 |
+| 起 uvicorn | ~5s | 之后才会看到界面 |
+
+第二次启动（venv 已就绪）约 40 秒到 `STATE=ready`。
+
+### 这轮打包暴露的三个真 bug
+
+1. **版本号空串**：`_version()` 只认 `AIVIDEO_VERSION` 和 `desktop/package.json`，
+   而安装包里没有 `desktop/`。改读运行根的 `VERSION`（`build.py` 写的
+   `payload/VERSION`）。「关于」那行原来显示「版本 —」。
+2. **ComfyUI 探测缓存挂在实例上**：`list_engines()` 每次 `c()` 新建实例，缓存
+   永远打不中 → ComfyUI 离线时 `/api/engines` 实测 4.2s（生成页一打开就转圈）。
+   缓存改到模块级、按 `base_url` 分键，`/api/services/status`、`/api/launch/status`
+   共用同一份。
+3. **首屏 4.4s 全在请求路径上**：首次 `hw_probe.probe()` 要 `import torch`（约 2s）
+   + spawn `nvidia-smi`，ComfyUI 探测再等满 1.5s 超时。改成 lifespan 起两个后台
+   线程预热，首屏降到 **0.012s**。
+
+配套：探测缓存 TTL 20s（10s 会被「用户打开页面的时间」吃掉，预热等于白做）；
+`GET /api/launch/status?refresh=1` 跳过缓存，「重新检测」按钮走这条路——用户刚把
+ComfyUI 拉起来时不该让他等缓存过期。
+
+`packaging/launcher.spec` 由 `build.py` 每次重生成，内容是本机绝对路径，已从仓库
+移除并加入 `.gitignore`。
