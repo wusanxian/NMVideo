@@ -142,6 +142,29 @@
         </div>
       </div>
 
+      <!-- 磁盘差空间时：把「已下载但当前用不上」的资源摊出来，让用户知道该腾哪儿。
+           绝不自动删——权重删了要重下几十 GB，只把目录打开交给用户自己决定。 -->
+      <div v-if="diskShort > 0" class="reclaim-box">
+        <div class="reclaim-head">
+          <span>
+            想跑「{{ (blockedOpt && blockedOpt.label) || '画质优先' }}」还差 <b>{{ diskShort }}GB</b>
+            <template v-if="idleGb > 0">&nbsp;· 本地有 {{ idleGb }}GB 资源只有别的引擎用得上</template>
+          </span>
+          <button class="btn btn-sm" :disabled="opening === 'models'" @click="openFolder('models')">
+            打开资源目录
+          </button>
+        </div>
+        <div v-for="it in idleItems" :key="it.id" class="reclaim-row">
+          <span class="reclaim-name">{{ modelLabel(it) }}</span>
+          <span class="reclaim-size">{{ Number(it.size_gb).toFixed(1) }}GB</span>
+          <span class="reclaim-tag">可清理</span>
+        </div>
+        <div class="reclaim-note">
+          本软件不会自动删除资源。删掉上面这些能腾出 {{ idleGb }}GB，代价是「低显存 · 快速出片」
+          下次要用时得重新下载；腾够空间后回到本页点「重新检测」。
+        </div>
+      </div>
+
       <div class="tc-msg" :class="engineMsg ? 'ok' : ''" v-if="engineMsg">{{ engineMsg }}</div>
     </section>
 
@@ -278,6 +301,8 @@ const comfyUrl = ref('')
 const comfyBusy = ref(false)
 const comfyMsg = ref('')
 const engineMsg = ref('')
+const storage = ref(null)
+const storageLoading = ref(false)
 const tts = reactive({ online: false, note: '' })
 const pref = ref(getEnginePref())
 const opening = ref('')
@@ -306,6 +331,47 @@ const packs = computed(() => (currentOpt.value && currentOpt.value.packs) || [])
 const downloads = computed(() => rec.value.downloads || { total_gib: 0, packs: [] })
 /** 原生通道的门槛：用来解释「为什么只给插件通道」，不是说 H3 不支持。 */
 const nativeInfo = computed(() => (currentOpt.value && currentOpt.value.native) || null)
+
+/**
+ * 因「磁盘不足」而不可用的引擎（通常是插件通道那档）。
+ * 注意别拿 recommend.recommended 去找可回收资源：磁盘不够时后端会推荐 Wan，
+ * 而 Wan 权重正是在用的那份——照推荐去算，能腾的空间永远是 0。要按「用户想跑
+ * 但跑不起来的那个引擎」算：真机上就是它卡住，占地方的却是 Wan 的 29GB。
+ */
+const blockedOpt = computed(() => options.value.find(
+  (o) => !o.available && (o.blockers || []).some((b) => String(b).includes('磁盘')),
+) || null)
+
+/** 磁盘还差多少 GB：按受阻引擎的需求算。 */
+const diskShort = computed(() => {
+  const blocked = blockedOpt.value
+  if (!blocked) return 0
+  const need = Number(blocked.need_disk_gb || 0)
+  const free = Number(data.hardware.disk_free_gb || 0) || Number(data.disk.free_gb || 0)
+  if (!need || !free) return 0
+  return Math.max(0, Math.round(need - free))
+})
+
+/** 已下载、但当前推荐引擎用不上的资源（可腾出来的空间）。 */
+const idleItems = computed(() => {
+  const items = (storage.value && storage.value.items) || []
+  return items.filter((i) => !i.in_use && i.size_gb > 0)
+})
+const idleGb = computed(() => {
+  const gb = idleItems.value.reduce((sum, i) => sum + i.size_gb, 0)
+  return Math.round(gb * 10) / 10
+})
+
+/** 目录名 → 功能名：界面只讲「这是干什么的」，不摊模型名。 */
+const MODEL_DIR_LABELS = {
+  'wan-ti2v-5b': '低显存引擎资源（8GB 显存档）',
+  'wan-a14b': '高画质引擎资源',
+  'hf-cache': '下载缓存',
+  hub: '下载缓存',
+}
+function modelLabel(item) {
+  return MODEL_DIR_LABELS[item.id] || '其他已下载资源'
+}
 
 const hwLine = computed(() => {
   const h = data.hardware || {}
@@ -338,11 +404,31 @@ async function refresh(manual = false) {
     if (!comfyUrl.value) comfyUrl.value = got.comfyui.url || ''
     error.value = ''
     schedule(got.ready ? 10000 : 2000)
+    // 手动重测要重新算资源占用（用户可能刚删完东西回来）
+    if (manual) storage.value = null
+    loadStorage()
   } catch (e) {
     error.value = `状态读取失败：${e.message}`
     schedule(3000)
   } finally {
     checking.value = false
+  }
+}
+
+/**
+ * 资源占用明细：只在「磁盘不够」时才拉。
+ * 后端要对每个权重目录 walk 一次（29GB 有上万个文件），首屏不该背这个开销。
+ */
+async function loadStorage() {
+  if (storage.value || storageLoading.value || !diskShort.value) return
+  storageLoading.value = true
+  try {
+    // 按「受阻的那个引擎」算可回收：它对 models 目录的需求才决定哪些资源闲置
+    storage.value = await api.launchStorage((blockedOpt.value && blockedOpt.value.id) || '')
+  } catch {
+    storage.value = null
+  } finally {
+    storageLoading.value = false
   }
 }
 
@@ -611,6 +697,39 @@ onUnmounted(() => {
 .pack-why { color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
 .pack-native {
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  font-size: 11.5px; color: var(--text-dim); line-height: 1.7;
+}
+
+/* ---------- 磁盘不够时可腾出来的资源 ---------- */
+.reclaim-box {
+  margin-top: 12px;
+  border: 1px solid rgba(255, 176, 32, .35);
+  border-radius: 10px;
+  background: rgba(255, 176, 32, .06);
+  padding: 10px 12px;
+}
+.reclaim-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12px; color: var(--text); font-weight: 500;
+  padding-bottom: 8px; border-bottom: 1px solid rgba(255, 176, 32, .18);
+}
+.reclaim-head b { color: #ffb020; font-family: ui-monospace, monospace; }
+.reclaim-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 72px 64px;
+  align-items: baseline; gap: 10px;
+  padding: 7px 0; font-size: 12px;
+  border-bottom: 1px dashed rgba(255, 176, 32, .14);
+}
+.reclaim-row:last-of-type { border-bottom: none; }
+.reclaim-name { color: var(--text); }
+.reclaim-size {
+  color: #ffb020; font-family: ui-monospace, monospace; text-align: right;
+}
+.reclaim-tag {
+  color: var(--text-dim); font-size: 11px; text-align: right;
+}
+.reclaim-note {
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 176, 32, .18);
   font-size: 11.5px; color: var(--text-dim); line-height: 1.7;
 }
 

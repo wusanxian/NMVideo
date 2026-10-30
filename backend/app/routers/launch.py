@@ -419,6 +419,54 @@ def _reveal(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])  # noqa: S603,S607
 
 
+# models 下每个子目录归哪个引擎用；空串 = 纯缓存/共用，任何引擎都不独占
+_MODEL_DIR_OWNER = {
+    "wan-ti2v-5b": "wan22",
+    "wan-a14b": "wan22",
+    "hf-cache": "",      # HuggingFace 下载缓存，删了只会让下次重下
+    "hub": "",
+}
+
+
+@router.get("/launch/storage")
+def launch_storage(recommended: str = ""):
+    """本地资源占用明细：哪些已下载、当前推荐的引擎用不用得上。
+
+    单独一个端点而不是塞进 status：这里要对每个模型目录 os.walk 一次，
+    29GB 的权重目录有上万个文件，放首屏接口会把首屏拖慢好几秒。
+    前端只在「磁盘不够」时才按需调它。
+
+    **只统计不删除**：删权重是不可逆动作，接口只负责把「谁占了地方、用不用得上」
+    讲清楚，点「打开资源目录」由用户自己决定删什么。
+    """
+    items = []
+    total = 0.0
+    if MODELS_DIR.is_dir():
+        for entry in sorted(MODELS_DIR.iterdir(), key=lambda p: p.name):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            gb = _dir_usage(entry)["size_gb"]
+            if gb < 0.1:
+                continue
+            owner = _MODEL_DIR_OWNER.get(entry.name, "")
+            items.append({
+                "id": entry.name,
+                "size_gb": gb,
+                "engine": owner,
+                "in_use": bool(owner) and owner == recommended,
+            })
+            total += gb
+    idle = sum(i["size_gb"] for i in items if not i["in_use"])
+    return {
+        "ok": True,
+        "path": str(MODELS_DIR),
+        "total_gb": round(total, 1),
+        # 当前推荐引擎用不上的部分：磁盘告急时这部分才是「可以腾出来的空间」
+        "idle_gb": round(idle, 1),
+        "items": items,
+    }
+
+
 @router.post("/launch/open-folder")
 def open_folder(body: OpenFolderBody):
     """打开受管目录（生成视频 / 模型 / 运行目录）。

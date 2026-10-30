@@ -37,6 +37,10 @@ export const api = {
   // 直接拉起系统文件管理器，浏览器端同样可用
   openFolder: (key = 'outputs') =>
     request('/launch/open-folder', { method: 'POST', body: JSON.stringify({ key }) }),
+  // 本地资源占用明细（哪些已下、当前推荐引擎用不用得上）。单独一个端点是因为
+  // 它要对每个权重目录 os.walk 一次，只有「磁盘不够」时前端才按需调。
+  launchStorage: (recommended = '') =>
+    request(`/launch/storage${recommended ? `?recommended=${encodeURIComponent(recommended)}` : ''}`),
   engines: () => request('/engines'),
   jobs: () => request('/jobs?limit=200'),
   createJob: (data) => request('/jobs', { method: 'POST', body: JSON.stringify(data) }),

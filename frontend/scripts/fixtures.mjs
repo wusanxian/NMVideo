@@ -124,6 +124,16 @@ export const FIXTURES = {
     ],
     resource: { guard: 'enforce', watchdog: true, ram_floor_gb: 1, ram_tight_gb: 2.5 },
   },
+  // 资源占用明细：前端只在「磁盘不够」时才调，当前 fixture 是磁盘够用的现场，
+  // 所以这段不会渲染出来；把它放这儿是为了让 mock 端点的返回结构与后端一致
+  // （真机「磁盘差 19GB、误下的 Wan 占 29GB」那个场景用真实数据验证过）。
+  '/api/launch/storage': {
+    ok: true,
+    path: 'D:\\work\\NMVideo\\backend\\models',
+    total_gb: 31.9,
+    idle_gb: 0,
+    items: [{ id: 'wan-ti2v-5b', size_gb: 29.0, engine: 'wan22', in_use: true }],
+  },
   '/api/projects': [{ id: 'demo-project', name: '测试项目', description: '用于渲染验收的样例项目', created_at: '2026-10-27T10:00:00' }],
   '/api/projects/demo-project': PROJECT,
   '/api/gallery': [JOB],
