@@ -83,9 +83,31 @@ TORCH_INDEX = {
 DEFAULT_PORT = 8000
 MIN_PY_VER = (3, 10)
 
+# H3 有两条通道，门槛差三倍，千万不能混算（数字与 backend/app/h3_freevideo.py、
+# backend/app/engines/h3_quant.py 同口径，改一处要三处同步）：
+#   - 插件通道（正路，引擎 h3）：ComfyUI + FreeVideo 节点，权重按 50 个 transformer
+#     块在「显存 → 内存 → 磁盘」之间摆放，装不下的块每步回读磁盘，文本编码器
+#     独立进程跑完即退 → 8GB 显存 / 16GB 内存就能跑，只是慢。四个素材包
+#     92.34GiB，含下载缓存余量要 100.3GiB 磁盘。
+#   - 原生通道（兜底，引擎 h3_native）：本进程 diffusers 加载 bf16 原始权重
+#     123.8GiB，内存决定档位，52GB 内存起步、139GB 磁盘。
+# 早先只按原生口径判，于是 8GB/32GB 的机器被告知「跑不了 H3、给你下 Wan」——
+# 那 30GB 白下了，这是 0.1.9 真机跑出来的坑。
+H3_PLUGIN_MIN_VRAM = 8.0
+H3_PLUGIN_MIN_RAM = 16.0
+H3_PLUGIN_TOTAL_GIB = 92.34
+H3_PLUGIN_DISK_GIB = 100.3
+
+# 门槛比较的容差（GB）。显卡标称 8GB 实机是 8188MiB ≈ 7.996GB，
+# nvidia-smi 报 memory.total=8188 → /1024 后严格 `>= 8.0` 为 False，
+# 于是所有「8GB 卡」都被判成显存不足。真机 4060 上直接暴露：页面说 8GB 能跑，
+# 启动器却打印「显存偏小，强制 int8」。留半 GB 容差，别和标称值较劲。
+VRAM_TOLERANCE_GB = 0.5
+
 # 模型磁盘需求（GB，含余量）
 DISK_NEED = {
-    "h3": 150.0,          # 底模 78GB + Qwen3-VL 文本编码器 62GB，留 10GB 余量
+    "h3": H3_PLUGIN_DISK_GIB,  # 插件通道（正路）
+    "h3_native": 150.0,        # 原生兜底：底模 78GB + Qwen3-VL 文本编码器 62GB，留 10GB 余量
     "wan-a14b": 135.0,
     "wan-ti2v": 42.0,
     "anime": 14.0,
@@ -229,7 +251,7 @@ def _global_memory():
     return m.ullTotalPhys / 2**30, m.ullAvailPhys / 2**30
 
 
-def probe_hardware() -> HWInfo:
+def probe_hardware(rt: Path | None = None) -> HWInfo:
     hw = HWInfo()
     hw.cpu = platform.processor() or platform.machine()
     try:
@@ -237,7 +259,10 @@ def probe_hardware() -> HWInfo:
     except Exception:
         pass
     try:
-        hw.disk_free_gb = shutil.disk_usage(Path.cwd().anchor or "C:\\").free / 2**30
+        # 必须按 runtime 所在盘算：装 D 盘、runtime 退到 %LOCALAPPDATA%（C 盘）时，
+        # 拿 cwd 的盘去判会得出完全错误的「磁盘够不够」。
+        anchor = (rt or Path.cwd()).anchor or "C:\\"
+        hw.disk_free_gb = shutil.disk_usage(anchor).free / 2**30
     except Exception:
         pass
     nvsmi = shutil.which("nvidia-smi")
@@ -274,7 +299,7 @@ def show_hw_report(hw: HWInfo):
 # ---------------- 决策矩阵 ----------------
 @dataclass
 class Plan:
-    model: str          # wan-a14b | wan-ti2v | anime
+    model: str          # h3 | h3_native | wan-a14b | wan-ti2v | anime
     torch: str          # cuda | cpu
     quantize: str       # auto | int8 | fp8 | none
     offload: str        # sequential | model | none
@@ -284,26 +309,40 @@ class Plan:
 def choose_plan(hw: HWInfo) -> Plan:
     if hw.gpus:
         vram = hw.max_vram_gb
-        # MiniMax H3 原生推理（VDN-H3 8 步蒸馏）：模型约 139GB。
-        # 权重 bf16 合计 123.8GiB、按块卸载只省显存不省内存，所以真正门槛
-        # 是内存：int8 约 79GB、int4 约 52GB（后端 h3_quant.plan 同口径）。
-        if vram >= 10 and hw.ram_total_gb >= 80 and hw.disk_free_gb >= DISK_NEED["h3"]:
-            return Plan("h3", "cuda", "auto", "sequential",
+        # 比较用「带容差的显存」：8GB 卡实机是 7.996GB（8188MiB），
+        # 严格 >= 8 会把它判成显存不足。显示仍用真实值，别骗用户。
+        veff = vram + VRAM_TOLERANCE_GB
+        # 正路：H3 插件通道（ComfyUI + FreeVideo 节点）。门槛只有 8GB 显存 /
+        # 16GB 内存 —— 权重按块在三级存储间摆放，装不下的块回读磁盘，所以
+        # 内存不是瓶颈，只有「磁盘放不放得下 92GB 素材」才是。素材由 ComfyUI
+        # 侧下载（谁跑推理谁放权重），本程序不重复下一份。
+        if (veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb >= H3_PLUGIN_MIN_RAM
+                and hw.disk_free_gb >= H3_PLUGIN_DISK_GIB):
+            return Plan("h3", "cuda", "auto", "none",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存 + "
-                        f"{hw.disk_free_gb:.0f}GB 磁盘：可跑 MiniMax H3 原生推理（8 步蒸馏，画质最好）。"
-                        "注意这是兜底通道：H3 的正路是 ComfyUI + FreeVideo 节点，"
-                        "需要与 ComfyUI 同参同结果时请走 ComfyUI 通道")
-        if vram >= 22 and hw.ram_total_gb >= 60:
+                        f"{hw.disk_free_gb:.0f}GB 磁盘：可跑 H3（分块流式，慢但画质最好）。"
+                        f"素材 {H3_PLUGIN_TOTAL_GIB:.0f}GB 在 ComfyUI 里装一次即可，"
+                        "本程序不重复下载")
+        # 显存内存都够、只差磁盘：说清差多少，不要偷偷换成 Wan（用户会白下 30GB）
+        if veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb >= H3_PLUGIN_MIN_RAM:
+            short = H3_PLUGIN_DISK_GIB - hw.disk_free_gb
+            return Plan("wan-ti2v", "cuda", "auto", "sequential",
+                        f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存够跑 H3，"
+                        f"但磁盘只剩 {hw.disk_free_gb:.0f}GB，素材要 {H3_PLUGIN_DISK_GIB:.0f}GB，"
+                        f"还差 {short:.0f}GB → 先用 TI2V-5B 出片，腾出空间后可切回 H3")
+        # 原生兜底（进程内 diffusers，123.8GiB 权重）：内存决定档位，52GB 起步。
+        # 只有内存极大、磁盘也够的机器才可能走到这里（插件通道磁盘要求更低，
+        # 正常早就命中上面了），保留它是为了「有明确理由不要插件通道」的场景。
+        if veff >= 10 and hw.ram_total_gb >= 52 and hw.disk_free_gb >= DISK_NEED["h3_native"]:
+            return Plan("h3_native", "cuda", "auto", "sequential",
+                        f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存 + "
+                        f"{hw.disk_free_gb:.0f}GB 磁盘：可跑 H3 原生推理（8 步蒸馏）。"
+                        "注意这是兜底通道：正路是 ComfyUI + FreeVideo 节点，"
+                        "需要与 ComfyUI 同参同结果时请走插件通道")
+        if veff >= 22 and hw.ram_total_gb >= 60:
             return Plan("wan-a14b", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存，可上 Wan2.2-A14B 画质标杆")
-        # 8GB 档：能跑 H3 但默认不选——139GB 下载 + int4 实验画质。
-        # 注意顺序：本分支必须在 A14B 之后，否则 22GB+ 显存的机器会被
-        # 「ram>=52 且磁盘够」截胡，拿不到本该有的 A14B（0.1.6 回归 bug）。
-        if vram >= 8 and hw.ram_total_gb >= 52 and hw.disk_free_gb >= DISK_NEED["h3"]:
-            return Plan("wan-ti2v", "cuda", "auto", "sequential",
-                        f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存：默认 TI2V-5B；"
-                        "想试 H3 可手动选 --model h3（int4 实验档，需 52GB 内存 + 139GB 磁盘）")
-        if vram >= 8 and hw.ram_total_gb >= 24:
+        if veff >= 8 and hw.ram_total_gb >= 24:
             return Plan("wan-ti2v", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存，TI2V-5B + int8 量化 + 逐层卸载")
         if vram > 0:
@@ -318,7 +357,8 @@ def choose_plan(hw: HWInfo) -> Plan:
 
 
 PLAN_LABEL = {
-    "h3": "MiniMax H3 原生兜底（VDN-H3 8 步蒸馏 · diffusers · 约 139GB 模型；正路是 ComfyUI 通道）",
+    "h3": "画质优先 · H3 插件通道（ComfyUI + FreeVideo 节点 · 分块流式 · 素材约 92GB，ComfyUI 侧准备）",
+    "h3_native": "原生兜底 · H3 进程内推理（diffusers · bf16 约 124GiB · 内存决定档位）",
     "wan-a14b": "Wan 2.2 T2V-A14B（双专家 MoE · 电影级画质 · 约 119GB 模型）",
     "wan-ti2v": "Wan 2.2 TI2V-5B（5B 统一模型 · 8GB 显存甜点位 · 约 32GB 模型）",
     "anime": "AnimeDiff 动漫引擎（dreamlike-anime + 运动模块 · 约 5GB 模型）",
@@ -333,7 +373,10 @@ def show_plan(plan: Plan, hw: HWInfo):
         print("  PyTorch: CUDA 12.4 版（约 2.5GB，下载耗时较长）")
     else:
         print("  PyTorch: CPU 版（约 200MB）")
-    if plan.quantize in ("int8", "fp8", "auto"):
+    if plan.model == "h3":
+        print(f"  素材   : 约 {H3_PLUGIN_TOTAL_GIB:.0f}GB，由 ComfyUI 侧准备（本程序不重复下）")
+        print("  权重摆放: 插件分块流式（显存→内存→磁盘，装不下的块回读磁盘）")
+    elif plan.quantize in ("int8", "fp8", "auto"):
         q = {"auto": "按显卡自动（40 系 fp8 / 30 系 int8）", "int8": "int8 权重量化"}[plan.quantize]
         print(f"  量化   : {q}")
     if plan.offload == "sequential":
@@ -486,6 +529,24 @@ def ensure_python_env(rt: Path, reinstall: bool = False):
     return py_exe, "embed"
 
 
+def deps_fingerprint(rt: Path, torch_ver: str, py: Path) -> str:
+    """依赖指纹：requirements.txt 内容 + torch 档位 + 解释器版本。
+
+    任一项变了就重装（换了 cu124/cpu、改了依赖清单、venv 换了 Python），
+    三项都没变就该跳过 pip —— 每次都重跑只是白等。
+    """
+    import hashlib
+    h = hashlib.sha256()
+    req = rt / "backend" / "requirements.txt"
+    try:
+        h.update(req.read_bytes())
+    except Exception:
+        h.update(b"<no-requirements>")
+    h.update(torch_ver.encode("utf-8"))
+    h.update(str(py).encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
 def pip_install(py: Path, args: list, desc: str):
     """args: pip install 后的参数（可含 --index-url；已指定源时不再叠加默认镜像）"""
     ui.step(desc)
@@ -502,7 +563,14 @@ def pip_install(py: Path, args: list, desc: str):
 # ---------------- 模型下载 ----------------
 def ensure_models(rt: Path, py: Path, plan: Plan, hw: HWInfo):
     if plan.model == "h3":
-        repo_args = ["--h3"]  # MiniMax H3：走 HF 缓存，约 139GB，耗时长
+        # 插件通道的权重必须落在 ComfyUI 的 models 目录才有意义（谁跑推理谁放权重），
+        # NMVideo 再下一份 92GB 只会白占磁盘、还和插件版本对不上。
+        ui.step("生成素材：由 ComfyUI 侧准备")
+        ui.info(f"H3 素材共 {H3_PLUGIN_TOTAL_GIB:.0f}GB，在 ComfyUI 里装一次即可")
+        ui.info("本程序不重复下载；装好后在「ComfyUI 对接」里填地址即可出片")
+        return
+    if plan.model == "h3_native":
+        repo_args = ["--h3"]  # 原生权重：走 HF 缓存，约 124GiB，耗时长
     elif plan.model == "anime":
         repo_args = []  # AnimeDiff 是 download_models.py 的默认行为（不带参数）
     elif plan.model == "wan-ti2v":
@@ -593,7 +661,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description=f"{APP_NAME} Windows 启动器")
     parser.add_argument("--model", default="auto",
-                        choices=["auto", "h3", "wan-ti2v", "wan-a14b", "anime"])
+                        choices=["auto", "h3", "h3_native", "wan-ti2v", "wan-a14b", "anime"])
     parser.add_argument("--torch", default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--yes", action="store_true")
@@ -618,7 +686,7 @@ def main():
     sync_payload(rt)
     ui.ok("程序文件就绪")
 
-    hw = probe_hardware()
+    hw = probe_hardware(rt)
     show_hw_report(hw)
     plan = choose_plan(hw)
     if args.model != "auto":
@@ -643,15 +711,36 @@ def main():
     torch_args = ["torch", "--index-url", TORCH_INDEX[torch_ver]]
     if torch_ver == "cpu":
         torch_args += ["--extra-index-url", PIP_INDEX]
-    emit_state("torch")
-    pip_install(py, torch_args,
-                f"安装 PyTorch（{torch_ver.upper()} 版，约 {'2.5GB' if torch_ver == 'cuda' else '200MB'}）")
-    ui.ok("PyTorch 安装完成")
+    # 依赖指纹命中就跳过两次 pip：pip 虽然幂等，但每次启动都要跑 15–60 秒的
+    # 依赖解析，用户看到的就是「明明装好了，每次开软件还要等一遍」。
+    # 戳记放在 venv/Scripts 里：venv 被删/重建时戳记跟着没了，不会误跳。
+    stamp = py.parent / ".deps-ok"
+    want = deps_fingerprint(rt, torch_ver, py)
+    deps_ready = False
+    if not args.reinstall:
+        try:
+            deps_ready = stamp.read_text(encoding="utf-8").strip() == want
+        except Exception:
+            deps_ready = False
 
-    emit_state("deps")
-    pip_install(py, ["-r", str(rt / "backend" / "requirements.txt")],
-                "安装其余依赖（FastAPI / diffusers 等，约 500MB）")
-    ui.ok("依赖安装完成")
+    emit_state("torch")
+    if deps_ready:
+        emit_state("deps")
+        ui.ok("依赖已就绪，跳过安装（要强制重装加 --reinstall）")
+    else:
+        pip_install(py, torch_args,
+                    f"安装 PyTorch（{torch_ver.upper()} 版，约 {'2.5GB' if torch_ver == 'cuda' else '200MB'}）")
+        ui.ok("PyTorch 安装完成")
+
+        emit_state("deps")
+        pip_install(py, ["-r", str(rt / "backend" / "requirements.txt")],
+                    "安装其余依赖（FastAPI / diffusers 等，约 500MB）")
+        ui.ok("依赖安装完成")
+        try:
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.write_text(want, encoding="utf-8")
+        except Exception:
+            pass
 
     if not args.no_download:
         emit_state("models")
