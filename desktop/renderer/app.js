@@ -18,11 +18,27 @@
     zh: {
       appName: 'NMVideo',
       workspace: '你的工作空间',
-      workspaceSub: '后台正在忙，完成后可以操作',
+      workspaceSub: '正在准备运行环境与生成资源，完成后即可开始生成',
       workspaceSubReady: '工作空间已就绪',
       workspaceNav: '工作台',
       openComfyUI: '打开 ComfyUI', terminal: '终端', close: '关闭',
-      starting: '正在启动', installing: '正在安装环境与模型',
+      starting: '正在启动', installing: '正在准备运行环境',
+      // 环境准备清单：只讲「这一步在干什么」，不出现具体模型名
+      setupTitle: '环境准备 · 首次启动需要完成以下步骤',
+      setupSummary: (i, n, el) => `第 ${i} / ${n} 步 · 已用时 ${el}`,
+      setupSummaryDone: (n) => `${n} 项全部完成`,
+      setupSummaryFail: (i, n) => `第 ${i} / ${n} 步未完成`,
+      stepFilesT: '准备程序文件', stepFilesD: '解压并校验程序本体，安装后不再重复',
+      stepPyT: '准备运行环境', stepPyD: '独立的运行环境，不改动系统里已装的软件',
+      stepGpuT: '安装显卡加速组件', stepGpuD: '让视频生成跑在显卡上，速度提升数倍',
+      stepDepT: '安装运行依赖', stepDepD: '视频合成、音频处理需要的基础组件',
+      stepResT: '下载生成资源', stepResD: '视频生成所需的本地资源包，装好后可离线生成',
+      stepSrvT: '启动本地服务', stepSrvD: '引擎在后台常驻，只在本机监听，不对外网开放',
+      stepElapsed: (el) => `已用时 ${el}`,
+      stepNoProgress: (el) => `已停滞 ${el} 无进展`,
+      stallHint: '下载已长时间没有进展。可点「重试」重新开始，或在系统管理里查看终端日志；换网络后重试通常更快。',
+      engineValue: '本地视频生成引擎 · GPU 加速',
+      heroDescSetup: '正在准备运行环境与生成资源，请保持网络连接；长时间无进展可重试。',
       installInfo: '安装信息',
       enginePath: '引擎', comfyPath: 'ComfyUI', runtimePath: '运行目录',
       createShortcut: '创建桌面快捷方式', shortcutReady: '快捷方式已就绪',
@@ -30,9 +46,9 @@
       copy: '复制', export: '导出报告', clear: '清空',
       terminalHint: '这里显示最近的输出；复制或导出可获取完整日志。',
       openApp: '打开应用', backToBoot: '返回启动台',
-      statusPreparing: '准备程序文件', statusPython: '准备 Python 环境',
-      statusTorch: '安装 PyTorch', statusDeps: '安装依赖',
-      statusModels: '下载模型', statusStarting: '启动服务',
+      statusPreparing: '准备程序文件', statusPython: '准备运行环境',
+      statusTorch: '安装显卡加速组件', statusDeps: '安装运行依赖',
+      statusModels: '下载生成资源', statusStarting: '启动本地服务',
       statusReady: '已就绪', statusError: '出错了',
       checkingUpdate: '正在检查更新…', updateAvailable: '发现新版本',
       updateNone: '已是最新版本', updateDownloading: '正在下载更新',
@@ -61,11 +77,26 @@
     en: {
       appName: 'NMVideo',
       workspace: 'Your Workspace',
-      workspaceSub: 'Working in the background. Ready soon.',
+      workspaceSub: 'Preparing the runtime and generation assets. Ready soon.',
       workspaceSubReady: 'Workspace is ready',
       workspaceNav: 'Workspace',
       openComfyUI: 'Open ComfyUI', terminal: 'Terminal', close: 'Close',
-      starting: 'Starting', installing: 'Installing environment & models',
+      starting: 'Starting', installing: 'Preparing runtime',
+      setupTitle: 'Setup · these steps run on first launch',
+      setupSummary: (i, n, el) => `Step ${i} of ${n} · ${el} elapsed`,
+      setupSummaryDone: (n) => `All ${n} steps done`,
+      setupSummaryFail: (i, n) => `Step ${i} of ${n} did not finish`,
+      stepFilesT: 'Prepare program files', stepFilesD: 'Unpack and verify the app itself — only once',
+      stepPyT: 'Prepare runtime', stepPyD: 'Isolated runtime; nothing already on your system is touched',
+      stepGpuT: 'Install GPU acceleration', stepGpuD: 'Run generation on the graphics card — several times faster',
+      stepDepT: 'Install dependencies', stepDepD: 'Building blocks for video compositing and audio',
+      stepResT: 'Download generation assets', stepResD: 'Local assets the engine needs; works offline afterwards',
+      stepSrvT: 'Start local service', stepSrvD: 'Engine runs in the background, listening on this machine only',
+      stepElapsed: (el) => `${el} elapsed`,
+      stepNoProgress: (el) => `No progress for ${el}`,
+      stallHint: 'The download has not moved for a while. Hit Retry to restart, or open System to read the terminal; retrying on another network is often faster.',
+      engineValue: 'Local video engine · GPU accelerated',
+      heroDescSetup: 'Preparing the runtime and generation assets. Keep the network on; retry if it stalls.',
       installInfo: 'Installation Info',
       enginePath: 'Engine', comfyPath: 'ComfyUI', runtimePath: 'Runtime',
       createShortcut: 'Create Desktop Shortcut', shortcutReady: 'Shortcut ready',
@@ -73,9 +104,9 @@
       copy: 'Copy', export: 'Export', clear: 'Clear',
       terminalHint: 'Recent output shown here. Copy or export for the full log.',
       openApp: 'Open App', backToBoot: 'Back to Launcher',
-      statusPreparing: 'Preparing files', statusPython: 'Setting up Python',
-      statusTorch: 'Installing PyTorch', statusDeps: 'Installing dependencies',
-      statusModels: 'Downloading models', statusStarting: 'Starting service',
+      statusPreparing: 'Preparing files', statusPython: 'Preparing runtime',
+      statusTorch: 'Installing GPU acceleration', statusDeps: 'Installing dependencies',
+      statusModels: 'Downloading assets', statusStarting: 'Starting service',
       statusReady: 'Ready', statusError: 'Error',
       checkingUpdate: 'Checking for updates…', updateAvailable: 'New version available',
       updateNone: 'Up to date', updateDownloading: 'Downloading update',
@@ -124,9 +155,31 @@
     serviceOwned: false,
     controlBusy: false,
     route: localStorage.getItem('aivideo.desktopRoute') || '/',
+    // 环境准备清单：stepIndex = 当前进行到第几步；stage = 当前步骤的实时进度
+    stepIndex: 0,
+    stageKey: '',
+    elapsed: 0,
+    stage: { pct: null, speed: '', changedAt: 0 },
   }
 
   const MAX_LOGS = 500
+
+  /**
+   * 启动器上报的粗阶段（[AIVIDEO] STATE=xxx）→ 用户视角的「这一步在干什么」。
+   * 这里刻意不出现任何模型/框架名：首启的人不认识它们，只关心这一步干什么、还要多久。
+   */
+  const STAGE_ORDER = ['preparing', 'python', 'torch', 'deps', 'models', 'starting']
+  const SETUP_STEPS = [
+    { title: 'stepFilesT', desc: 'stepFilesD' },
+    { title: 'stepPyT', desc: 'stepPyD' },
+    { title: 'stepGpuT', desc: 'stepGpuD' },
+    { title: 'stepDepT', desc: 'stepDepD' },
+    { title: 'stepResT', desc: 'stepResD' },
+    { title: 'stepSrvT', desc: 'stepSrvD' },
+  ]
+  // 只有这几个阶段有真实下载百分比可解析（pip / huggingface 进度行）
+  const DOWNLOAD_STAGES = new Set(['torch', 'deps', 'models'])
+  const STALL_MS = 90 * 1000
 
   // ---------------- DOM ----------------
   const $ = (sel) => document.querySelector(sel)
@@ -153,6 +206,10 @@
     webview: $('#app-webview'),
     backBtn: $('#back-btn'),
     bootView: $('#boot-view'),
+    setupSteps: $('#setup-steps'),
+    setupList: $('#setup-list'),
+    setupSummary: $('#setup-summary'),
+    setupStall: $('#setup-stall'),
     systemBtn: $('#system-btn'),
     systemPanel: $('#system-panel'),
     panelCloseBtn: $('#panel-close-btn'),
@@ -191,6 +248,7 @@
     })
     renderProgress()
     renderUpdate()
+    applySetupI18n()
     el.connectionMessage.textContent = t('disconnected')
   }
 
@@ -201,18 +259,157 @@
     stopping: 'serviceStopping', stopped: 'serviceStopped',
   }
 
+  // ---------------- 环境准备清单 ----------------
+  const stepEls = []
+  const mmss = (sec) => {
+    const s = Math.max(0, Math.round(Number(sec) || 0))
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
+  }
+
+  function buildSetupList() {
+    el.setupList.textContent = ''
+    stepEls.length = 0
+    SETUP_STEPS.forEach((_, i) => {
+      const li = document.createElement('li')
+      li.className = 'step pending'
+      const mark = document.createElement('span')
+      mark.className = 'step-mark'
+      mark.textContent = String(i + 1)
+      const body = document.createElement('div')
+      body.className = 'step-body'
+      const title = document.createElement('div')
+      title.className = 'step-title'
+      const desc = document.createElement('div')
+      desc.className = 'step-desc'
+      const meta = document.createElement('div')
+      meta.className = 'step-meta'
+      body.append(title, desc, meta)
+      li.append(mark, body)
+      el.setupList.appendChild(li)
+      stepEls.push({ root: li, mark, title, desc, meta })
+    })
+  }
+
+  function applySetupI18n() {
+    SETUP_STEPS.forEach((s, i) => {
+      const e = stepEls[i]
+      if (!e) return
+      e.title.textContent = t(s.title)
+      e.desc.textContent = t(s.desc)
+    })
+    renderSetup()
+  }
+
+  /** 清单状态：已完成 / 进行中 / 未开始 / 失败（失败停留在他卡住的那一步） */
+  function renderSetup() {
+    const s = state.bootState
+    const total = SETUP_STEPS.length
+    el.setupSteps.hidden = s === 'stopped'
+    stepEls.forEach((e, i) => {
+      let cls
+      let mark
+      if (s === 'ready' || i < state.stepIndex) {
+        cls = 'step done'
+        mark = '✓'
+      } else if (i === state.stepIndex) {
+        cls = s === 'error' ? 'step error' : 'step active'
+        mark = s === 'error' ? '!' : '•'
+      } else {
+        cls = 'step pending'
+        mark = String(i + 1)
+      }
+      e.root.className = cls
+      e.mark.textContent = mark
+    })
+    renderSetupSummary()
+    renderStepMeta()
+  }
+
+  function renderSetupSummary() {
+    const s = state.bootState
+    const total = SETUP_STEPS.length
+    if (s === 'stopped') el.setupSummary.textContent = ''
+    else if (s === 'ready') el.setupSummary.textContent = t('setupSummaryDone')(total)
+    else if (s === 'error') el.setupSummary.textContent = t('setupSummaryFail')(state.stepIndex + 1, total)
+    else el.setupSummary.textContent = t('setupSummary')(state.stepIndex + 1, total, mmss(state.elapsed))
+  }
+
+  /**
+   * 当前步骤的实时细节。只用真数据：
+   *  有解析到下载百分比 → 百分比 + 速度；没有 → 只说已用时。
+   * 超过 STALL_MS 没变化才报「已停滞」，避免把慢当成死。
+   */
+  function renderStepMeta() {
+    stepEls.forEach((e) => {
+      e.meta.textContent = ''
+      e.meta.className = 'step-meta'
+    })
+    const e = stepEls[state.stepIndex]
+    if (!e) {
+      el.setupStall.hidden = true
+      return
+    }
+    const s = state.bootState
+    if (s === 'ready' || s === 'stopped') {
+      el.setupStall.hidden = true
+      return
+    }
+    const stage = state.stage
+    const downloading = DOWNLOAD_STAGES.has(s) && stage.pct !== null
+    const idleSec = downloading ? (Date.now() - stage.changedAt) / 1000 : 0
+    const stalled = downloading && idleSec * 1000 > STALL_MS
+    const parts = []
+    if (downloading) {
+      parts.push(stage.pct + '%')
+      if (stage.speed) parts.push(stage.speed)
+    }
+    parts.push(stalled ? t('stepNoProgress')(mmss(idleSec)) : t('stepElapsed')(mmss(state.elapsed)))
+    e.meta.textContent = parts.join(' · ')
+    e.meta.className = 'step-meta' + (stalled || s === 'error' ? ' warn' : '')
+    el.setupStall.hidden = !stalled
+    if (stalled) el.setupStall.textContent = t('stallHint')
+  }
+
+  /** 从启动器日志里刮真实进度（tqdm / pip 的 `43%|... 472.72s/it`、`12%|.. 1.2MB/s`） */
+  function noteProgress(text) {
+    if (!DOWNLOAD_STAGES.has(state.bootState)) return
+    const m = String(text).match(/(\d{1,3}(?:\.\d+)?)\s*%/)
+    if (!m) return
+    const pct = Math.round(Number(m[1]))
+    if (!(pct >= 0 && pct <= 100)) return
+    const sp = String(text).match(/(\d+(?:\.\d+)?\s*(?:[KMGT]i?B\/s|[a-zA-Z]+\/it))/i)
+    const now = Date.now()
+    if (state.stage.pct !== pct) state.stage.changedAt = now
+    if (!state.stage.changedAt) state.stage.changedAt = now
+    state.stage.pct = pct
+    state.stage.speed = sp ? sp[1].replace(/\s+/g, '') : state.stage.speed
+    renderStepMeta()
+  }
+
   /** 双卡同步：boot 视图英雄卡 + 系统面板服务卡渲染同一份状态 */
   function renderProgress() {
     const s = state.bootState
+    // 阶段变化时推进清单，并清空上一阶段的下载进度（否则会显示错位的百分比）
+    if (s !== state.stageKey) {
+      state.stageKey = s
+      const i = STAGE_ORDER.indexOf(s)
+      if (i >= 0) state.stepIndex = i
+      if (s === 'ready') state.stepIndex = SETUP_STEPS.length - 1
+      state.stage = { pct: null, speed: '', changedAt: 0 }
+    }
     const stateText = t(STATE_TEXT[s] || 'statusPreparing')
     for (const card of document.querySelectorAll('.progress-card')) {
       const icon = card.querySelector('.progress-icon')
       const text = card.querySelector('.progress-text')
       const desc = card.querySelector('.progress-desc')
       const bar = card.querySelector('.progress-bar')
-      if (icon) icon.textContent = s === 'ready' ? '✓' : (s === 'error' ? '⚠' : 'F')
+      if (icon) icon.textContent = s === 'ready' ? '✓' : (s === 'error' ? '⚠' : 'N')
       if (text) text.textContent = stateText
-      if (desc) desc.textContent = s === 'stopped' ? t('serviceIdle') : (state.online ? t('workspaceSubReady') : t('disconnected'))
+      if (desc) {
+        desc.textContent = s === 'stopped' ? t('serviceIdle')
+          : (state.online ? t('workspaceSubReady')
+            : (['ready', 'error'].includes(s) ? t('disconnected') : t('heroDescSetup')))
+      }
       if (bar) bar.style.width = Math.round(state.progress * 100) + '%'
       card.classList.toggle('done', s === 'ready')
       card.classList.toggle('error', s === 'error')
@@ -235,6 +432,7 @@
     el.serviceStart.disabled = state.controlBusy || s === 'stopping' || (state.serviceEnabled && s !== 'error')
     el.serviceStop.disabled = state.controlBusy || s === 'stopping' || !state.serviceEnabled || (state.online && !state.serviceOwned)
     el.serviceStop.title = state.online && !state.serviceOwned ? t('serviceExternal') : t('serviceHint')
+    renderSetup()
   }
 
   function renderTerminal() {
@@ -503,6 +701,7 @@
     state.logs.push({ text, ts })
     if (state.logs.length > 4000) state.logs.splice(0, state.logs.length - 4000)
     renderTerminal()
+    noteProgress(text)
   })
   window.desk.on('backend:state', ({ state: s, progress, owned }) => {
     if (typeof owned === 'boolean') state.serviceOwned = owned
@@ -526,6 +725,8 @@
   window.desk.on('backend:error', ({ text }) => {
     state.bootState = 'error'
     renderProgress()
+    // 出错时把终端摆出来，用户不用自己去找日志
+    if (!state.panelOpen) setPanel(true)
     state.logs.push({ text: '[ERROR] ' + text, ts: Date.now() })
     renderTerminal()
   })
@@ -536,9 +737,12 @@
   window.desk.on('backend:tick', ({ seconds }) => {
     // 服务计时器（启动/重连期间的已耗时，MM:SS）
     const total = Number(seconds) || 0
+    state.elapsed = total
     el.serviceTimer.textContent =
       String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0')
     el.serviceTimer.style.display = ['ready', 'stopped', 'stopping'].includes(state.bootState) ? 'none' : ''
+    renderSetupSummary()
+    renderStepMeta()
   })
 
   // ---------------- AI 助手连接（MCP）：顶栏按钮 → 弹框，复制即用 + 实时连接状态 ----------------
@@ -676,14 +880,22 @@
 
   // ---------------- 启动 ----------------
   async function boot() {
+    buildSetupList()
     applyStaticI18n()
-    // 初始即系统视图：面板自动展开（安装进度/终端/安装信息直接可见）
-    setPanel(true)
+    // 本地兜底计时：启动器每 5s 会推更准的 backend:tick 覆盖
+    setInterval(() => {
+      if (['ready', 'stopped', 'stopping'].includes(state.bootState)) return
+      state.elapsed += 1
+      renderSetupSummary()
+      renderStepMeta()
+    }, 1000)
+    // 主区已经承载「状态 + 完整准备清单」，系统面板默认收起；出错时才自动展开给日志
+    setPanel(false)
     try {
       state.paths = await window.desk.paths()
       if (state.paths) {
         el.runtimePath.textContent = state.paths.runtime
-        el.enginePath.textContent = 'NMVideo · AnimeDiff / Wan 2.2 / ComfyUI'
+        el.enginePath.textContent = t('engineValue')
         el.comfyPath.textContent = 'http://127.0.0.1:8188'
       }
       el.versionTag.textContent = 'v' + (await window.desk.version())

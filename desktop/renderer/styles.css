@@ -202,8 +202,73 @@ body { display: flex; flex-direction: column; }
 .progress-card.done .progress-bar { background: var(--green); }
 .progress-card.error .progress-bar { background: var(--red); }
 
-/* 安装信息 */
-.install-info {
+/* 首启：环境准备清单 */
+.setup-steps {
+  margin-top: 16px;
+  padding: 18px 22px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.setup-steps[hidden] { display: none; }
+.setup-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.setup-title { font-size: 13.5px; font-weight: 600; color: var(--text-dim); }
+.setup-summary { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.setup-list { list-style: none; margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
+.step { display: flex; gap: 12px; padding: 9px 10px; border-radius: 9px; }
+.step.active { background: var(--bg-hover); }
+.step.error { background: rgba(248, 113, 113, 0.1); }
+.step-mark {
+  width: 20px; height: 20px; flex: none; margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.step.done .step-mark {
+  background: rgba(52, 211, 153, 0.14);
+  border-color: rgba(52, 211, 153, 0.5);
+  color: var(--green);
+}
+.step.active .step-mark {
+  background: rgba(var(--accent-rgb), .14);
+  border-color: var(--accent);
+  color: var(--accent);
+  animation: stepPulse 1.6s ease-in-out infinite;
+}
+.step.error .step-mark {
+  background: rgba(248, 113, 113, 0.14);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: var(--red);
+}
+.step-body { flex: 1; min-width: 0; }
+.step-title { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.step.active .step-title, .step.done .step-title { color: var(--text); }
+.step.error .step-title { color: var(--red); }
+.step-desc { margin-top: 2px; font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+.step.pending .step-title, .step.pending .step-desc { opacity: 0.62; }
+.step-meta { margin-top: 4px; font-size: 11.5px; color: var(--accent-soft); font-variant-numeric: tabular-nums; }
+.step-meta:empty { display: none; }
+.step-meta.warn { color: var(--red); }
+.setup-stall {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--red);
+}
+.setup-stall[hidden] { display: none; }
+
+@keyframes stepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), .45); }
+  50% { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
+}
+
+/* 安装信息 */.install-info {
   margin-top: 18px;
   padding: 18px 22px;
   background: var(--bg-card);

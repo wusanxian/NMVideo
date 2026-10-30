@@ -11,7 +11,7 @@
   <!-- 自定义标题栏 -->
   <header class="titlebar">
     <div class="brand">
-      <span class="brand-logo">F</span>
+      <span class="brand-logo">N</span>
       <span class="brand-name">NMVideo</span>
     </div>
     <div class="titlebar-right">
@@ -55,17 +55,27 @@
     <main id="boot-view" class="main">
       <div class="workspace-head">
         <h1 id="workspace-title">你的工作空间</h1>
-        <p id="workspace-sub" class="workspace-sub">后台正在忙，完成后可以操作</p>
+        <p id="workspace-sub" class="workspace-sub">正在准备运行环境与生成资源，完成后即可开始生成</p>
       </div>
 
       <!-- 状态英雄卡（与系统面板内的服务卡同步渲染） -->
       <section id="progress-card" class="progress-card">
-        <div class="progress-icon" id="progress-icon">F</div>
+        <div class="progress-icon" id="progress-icon">N</div>
         <div class="progress-body">
-          <div class="progress-text" id="progress-text">正在安装环境与模型</div>
-          <div class="progress-desc" id="progress-desc">已连接你的模型与运行环境。</div>
+          <div class="progress-text" id="progress-text">正在准备运行环境</div>
+          <div class="progress-desc" id="progress-desc">正在准备运行环境与生成资源，请保持网络连接。</div>
           <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
         </div>
+      </section>
+
+      <!-- 首启环境准备清单：按「这一步在干什么」列步骤，不暴露具体模型名 -->
+      <section id="setup-steps" class="setup-steps" aria-label="环境准备">
+        <div class="setup-head">
+          <span class="setup-title" data-i18n="setupTitle">环境准备</span>
+          <span id="setup-summary" class="setup-summary"></span>
+        </div>
+        <ol id="setup-list" class="setup-list"></ol>
+        <p id="setup-stall" class="setup-stall" hidden></p>
       </section>
 
       <div class="main-foot">
@@ -102,10 +112,10 @@
     <div class="system-panel-body">
       <!-- 服务状态（与启动台英雄卡同步渲染） -->
       <section id="panel-status" class="progress-card">
-        <div class="progress-icon" id="panel-status-icon">F</div>
+        <div class="progress-icon" id="panel-status-icon">N</div>
         <div class="progress-body">
-          <div class="progress-text" id="panel-status-text">正在安装环境与模型</div>
-          <div class="progress-desc" id="panel-status-desc">已连接你的模型与运行环境。</div>
+          <div class="progress-text" id="panel-status-text">正在准备运行环境</div>
+          <div class="progress-desc" id="panel-status-desc">正在准备运行环境与生成资源，请保持网络连接。</div>
           <div class="progress-track"><div class="progress-bar" id="panel-status-bar"></div></div>
         </div>
         <span id="service-timer" class="service-timer" style="display:none">00:00</span>
