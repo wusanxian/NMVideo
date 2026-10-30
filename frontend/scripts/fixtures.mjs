@@ -66,7 +66,39 @@ export const FIXTURES = {
       outputs: { path: 'D:\\work\\NMVideo\\backend\\outputs', size_gb: 3.4, files: 260 },
     },
     disk: { free_gb: 116.1, total_gb: 300 },
-    hardware: { gpu_name: 'NVIDIA GeForce RTX 4060', vram_gb: 8, free_vram_gb: 1.9, ram_gb: 32, available_ram_gb: 17.3, device: 'cuda' },
+    hardware: {
+      gpu_name: 'NVIDIA GeForce RTX 4060', vram_gb: 8, free_vram_gb: 1.9, ram_gb: 32,
+      available_ram_gb: 17.3, device: 'cuda', compute_cap: 'sm_89', disk_free_gb: 116.1,
+      torch_cuda_available: true, wan_model_id: 'ti2v-5b', wan_quant: 'fp8',
+    },
+    // 引擎推荐：本机 8G/32G 的真实结论——H3 内存不够，落到 Wan 2.2
+    recommend: {
+      recommended: 'wan22',
+      summary: 'H3 需 52GB 内存 / 139GB 磁盘，本机 32GB 内存 / 116GB 磁盘不满足 → 推荐 Wan 2.2 TI2V-5B',
+      options: [
+        {
+          id: 'h3', name: 'MiniMax H3', subtitle: '画质旗舰 · 走 ComfyUI 通道',
+          available: false, tier: 'int4', tier_label: 'int4（不可用）',
+          weights_gb: 37.8, need_ram_gb: 52, need_disk_gb: 139, max_pixels: 196608,
+          note: 'int4 需要 52GB 内存，当前 32GB。',
+          blockers: ['内存不足：即使 int4 量化也要约 38GiB 权重常驻内存（含余量 52GiB），当前可用 32GiB。'],
+        },
+        {
+          id: 'wan22', name: 'Wan 2.2 TI2V-5B', subtitle: '低显存主力 · 480p / 5 秒',
+          available: true, tier: 'fp8', tier_label: 'fp8',
+          weights_gb: 0, need_ram_gb: 0, need_disk_gb: 0, max_pixels: 0,
+          note: 'ti2v-5b · fp8 量化 · 8GB 显存可跑 480p', blockers: [],
+        },
+      ],
+    },
+    deps: [
+      { id: 'torch', name: 'PyTorch', why: '视频生成推理底座', installed: true },
+      { id: 'diffusers', name: 'diffusers', why: 'H3 / Wan 管线', installed: true },
+      { id: 'torchao', name: 'torchao', why: '权重量化 int4/int8/fp8', installed: false },
+      { id: 'edge_tts', name: 'edge-tts', why: '神经网络配音（联网）', installed: true },
+      { id: 'pyttsx3', name: 'pyttsx3', why: '离线配音兜底（SAPI5）', installed: false },
+      { id: 'imageio_ffmpeg', name: 'imageio-ffmpeg', why: '内置 ffmpeg，合成 MP4 / 导出成片', installed: true },
+    ],
     resource: { guard: 'enforce', watchdog: true, ram_floor_gb: 1, ram_tight_gb: 2.5 },
   },
   '/api/projects': [{ id: 'demo-project', name: '测试项目', description: '用于渲染验收的样例项目', created_at: '2026-10-27T10:00:00' }],
@@ -94,8 +126,9 @@ export const FIXTURES = {
 
 /** 页面 → 渲染完成后正文必须出现的标记 */
 export const PAGE_EXPECT = [
-  ['/', ['测试项目']],
-  ['/launch', ['工作空间', '安装信息', '正在启动 ComfyUI']],
+  // mock 是「首启现场」（launch/status ready=false），所以 / 会被引导到环境准备清单
+  ['/', ['环境准备', 'ComfyUI 地址']],
+  ['/launch', ['环境准备', '需要安装 / 对接的工具', '已按配置推荐', '打开目录']],
   ['/generate', ['ComfyUI 通道', '本机进程内通道', 'AnimeDiff']],
   ['/queue', ['雨夜霓虹街景', '已自动降档']],
   ['/gallery', ['雨夜霓虹街景']],

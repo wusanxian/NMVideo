@@ -83,7 +83,7 @@ const showOfflineCard = computed(() => !backendOnline.value)
 // ---------- 侧栏导航（按创作流：作品 → 剧本 → 资产 → 生成 → 剪辑 → 声音 → 设置） ----------
 const pid = computed(() => projectStore.currentProjectId)
 const navItems = computed(() => [
-  { icon: '🚀', label: '启动', to: '/launch', route: '/launch' },
+  { icon: '🚀', label: '环境准备', to: '/launch', route: '/launch' },
   { icon: '📚', label: '小说改编', to: '/novel', route: '/novel' },
   { icon: '🗂', label: '我的作品', to: '/projects', route: '/projects' },
   { icon: '📖', label: '剧本与分镜', tab: 'shots', needsProject: true },
@@ -144,6 +144,21 @@ onMounted(async () => {
   waitTimer = setInterval(() => {
     if (!backendOnline.value) waitingSec.value += 1
   }, 1000)
+
+  // 首次打开：环境没准备好就直接落到「环境准备」清单。
+  // 只在真的落在首页（/）时生效——用户点去别处后不该被弹回来。
+  // 必须先等初始导航解析完：onMounted 时 currentRoute 还是 START_LOCATION（path 为 '/'），
+  // 直接读 route.path 会把深链接（/generate、/settings…）全判成首页并跳走。
+  await router.isReady()
+  const landing = router.currentRoute.value.path
+  if (backendOnline.value && landing === '/') {
+    try {
+      const st = await api.launchStatus()
+      if (!st.ready) router.replace('/launch')
+    } catch {
+      /* 探测失败不打扰用户，留在首页 */
+    }
+  }
 })
 
 onUnmounted(() => {

@@ -33,6 +33,10 @@ export const api = {
   health: () => request('/health'),
   // refresh=true 跳过服务端的探测缓存（「重新检测」按钮用，轮询时不带）
   launchStatus: (refresh = false) => request(`/launch/status${refresh ? '?refresh=1' : ''}`),
+  // 打开受管目录（outputs / models / backend / project）：后端在本机跑，
+  // 直接拉起系统文件管理器，浏览器端同样可用
+  openFolder: (key = 'outputs') =>
+    request('/launch/open-folder', { method: 'POST', body: JSON.stringify({ key }) }),
   engines: () => request('/engines'),
   jobs: () => request('/jobs?limit=200'),
   createJob: (data) => request('/jobs', { method: 'POST', body: JSON.stringify(data) }),
