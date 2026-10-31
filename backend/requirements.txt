@@ -12,7 +12,11 @@ diffusers>=0.41         # MiniMaxH3ModularPipeline / MiniMaxH3Transformer3DModel
 transformers>=5.0       # H3 的文本编码器是 Qwen3VLForConditionalGeneration（Qwen3-VL，需 5.x）
 accelerate>=1.10        # H3 的 cpu_offload_with_hook / group offloading 链
 safetensors>=0.4
-torchao>=0.9          # Wan 引擎权重量化（fp8/int8），H3 的 fp8 也走它；缺失时自动跳过量化
+# ⚠️ torchao 必须卡上限：0.17+ 在 import 时就要 torch.utils._pytree.register_constant
+#    （torch 2.7 才有），torch 2.6 装上去会 AttributeError。而这个错会被 diffusers
+#    包成「Could not import module UMT5EncoderModel」，看起来像缺模型缺组件，极难定位。
+#    cu124 轮子最高只到 torch 2.6，所以在 torch 升到 2.7+ 之前不要放开这个上限。
+torchao>=0.9,<0.17    # Wan 引擎权重量化（fp8/int8），H3 的 fp8 也走它；缺失时自动跳过量化
 
 # 工具库
 pillow>=10.0

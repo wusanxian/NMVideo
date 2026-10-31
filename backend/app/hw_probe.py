@@ -93,20 +93,32 @@ def _win_memory_gb() -> tuple:
 
 
 def _query_gpu():
-    """nvidia-smi 查询显卡名与显存；无卡或命令不存在返回 None。"""
-    if not shutil.which("nvidia-smi"):
-        return None
+    """显卡名与显存：优先 nvidia-smi，失败时用 torch 兜底；都没有返回 None。
+
+    为什么要有 torch 兜底：真机遇到过 `nvidia-smi` 报 `Failed to initialize NVML`
+    而 CUDA 完全可用（torch 报 8GB / sm_89、矩阵乘正常）的情况。只认 nvidia-smi
+    会把这块能出片的卡报成「0GB 显存」，于是 H3 被判死、量化档位全错。
+    探测工具坏了不等于显卡坏了。
+    """
+    if shutil.which("nvidia-smi"):
+        try:
+            out = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                name, mem = out.stdout.strip().splitlines()[0].split(",")
+                return name.strip(), float(mem.strip()) / 1024.0
+        except Exception:
+            pass
     try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if out.returncode != 0 or not out.stdout.strip():
-            return None
-        name, mem = out.stdout.strip().splitlines()[0].split(",")
-        return name.strip(), float(mem.strip()) / 1024.0
+        import torch
+        if torch.cuda.is_available():
+            prop = torch.cuda.get_device_properties(0)
+            return (prop.name or "NVIDIA GPU"), prop.total_memory / 2**30
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _query_ram():
