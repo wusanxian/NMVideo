@@ -230,6 +230,10 @@ class HWInfo:
     ram_total_gb: float = 0.0
     ram_avail_gb: float = 0.0
     disk_free_gb: float = 0.0
+    # 显存是否真的读到了。False = 知道有 N 卡但读不出容量（nvidia-smi 与 torch
+    # 都失灵时的兜底），此时绝不能当成「0GB 显存」或「没有显卡」来判断。
+    vram_known: bool = True
+    gpu_source: str = ""       # 探测来源：smi / torch / wmi，出问题时报给用户
 
     @property
     def max_vram_gb(self) -> float:
@@ -265,23 +269,80 @@ def probe_hardware(rt: Path | None = None) -> HWInfo:
         hw.disk_free_gb = shutil.disk_usage(anchor).free / 2**30
     except Exception:
         pass
+    gpus, source, known = _probe_gpus(rt)
+    hw.gpus = gpus
+    hw.gpu_source = source
+    hw.vram_known = known
+    return hw
+
+
+def _probe_gpus(rt: Path | None = None):
+    """三级探测显卡：nvidia-smi → torch → 系统显卡列表。
+
+    为什么不能只靠 nvidia-smi：真机上遇到过 `Failed to initialize NVML`，
+    nvidia-smi 直接失效，但 CUDA 完全可用（torch 报 8GB/sm_89、矩阵乘正常）。
+    只认 nvidia-smi 会把这种机器判成「没有显卡」→ 去装 CPU 版 torch，
+    把已经装好的 CUDA 环境覆盖掉。探测工具坏了不等于显卡坏了。
+
+    返回 (gpus, source, vram_known)。
+    """
+    # ① nvidia-smi：最快最准，能拿到显存容量
     nvsmi = shutil.which("nvidia-smi")
     if nvsmi:
         try:
-            out = subprocess.run(
+            done = subprocess.run(
                 [nvsmi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=10,
-            ).stdout
-            for line in out.strip().splitlines():
+            )
+            gpus = []
+            for line in (done.stdout or "").strip().splitlines():
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) >= 2:
                     try:
-                        hw.gpus.append((parts[0], int(parts[1]) / 1024.0))
+                        gpus.append((parts[0], int(parts[1]) / 1024.0))
                     except ValueError:
                         pass
+            if gpus:
+                return gpus, "smi", True
         except Exception:
             pass
-    return hw
+
+    # ② torch：用 runtime 里的 venv 问一次 torch（已装 torch 时才可能成功）
+    if rt is not None:
+        py = rt / "venv" / "Scripts" / "python.exe"
+        if py.exists():
+            code = (
+                "import torch;"
+                "print(torch.cuda.is_available());"
+                "print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else '');"
+                "print(int(torch.cuda.get_device_properties(0).total_memory) if torch.cuda.is_available() else 0)"
+            )
+            try:
+                done = subprocess.run([str(py), "-c", code],
+                                      capture_output=True, text=True, timeout=90)
+                lines = (done.stdout or "").strip().splitlines()
+                if len(lines) >= 3 and lines[0].strip() == "True":
+                    gpus = [(lines[1].strip() or "NVIDIA GPU", int(lines[2]) / 2**30)]
+                    return gpus, "torch", True
+            except Exception:
+                pass
+
+    # ③ 系统显卡列表：只知道「有张 N 卡」，拿不到显存（WMI 的 AdapterRAM 是 32 位，不准）
+    try:
+        done = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_VideoController | "
+             "Where-Object { $_.Name -match 'NVIDIA' } | "
+             "Select-Object -ExpandProperty Name"],
+            capture_output=True, text=True, timeout=25,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        names = [n.strip() for n in (done.stdout or "").splitlines() if n.strip()]
+        if names:
+            return [(names[0], 0.0)], "wmi", False
+    except Exception:
+        pass
+    return [], "", True
 
 
 def show_hw_report(hw: HWInfo):
@@ -291,7 +352,10 @@ def show_hw_report(hw: HWInfo):
     print(f"  磁盘   : 可用 {hw.disk_free_gb:.0f} GB")
     if hw.gpus:
         for name, vram in hw.gpus:
-            print(f"  GPU   : {name} · {vram:.0f} GB 显存")
+            if hw.vram_known:
+                print(f"  GPU   : {name} · {vram:.0f} GB 显存")
+            else:
+                print(f"  GPU   : {name} · 显存读取失败（探测工具异常，显卡本身可用）")
     else:
         print("  GPU   : 未检测到 NVIDIA 显卡（将走 CPU 路径）")
 
@@ -309,6 +373,15 @@ class Plan:
 def choose_plan(hw: HWInfo) -> Plan:
     if hw.gpus:
         vram = hw.max_vram_gb
+        # 显存读不出来（nvidia-smi 挂了、torch 还没装、只有系统显卡列表）：
+        # 明确知道有 N 卡，但不知道容量 → 选最省显存的档，且保持 CUDA 版 torch。
+        # 绝不能掉进下面「显存偏小 / 没显卡」的判断，那会让用户被装 CPU 版 torch。
+        if not hw.vram_known:
+            return Plan("wan-ti2v", "cuda", "auto", "sequential",
+                        f"检测到 {hw.gpus[0][0]}，但显存容量读不出来"
+                        "（显卡探测工具异常，显卡本身可用）→ 按最省显存的 TI2V-5B + "
+                        "逐层卸载处理，并保留 CUDA 版 PyTorch。"
+                        "若出片报显存不足，请先重装/重启显卡驱动后重新检测")
         # 比较用「带容差的显存」：8GB 卡实机是 7.996GB（8188MiB），
         # 严格 >= 8 会把它判成显存不足。显示仍用真实值，别骗用户。
         veff = vram + VRAM_TOLERANCE_GB

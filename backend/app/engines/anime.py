@@ -49,6 +49,24 @@ class AnimeEngine(BaseEngine):
         from .local_runtime import unload_pipeline
         unload_pipeline(self)
 
+    def describe(self) -> dict:
+        """按模型是否下载报状态。
+
+        之前直接用 meta.status（写死 ready），模型没下载也显示「就绪」，
+        用户点进去才在加载时抛 EngineUnavailable —— 界面在说谎。
+        """
+        has_model = (ANIME_MODEL_DIR / "model_index.json").exists()
+        return {
+            "id": self.meta.id,
+            "name": self.meta.name,
+            "description": self.meta.description,
+            "status": "ready" if has_model else "unavailable",
+            "note": "" if has_model else (
+                f"未找到动漫底模（{ANIME_MODEL_DIR}，约 5GB）。"
+                "下载完成后即可使用，不需要重装软件"
+            ),
+        }
+
     # ---------- 模型加载（懒加载 + 单例缓存） ----------
     def _get_pipe(self, on_progress):
         with self._load_lock:
