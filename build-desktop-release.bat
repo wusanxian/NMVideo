@@ -8,7 +8,7 @@ REM   3. GH_TOKEN 环境变量已设置（electron-builder 发布用）
 REM      set GH_TOKEN=ghp_xxx   （GitHub Settings - Developer settings - Tokens）
 REM ============================================================
 setlocal
-cd /d %~dp0..
+cd /d "%~dp0"
 
 REM 宿主是 Electron 应用时（如 IDE 桌面版）会带 ELECTRON_RUN_AS_NODE，需清除
 set "ELECTRON_RUN_AS_NODE="
