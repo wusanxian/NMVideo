@@ -87,6 +87,7 @@ echo    请选择要下载的模型：
 echo      [1] AnimeDiff 动漫引擎（约 3.6 GB，CPU 可跑，分钟级出片）
 echo      [2] Wan 2.2 TI2V-5B（约 32 GB，8GB 显存首选，画质标杆级）
 echo      [3] 两者都下（约 36 GB）
+echo    提示：Wan 2.2 不会自动下载；打包版也可在软件内「设置 - 模型」里下载或续传
 set /p MODEL_CHOICE=    输入序号（默认 1）:
 if "%MODEL_CHOICE%"=="2" (
     %VPY% backend\scripts\download_models.py --wan-ti2v-5b

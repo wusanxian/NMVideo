@@ -14,6 +14,7 @@
     <div class="set-lead">{{ lead }}</div>
 
     <ServicesPanel v-if="tab === 'services'" />
+    <ModelsPanel v-else-if="tab === 'models'" />
     <EnvPanel v-else-if="tab === 'env'" :launch="launch" @refresh="loadLaunch" />
     <PrefsPanel v-else :launch="launch" @refresh="loadLaunch" />
   </div>
@@ -25,21 +26,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import Segmented from '../components/Segmented.vue'
 import ServicesPanel from '../components/settings/ServicesPanel.vue'
+import ModelsPanel from '../components/settings/ModelsPanel.vue'
 import EnvPanel from '../components/settings/EnvPanel.vue'
 import PrefsPanel from '../components/settings/PrefsPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
 
-const TABS = ['services', 'env', 'prefs']
+const TABS = ['services', 'models', 'env', 'prefs']
 const tabs = [
   { value: 'services', label: '服务' },
+  { value: 'models', label: '模型' },
   { value: 'env', label: '环境' },
   { value: 'prefs', label: '偏好' },
 ]
 
 // 兼容旧链接：/settings?tab=comfy 之类的写法一律归到 env
 function normalize(v) {
+  if (v === 'models' || v === 'model') return 'models'
   if (v === 'comfy' || v === 'env') return 'env'
   if (v === 'prefs' || v === 'preferences') return 'prefs'
   return 'services'
@@ -50,6 +54,7 @@ const launch = ref(emptyLaunch())
 
 const lead = computed(() => ({
   services: '四类模型服务各自独立检测；配置存在后端 settings.json，重启不丢。',
+  models: '权重只在你点了「下载」时才下；未下载的模型会如实标出来，不会偷偷占用磁盘。',
   env: '这里的路径与状态都来自本机实况，改完地址记得点保存。',
   prefs: '界面、更新与存储。版本号来自打包信息，不是写死的。',
 }[tab.value]))

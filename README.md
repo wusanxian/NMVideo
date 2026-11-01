@@ -143,6 +143,9 @@ python -m venv .venv
 .venv/Scripts/python.exe scripts/download_models.py --wan-ti2v-5b  # Wan 2.2（约 32GB）
 ```
 
+> Wan 2.2 的权重**默认不下载**：启动器按硬件推荐引擎，但不会顺手拉几十 GB。
+> 打包版在「设置 → 模型」里点一下才下（支持断点续传 / 取消）；想跳过界面就用上面的命令。
+
 前端（可选，有 Node.js 时）：
 
 ```bash

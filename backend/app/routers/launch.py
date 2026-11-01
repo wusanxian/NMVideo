@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from .. import h3_freevideo
 from .. import hw_probe
+from .. import model_store
 from .. import resource_guard
 from .. import resource_watch
 from ..comfyui import ComfyUIClient
@@ -145,6 +146,10 @@ def _recommend_engine(hw: dict) -> dict:
     cuda_ok = bool(hw.get("torch_cuda_available")) or str(hw.get("device") or "") == "cuda"
     model_id = str(hw.get("model_id") or "ti2v-5b")
     quant = str(hw.get("quant") or "none")
+    wan_item = model_store.get_item(
+        "wan-t2v-a14b" if model_id == "t2v-a14b" else "wan-ti2v-5b")
+    wan_weights = model_store.wan_ready(model_id)
+    wan_weights_gb = wan_item.approx_gb if wan_item else 32.0
     if cuda_ok:
         wan_note = f"{model_id} · {quant} 量化 · 8GB 显存可跑 480p"
     else:
@@ -192,14 +197,22 @@ def _recommend_engine(hw: dict) -> dict:
         "available": cuda_ok,
         "tier": quant,
         "tier_label": quant,
-        "weights_gb": 0.0,
+        "weights_gb": wan_weights_gb,
         "need_ram_gb": 0,
         "need_disk_gb": 0,
         "max_pixels": 0,
         "note": wan_note,
+        # 权重默认不下载：这是可选档，几十 GB 值不值得占磁盘由用户决定。
+        # 界面据此显示「未下载」角标并引导到「设置 → 模型」，不偷偷拉。
+        "weights_ready": wan_weights,
         "blockers": [] if cuda_ok else [wan_note],
     }
-
+    if cuda_ok and not wan_weights:
+        wan_option["note"] = (
+            f"权重未下载（约 {wan_weights_gb:.0f}GB）· 到「设置 → 模型」里自己点下载，"
+            f"下完即可出片；本程序不会自动拉这份权重"
+        )
+    
     recommended = "h3" if h3_ok else "wan22"
     if h3_ok and fv.disk_tight:
         summary = (
@@ -212,7 +225,10 @@ def _recommend_engine(hw: dict) -> dict:
             f"需下载 {fv.total_gib:.0f}GB 素材）"
         )
     elif cuda_ok:
-        summary = f"H3 这次跑不了：{h3_blockers[0]} → 推荐 Wan 2.2 TI2V-5B"
+        summary = f"H3 这次跑不了：{h3_blockers[0]} → 可用「低显存 · 快速出片」档"
+        if not wan_weights:
+            summary += (f"，但它的权重默认不下载（约 {wan_weights_gb:.0f}GB），"
+                        f"到「设置 → 模型」里自己点")
     else:
         summary = "未检测到可用 CUDA，先把显卡 / torch 修好再看引擎"
 

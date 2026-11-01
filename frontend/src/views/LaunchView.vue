@@ -121,6 +121,13 @@
             权重 {{ opt.weights_gb }}GiB · 需内存 {{ opt.need_ram_gb }}GB · 需磁盘 {{ opt.need_disk_gb }}GB
             <template v-if="opt.max_pixels"> · 画布上限 {{ opt.max_pixels }}px</template>
           </div>
+          <!-- 可选档的权重默认不下载：没下就直说，并给一条去的路，不偷偷拉几十 GB -->
+          <div v-else-if="opt.weights_ready === false" class="opt-meta">
+            权重未下载（约 {{ opt.weights_gb }}GB）·
+            <router-link class="opt-dl" :to="{ path: '/settings', query: { tab: 'models' } }">
+              去「设置 → 模型」自己下
+            </router-link>
+          </div>
         </button>
       </div>
 
@@ -478,10 +485,12 @@ function pickEngine(opt) {
   if (!opt.available) return
   pref.value = opt.id
   setEnginePref(opt.id)
-  engineMsg.value = `已设为默认引擎：${opt.name}`
+  engineMsg.value = opt.weights_ready === false
+    ? `已设为默认引擎：${opt.name}（权重还没下，出片前先去「设置 → 模型」下载约 ${opt.weights_gb}GB）`
+    : `已设为默认引擎：${opt.name}`
   setTimeout(() => {
     if (engineMsg.value.startsWith('已设为默认引擎')) engineMsg.value = ''
-  }, 2500)
+  }, opt.weights_ready === false ? 6000 : 2500)
 }
 
 async function openFolder(key) {
@@ -665,6 +674,8 @@ onUnmounted(() => {
   font-family: ui-monospace, monospace;
   margin-top: 6px;
 }
+.opt-dl { color: var(--accent); text-decoration: none; border-bottom: 1px dashed currentColor; }
+.opt-dl:hover { color: var(--accent-2); }
 
 /* ---------- 资源包清单（插件通道要下载的东西） ---------- */
 .pack-box {

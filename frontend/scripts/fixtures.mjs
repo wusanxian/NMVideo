@@ -100,8 +100,11 @@ export const FIXTURES = {
         {
           id: 'wan22', label: '低显存 · 快速出片', name: 'Wan 2.2 TI2V-5B', subtitle: '480p / 5 秒档 · 8GB 显存直接跑，出片快',
           available: true, tier: 'fp8', tier_label: 'fp8',
-          weights_gb: 0, need_ram_gb: 0, need_disk_gb: 0, max_pixels: 0,
-          note: 'ti2v-5b · fp8 量化 · 8GB 显存可跑 480p', blockers: [],
+          weights_gb: 32, need_ram_gb: 0, need_disk_gb: 0, max_pixels: 0,
+          // 权重默认不下载：没下就如实说，并给一条去「设置 → 模型」的路
+          weights_ready: false,
+          note: '权重未下载（约 32GB）· 到「设置 → 模型」里自己点下载，下完即可出片；本程序不会自动拉这份权重',
+          blockers: [],
         },
       ],
       downloads: {
@@ -134,7 +137,26 @@ export const FIXTURES = {
     idle_gb: 0,
     items: [{ id: 'wan-ti2v-5b', size_gb: 29.0, engine: 'wan22', in_use: true }],
   },
-  '/api/projects': [{ id: 'demo-project', name: '测试项目', description: '用于渲染验收的样例项目', created_at: '2026-10-27T10:00:00' }],
+  '/api/projects': [{ id: 'demo-project', name: '测试项目', description: '用于渲染验收的样例项目', created_at: '2026-10-27T10:00:00' }],  // 模型库：权重默认不下载，界面上要能看出「未下载」和「点哪儿下」
+  '/api/models': {
+    models_dir: 'D:\\work\\NMVideo\\backend\\models',
+    disk_free_gb: 116.1,
+    downloading: false,
+    items: [
+      {
+        id: 'wan-ti2v-5b', label: '低显存 · 快速出片权重',
+        detail: '8GB 显存直接跑 480p / 5 秒档；本程序不再默认下载，需要时自己点',
+        engine: 'wan22', repo: 'Wan-AI/Wan2.2-TI2V-5B-Diffusers', approx_gb: 32,
+        state: 'absent', size_gb: 0, path: 'D:\\work\\NMVideo\\backend\\models\\wan-ti2v-5b', task: null,
+      },
+      {
+        id: 'anime', label: '动漫引擎权重',
+        detail: '动漫风格底模 + 运动模块，CPU 也能跑（分钟级出片），约 5GB',
+        engine: 'anime', repo: 'dreamlike-art/dreamlike-anime-1.0', approx_gb: 5,
+        state: 'ready', size_gb: 4.8, path: 'D:\\work\\NMVideo\\backend\\models\\anime-diffusers', task: null,
+      },
+    ],
+  },
   '/api/projects/demo-project': PROJECT,
   '/api/gallery': [JOB],
   '/api/novels': [{ id: 'nv_1', title: '长夜将至', author: '测试', chapter_count: 3, status: 'imported', created_at: '2026-10-27T10:00:00' }],
@@ -172,6 +194,8 @@ export const PAGE_EXPECT = [
   // 设置页默认停在「服务」；老链接 /services 会重定向到这里
   ['/settings', ['设置', '视频工作流 · ComfyUI', 'AI 助手接入 · MCP']],
   ['/settings?tab=env', ['设置', '兼容性', '资源守卫档位']],
+  // 模型库：可选档的权重默认不下载，页面必须把「未下载」和「点哪儿下」讲清楚
+  ['/settings?tab=models', ['设置', '模型库', '低显存 · 快速出片权重', '下载约 32GB']],
   ['/settings?tab=prefs', ['设置', '检查更新', '当前版本']],
   ['/services', ['设置', '视频工作流 · ComfyUI']],
 ]

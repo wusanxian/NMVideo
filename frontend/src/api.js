@@ -41,6 +41,10 @@ export const api = {
   // 它要对每个权重目录 os.walk 一次，只有「磁盘不够」时前端才按需调。
   launchStorage: (recommended = '') =>
     request(`/launch/storage${recommended ? `?recommended=${encodeURIComponent(recommended)}` : ''}`),
+  // 模型库：清单 / 本机状态 / 手动下载。下载只由用户点击触发，后端不做自动补全
+  listModels: () => request('/models'),
+  downloadModel: (id) => request(`/models/${id}/download`, { method: 'POST' }),
+  cancelModelDownload: (id) => request(`/models/${id}/cancel`, { method: 'POST' }),
   engines: () => request('/engines'),
   jobs: () => request('/jobs?limit=200'),
   createJob: (data) => request('/jobs', { method: 'POST', body: JSON.stringify(data) }),

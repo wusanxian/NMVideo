@@ -402,7 +402,8 @@ def choose_plan(hw: HWInfo) -> Plan:
             return Plan("wan-ti2v", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存够跑 H3，"
                         f"但磁盘只剩 {hw.disk_free_gb:.0f}GB，素材要 {H3_PLUGIN_DISK_GIB:.0f}GB，"
-                        f"还差 {short:.0f}GB → 先用 TI2V-5B 出片，腾出空间后可切回 H3")
+                        f"还差 {short:.0f}GB → 先腾空间；急用可在「设置 → 模型」里"
+                        f"自己下低显存档（约 32GB，不自动下载）")
         # 原生兜底（进程内 diffusers，123.8GiB 权重）：内存决定档位，52GB 起步。
         # 只有内存极大、磁盘也够的机器才可能走到这里（插件通道磁盘要求更低，
         # 正常早就命中上面了），保留它是为了「有明确理由不要插件通道」的场景。
@@ -449,6 +450,9 @@ def show_plan(plan: Plan, hw: HWInfo):
     if plan.model == "h3":
         print(f"  素材   : 约 {H3_PLUGIN_TOTAL_GIB:.0f}GB，由 ComfyUI 侧准备（本程序不重复下）")
         print("  权重摆放: 插件分块流式（显存→内存→磁盘，装不下的块回读磁盘）")
+    elif plan.model in ("wan-ti2v", "wan-a14b"):
+        gb = 32 if plan.model == "wan-ti2v" else 119
+        print(f"  权重   : 约 {gb}GB，默认不下载——出片前在「设置 → 模型」里自己点")
     elif plan.quantize in ("int8", "fp8", "auto"):
         q = {"auto": "按显卡自动（40 系 fp8 / 30 系 int8）", "int8": "int8 权重量化"}[plan.quantize]
         print(f"  量化   : {q}")
@@ -634,13 +638,28 @@ def pip_install(py: Path, args: list, desc: str):
 
 
 # ---------------- 模型下载 ----------------
-def ensure_models(rt: Path, py: Path, plan: Plan, hw: HWInfo):
+def ensure_models(rt: Path, py: Path, plan: Plan, hw: HWInfo, explicit: bool = False):
+    """只替用户准备「绕不开的那一份」，其余一律等用户自己点。
+
+    Wan 2.2 权重是 32GB / 119GB 量级，值不值得占这块磁盘是用户的决定；
+    自动决策可以推荐它，但不能顺手把几十 GB 拉下来——磁盘一紧，用户还得
+    自己找是哪个目录吃的。所以：
+      - ``auto`` 推出 Wan 时：只提示、不下载，去界面里下；
+      - 用户显式 ``--model wan-*``：那是自己点名要的，照下。
+    """
     if plan.model == "h3":
         # 插件通道的权重必须落在 ComfyUI 的 models 目录才有意义（谁跑推理谁放权重），
         # NMVideo 再下一份 92GB 只会白占磁盘、还和插件版本对不上。
         ui.step("生成素材：由 ComfyUI 侧准备")
         ui.info(f"H3 素材共 {H3_PLUGIN_TOTAL_GIB:.0f}GB，在 ComfyUI 里装一次即可")
         ui.info("本程序不重复下载；装好后在「ComfyUI 对接」里填地址即可出片")
+        return
+    if plan.model in ("wan-ti2v", "wan-a14b") and not explicit:
+        gb = 32 if plan.model == "wan-ti2v" else 119
+        ui.step("模型权重：这一步留给你自己决定")
+        ui.info(f"{PLAN_LABEL[plan.model].split('（')[0]} 的权重约 {gb}GB，本程序不自动下载")
+        ui.info("要出片：打开软件 →「设置 → 模型」点「下载」（支持断点续传）")
+        ui.info(f"想现在就下：重新运行本 exe 并加 --model {plan.model}")
         return
     if plan.model == "h3_native":
         repo_args = ["--h3"]  # 原生权重：走 HF 缓存，约 124GiB，耗时长
@@ -817,7 +836,7 @@ def main():
 
     if not args.no_download:
         emit_state("models")
-        ensure_models(rt, py, plan, hw)
+        ensure_models(rt, py, plan, hw, explicit=args.model != "auto")
     else:
         ui.warn("已跳过模型下载（--no-download）")
 
