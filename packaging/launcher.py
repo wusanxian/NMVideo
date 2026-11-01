@@ -88,15 +88,18 @@ MIN_PY_VER = (3, 10)
 #   - 插件通道（正路，引擎 h3）：ComfyUI + FreeVideo 节点，权重按 50 个 transformer
 #     块在「显存 → 内存 → 磁盘」之间摆放，装不下的块每步回读磁盘，文本编码器
 #     独立进程跑完即退 → 8GB 显存 / 16GB 内存就能跑，只是慢。四个素材包
-#     92.34GiB，含下载缓存余量要 100.3GiB 磁盘。
+#     49.50GiB，含下载余量要 57.5GiB 磁盘。
+#     （2026-11-01 真机校正：原来按 model_files.json 的 bf16 分片记成 92.34GiB，
+#      实际跑的是 int8-convrot 预量化包 21.35GiB，原版 bf16 transformer 从不下载，
+#      见 backend/app/h3_freevideo.py 的模块说明。用旧值会把 97GB 可用盘判死。）
 #   - 原生通道（兜底，引擎 h3_native）：本进程 diffusers 加载 bf16 原始权重
 #     123.8GiB，内存决定档位，52GB 内存起步、139GB 磁盘。
 # 早先只按原生口径判，于是 8GB/32GB 的机器被告知「跑不了 H3、给你下 Wan」——
 # 那 30GB 白下了，这是 0.1.9 真机跑出来的坑。
 H3_PLUGIN_MIN_VRAM = 8.0
 H3_PLUGIN_MIN_RAM = 16.0
-H3_PLUGIN_TOTAL_GIB = 92.34
-H3_PLUGIN_DISK_GIB = 100.3
+H3_PLUGIN_TOTAL_GIB = 49.5
+H3_PLUGIN_DISK_GIB = 57.5
 
 # 门槛比较的容差（GB）。显卡标称 8GB 实机是 8188MiB ≈ 7.996GB，
 # nvidia-smi 报 memory.total=8188 → /1024 后严格 `>= 8.0` 为 False，
@@ -387,14 +390,14 @@ def choose_plan(hw: HWInfo) -> Plan:
         veff = vram + VRAM_TOLERANCE_GB
         # 正路：H3 插件通道（ComfyUI + FreeVideo 节点）。门槛只有 8GB 显存 /
         # 16GB 内存 —— 权重按块在三级存储间摆放，装不下的块回读磁盘，所以
-        # 内存不是瓶颈，只有「磁盘放不放得下 92GB 素材」才是。素材由 ComfyUI
+        # 内存不是瓶颈，只有「磁盘放不放得下 49.5GB 素材」才是。素材由 FreeVideo
         # 侧下载（谁跑推理谁放权重），本程序不重复下一份。
         if (veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb >= H3_PLUGIN_MIN_RAM
                 and hw.disk_free_gb >= H3_PLUGIN_DISK_GIB):
             return Plan("h3", "cuda", "auto", "none",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存 + "
                         f"{hw.disk_free_gb:.0f}GB 磁盘：可跑 H3（分块流式，慢但画质最好）。"
-                        f"素材 {H3_PLUGIN_TOTAL_GIB:.0f}GB 在 ComfyUI 里装一次即可，"
+                        f"素材 {H3_PLUGIN_TOTAL_GIB:.0f}GB 在 FreeVideo 插件里装一次即可，"
                         "本程序不重复下载")
         # 显存内存都够、只差磁盘：说清差多少，不要偷偷换成 Wan（用户会白下 30GB）
         if veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb >= H3_PLUGIN_MIN_RAM:
@@ -431,7 +434,7 @@ def choose_plan(hw: HWInfo) -> Plan:
 
 
 PLAN_LABEL = {
-    "h3": "画质优先 · H3 插件通道（ComfyUI + FreeVideo 节点 · 分块流式 · 素材约 92GB，ComfyUI 侧准备）",
+    "h3": f"画质优先 · H3 插件通道（ComfyUI + FreeVideo 节点 · 分块流式 · 素材约 {H3_PLUGIN_TOTAL_GIB:.0f}GB，FreeVideo 侧准备）",
     "h3_native": "原生兜底 · H3 进程内推理（diffusers · bf16 约 124GiB · 内存决定档位）",
     "wan-a14b": "Wan 2.2 T2V-A14B（双专家 MoE · 电影级画质 · 约 119GB 模型）",
     "wan-ti2v": "Wan 2.2 TI2V-5B（5B 统一模型 · 8GB 显存甜点位 · 约 32GB 模型）",
@@ -448,7 +451,7 @@ def show_plan(plan: Plan, hw: HWInfo):
     else:
         print("  PyTorch: CPU 版（约 200MB）")
     if plan.model == "h3":
-        print(f"  素材   : 约 {H3_PLUGIN_TOTAL_GIB:.0f}GB，由 ComfyUI 侧准备（本程序不重复下）")
+        print(f"  素材   : 约 {H3_PLUGIN_TOTAL_GIB:.0f}GB，由 FreeVideo 侧准备（本程序不重复下）")
         print("  权重摆放: 插件分块流式（显存→内存→磁盘，装不下的块回读磁盘）")
     elif plan.model in ("wan-ti2v", "wan-a14b"):
         gb = 32 if plan.model == "wan-ti2v" else 119
@@ -648,10 +651,11 @@ def ensure_models(rt: Path, py: Path, plan: Plan, hw: HWInfo, explicit: bool = F
       - 用户显式 ``--model wan-*``：那是自己点名要的，照下。
     """
     if plan.model == "h3":
-        # 插件通道的权重必须落在 ComfyUI 的 models 目录才有意义（谁跑推理谁放权重），
-        # NMVideo 再下一份 92GB 只会白占磁盘、还和插件版本对不上。
-        ui.step("生成素材：由 ComfyUI 侧准备")
-        ui.info(f"H3 素材共 {H3_PLUGIN_TOTAL_GIB:.0f}GB，在 ComfyUI 里装一次即可")
+        # 插件通道的权重由 FreeVideo 自己管：实际跑的是它的 int8-convrot 预量化包
+        # （prepared/edge-*）与 models/vdn、models/encoder，不在 ComfyUI 标准 models 目录。
+        # NMVideo 再下一份 50GB 只会白占磁盘、还和插件版本对不上。
+        ui.step("生成素材：由 FreeVideo 侧准备")
+        ui.info(f"H3 素材共 {H3_PLUGIN_TOTAL_GIB:.0f}GB，在 FreeVideo 里装一次即可")
         ui.info("本程序不重复下载；装好后在「ComfyUI 对接」里填地址即可出片")
         return
     if plan.model in ("wan-ti2v", "wan-a14b") and not explicit:

@@ -76,21 +76,21 @@ export const FIXTURES = {
       recommended: 'h3',
       // 口径：H3 走 ComfyUI 插件通道（FreeVideo/VDN-H3），8GB 显存 / 16GB 内存起；
       // 原生通道（52GB 内存 / 139GB 磁盘）只作为说明出现，不参与推荐。
-      summary: '推荐 MiniMax H3（ComfyUI 插件通道：8GB 显存 / 32GB 内存即可，需下载 92GB 素材）',
+      summary: '推荐 MiniMax H3（ComfyUI 插件通道：8GB 显存 / 32GB 内存即可，需下载 50GB 素材）',
       options: [
         {
           id: 'h3', label: '画质优先', name: 'MiniMax H3', subtitle: '走 ComfyUI 插件通道 · 分块流式，慢但画质最好',
           channel: 'comfyui',
           available: true, tier: 'plugin', tier_label: '插件分块流式',
-          weights_gb: 92.3, need_vram_gb: 8, need_ram_gb: 16, need_disk_gb: 100.3,
+          weights_gb: 49.5, need_vram_gb: 8, need_ram_gb: 16, need_disk_gb: 57.5,
           max_pixels: 0, disk_tight: false,
           note: '8GB 显存按块流式运行：官方实测 4060 Ti 8GB + 64GB 内存，1344×768 10 秒约 10 分钟；内存越少回读磁盘的块越多、越慢',
           blockers: [],
           packs: [
-            { id: 'video', name: '视频模型', size_gib: 61.7, why: '生成画面的主体权重，按 50 块分片，按显存/内存/磁盘分级放置' },
+            { id: 'video', name: '视频模型', size_gib: 21.4, why: '生成画面的主体权重，int8 量化后按 50 块分片，按显存/内存/磁盘分级放置' },
             { id: 'text', name: '文本编码器', size_gib: 14.6, why: '把提示词与参考图理解成模型输入，独立进程跑完即退出、不占推理内存' },
             { id: 'decoder', name: '视频与音频解码器', size_gib: 10.3, why: '把潜变量还原成画面与声音，低显存下按块流式解码' },
-            { id: 'cache', name: '采样与加速缓存', size_gib: 5.7, why: '8 步蒸馏与画质提升所需的附加权重，装上才跑得动低步数' },
+            { id: 'cache', name: '采样与加速缓存', size_gib: 3.3, why: '8 步蒸馏与画质提升所需的附加权重，装上才跑得动低步数' },
           ],
           native: {
             available: false, min_ram_gb: 52, need_disk_gb: 139,
@@ -108,12 +108,12 @@ export const FIXTURES = {
         },
       ],
       downloads: {
-        total_gib: 92.3, need_disk_gb: 100.3,
+        total_gib: 49.5, need_disk_gb: 57.5,
         packs: [
-          { id: 'video', name: '视频模型', size_gib: 61.7, why: '生成画面的主体权重' },
+          { id: 'video', name: '视频模型', size_gib: 21.4, why: '生成画面的主体权重' },
           { id: 'text', name: '文本编码器', size_gib: 14.6, why: '理解提示词与参考图' },
           { id: 'decoder', name: '视频与音频解码器', size_gib: 10.3, why: '还原画面与声音' },
-          { id: 'cache', name: '采样与加速缓存', size_gib: 5.7, why: '8 步蒸馏与画质提升' },
+          { id: 'cache', name: '采样与加速缓存', size_gib: 3.3, why: '8 步蒸馏与画质提升' },
         ],
       },
     },

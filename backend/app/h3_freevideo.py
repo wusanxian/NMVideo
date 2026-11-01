@@ -24,10 +24,29 @@
   视频与音频解码器 / 采样缓存）
 - ``docs/execution-planning.md``：50 个 transformer 块、常驻单位 432.5MB、
   文本编码器独立进程、VAE 按块流式
-- ``freevideo_engine/model_files.json`` @ ``751739e``：逐文件字节数——
-  下面 ``PACKS`` 的体积是按它加总的，不是估的
+- ``freevideo_engine/model_files.json`` @ ``751739e``：逐文件字节数
 
-体积或修订号变了改这里，并同步 ``MANIFEST_REVISION``。
+**2026-11-01 真机校正（重要，别再按 model_files.json 算）**
+
+原来照 ``model_files.json`` 把「视频模型」记成 61.73GiB（14 个 bf16 分片），
+合计 92.34GiB / 门槛 100.3GiB。真机装了 FreeVideo 之后实测，磁盘上根本不是这套：
+
+- ``models/vdn/h3-base/transformer/`` 只有 ``config.json`` + ``index.json``，
+  **一个权重分片都没有**——原版 bf16 transformer 从不下载；
+- 真正参与推理的是 ``prepared/edge-da37681f5a1f7015/int8-convrot``
+  （``OpenVDN/vdn-minimax-h3-edge`` 的 int8 预量化包，21.35GiB）。
+  ``bundle.json`` 里 ``variants`` 写着 per_tensor / rowwise 两套各 22.9GB，
+  引擎按架构自动挑一套下，所以不是 45.8GB 的双份；
+- ``sampling-cache`` 实测 2.63GiB（清单里 4.28GB 那份是未压缩条目），
+  upscaler 单文件 0.64GiB。
+
+视频链路真实落盘 **49.50GiB（53.15GB）**，比清单口径少 43GiB。用旧门槛会把
+磁盘够用的机器判成「装不下」——本机 97GB 可用就是这样被拦掉的。
+
+不参与视频、因此**不计入门槛**的两项（FreeVideo 会一并装，但本程序不强制）：
+``models/vdn/image_gen`` 16.11GiB（静图 / 角色卡）、``models/prompt-vlm`` 8.28GiB。
+
+数值来自真机逐目录字节统计，改体积时请重新量，并同步 ``MEASURED_AT``。
 """
 from dataclasses import dataclass, field
 from typing import Tuple
@@ -35,12 +54,15 @@ from typing import Tuple
 #: 体积数据对应的 FreeVideo 模型清单修订号（OpenVDN/vdn-minimax-h3 @ 751739e）
 MANIFEST_REVISION = "751739ee5b9e3ac802dca5d5111075fdaeb47885"
 
+#: 上面这组体积是在哪台机器上量的（换机器/换量化格式要重测）
+MEASURED_AT = "2026-11-01 · FreeVideo 2026.11.1.50531 · int8-convrot · G:/AI/FreeVideo"
+
 #: 官方最低配置（README：as little as 8 GB of VRAM and 16 GB of RAM）
 MIN_VRAM_GIB = 8.0
 MIN_RAM_GIB = 16.0
 
-#: 下载缓存 / 首次准备权重的余量。资源包是原始 safetensors，不额外解压，
-#: 但下载分片（partial）与插件生成的 int8 准备副产物要留位置。
+#: 磁盘余量：下载中的 .incomplete 临时文件 + 运行时补生成的采样缓存 + 出片输出。
+#: 权重包是「整个下完改名」，不会长期存在双份，所以 8GiB 够用，不必按体积翻倍。
 DISK_HEADROOM_GIB = 8.0
 
 #: 装上之后剩余少于这个值就提示「磁盘快满了」（不影响可用性）
@@ -53,45 +75,50 @@ class Pack:
 
     id: str
     name: str
-    size_gib: float
     why: str
-    #: 精确字节数（来自 model_files.json），用于总量核算与「差多少」的提示
+    #: 精确字节数：真机逐目录统计得来，体积只从这里算，不另写一份小数免得对不上
     nbytes: int
+
+    @property
+    def size_gib(self) -> float:
+        return self.nbytes / 2**30
 
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "size_gib": round(self.size_gib, 1),
+            "size_gb": round(self.nbytes / 1e9, 1),
             "why": self.why,
         }
 
 
-# 四包体积 = model_files.json 逐文件加总（GiB）
-#   视频模型        66,280,504,216 B = 61.73 GiB（14 个分片）
-#   文本编码器      15,687,142,551 B = 14.61 GiB（nvfp4+awq 预量化）
-#   视频与音频解码器 10,415,558,888 + 605,429,340 B = 10.26 GiB
-#   采样与加速缓存   334,026,912 + 851,452,696 + 4,279,428,112 + 690,592,672 B = 5.73 GiB
+# 四包体积 = 2026-11-01 真机实测字节（int8-convrot 落盘口径，不是 model_files 清单）
+#   视频模型        22,928,807,665 B = 21.35 GiB  ← prepared/edge-.../int8-convrot
+#   文本编码器      15,687,142,661 B = 14.61 GiB  ← qwen3vl_32b nvfp4+awq
+#   视频与音频解码器 10,415,635,301 + 605,431,698 B = 10.26 GiB
+#   采样与加速缓存    2,826,400,482 + 690,592,672 B = 3.28 GiB
+# 合计 49.50 GiB（53.15 GB）。旧口径 92.34 GiB 是按 bf16 原始分片算的，见模块说明。
 PACKS: Tuple[Pack, ...] = (
     Pack(
-        "video", "视频模型", 61.73,
-        "生成画面的主体权重，按 50 块分片，按显存/内存/磁盘分级放置",
-        66280504216,
+        "video", "视频模型",
+        "生成画面的主体权重，int8 量化后按 50 块分片，按显存/内存/磁盘分级放置",
+        22928807665,
     ),
     Pack(
-        "text", "文本编码器", 14.61,
+        "text", "文本编码器",
         "把提示词与参考图理解成模型输入，独立进程跑完即退出、不占推理内存",
-        15687142551,
+        15687142661,
     ),
     Pack(
-        "decoder", "视频与音频解码器", 10.26,
+        "decoder", "视频与音频解码器",
         "把潜变量还原成画面与声音，低显存下按块流式解码",
-        10415558888 + 605429340,
+        10415635301 + 605431698,
     ),
     Pack(
-        "cache", "采样与加速缓存", 5.73,
+        "cache", "采样与加速缓存",
         "8 步蒸馏与画质提升所需的附加权重，装上才跑得动低步数",
-        334026912 + 851452696 + 4279428112 + 690592672,
+        2826400482 + 690592672,
     ),
 )
 
