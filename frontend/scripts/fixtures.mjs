@@ -35,7 +35,8 @@ export const FIXTURES = {
   '/api/engines': ENGINES,
   '/api/jobs': [
     JOB,
-    { ...JOB, id: 'job_2', status: 'running', progress: 0.42, stage: '采样中', video_url: null },
+    { ...JOB, id: 'job_2', status: 'running', progress: 0.42, stage: '采样中', video_url: null,
+      engine: 'h3', steps: 16, h3_quality: 'high', two_pass: 0 },  // 单遍档要能看出不是两遍
     // 资源守卫自动降档的样例：队列里要显示「已自动降档 + 原因」
     { ...JOB, id: 'job_3', status: 'pending', progress: 0, stage: '排队中', video_url: null,
       width: 640, height: 352, num_frames: 121,
@@ -46,6 +47,19 @@ export const FIXTURES = {
     { id: 'high', name: '精细', desc: '高质量', width: 832, height: 480, num_frames: 33, fps: 12, steps: 8, guidance: 7 },
   ],
   '/api/hardware': { gpu_name: 'RTX 3060', vram_gb: 12, ram_gb: 32, model_id: 't2v-a14b', quant: 'fp8', offload: 'model', notes: [] },
+  '/api/h3/tiers': {
+    default: 'light',
+    tiers: [
+      { id: 'light', name: '轻量', desc: '8 步两遍 · 首遍半尺寸再放大 ×2', params: '8 步 两遍 · 放大 ×2', base_steps: 8, two_pass: true },
+      { id: 'medium', name: '标准', desc: '8+3 步两遍 · 放大 ×1.5', params: '8 步 两遍 · 放大 ×1.5', base_steps: 8, two_pass: true },
+      { id: 'high', name: '精细', desc: '16 步单遍 + 步缓存', params: '16 步 单遍 · 步缓存', base_steps: 16, two_pass: false },
+      { id: 'max', name: '极致', desc: '20 步单遍 + 步缓存', params: '20 步 单遍 · 步缓存', base_steps: 20, two_pass: false },
+    ],
+    limits: {
+      tier: '8GB 档', max_pixels: 1032192, max_frames: 430, max_seconds: 17.9,
+      canvas_options: [[1344, 768], [768, 1344], [1024, 1024]],
+    },
+  },
   // 启动页：首启现场（ComfyUI 还没起来）——正是要验收的那个状态
   '/api/launch/status': {
     ok: false,
@@ -185,7 +199,10 @@ export const PAGE_EXPECT = [
   ['/', ['环境准备', 'ComfyUI 地址']],
   ['/launch', ['环境准备', '需要安装 / 对接的工具', '已按配置推荐', '打开目录']],
   ['/generate', ['ComfyUI 通道', '本机进程内通道', 'AnimeDiff']],
-  ['/queue', ['雨夜霓虹街景', '已自动降档']],
+  // H3 画质档：默认引擎是 comfyui，这个分支只有选中 h3 才渲染，所以先种偏好再跳
+  ['/__seed?aivideo%3Aengine=h3&to=/generate',
+    ['画质档', '轻量', '标准', '精细', '极致', '8 步 两遍', '20 步 单遍', '8GB 档', '430 帧']],
+  ['/queue', ['雨夜霓虹街景', '已自动降档', '精细档', '单遍']],
   ['/gallery', ['雨夜霓虹街景']],
   ['/projects', ['测试项目']],
   ['/novel', ['长夜将至']],

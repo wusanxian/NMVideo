@@ -137,6 +137,15 @@ class Database:
                 ("use_character_lora", "INTEGER DEFAULT 1"),
                 # 资源守卫说明：自动降档的原因与前后参数（空 = 未干预）
                 ("resource_note", "TEXT DEFAULT ''"),
+                # H3 档位（light/medium/high/max）：步数与两遍加速的组合，
+                # 空 = 用默认 light，与 0.1.10 之前「steps 恒等于 8」等价
+                ("h3_quality", "TEXT DEFAULT ''"),
+                # 档位展开后的执行参数。存档就是证据：事后要能回答「这条片
+                # 到底是 8 步两遍还是 20 步单遍」，不能只留在工作流快照里
+                ("two_pass", "INTEGER DEFAULT 1"),
+                ("refine_steps", "INTEGER DEFAULT 3"),
+                ("upscale_factor", "TEXT DEFAULT '2'"),
+                ("step_cache", "TEXT DEFAULT 'none'"),
             ):
                 if col not in existing:
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")

@@ -38,6 +38,19 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // 验收辅助：同源下先写 localStorage 再跳转，用来渲染「非默认引擎」的页面分支
+  // （如 H3 画质档）。只存在于 mock 服务，不参与打包。
+  if (pathname === '/__seed') {
+    const to = url.searchParams.get('to') || '/'
+    const script = [...url.searchParams]
+      .filter(([key]) => key !== 'to')
+      .map(([key, value]) => `localStorage.setItem(${JSON.stringify(key)},${JSON.stringify(value)});`)
+      .join('')
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(`<!doctype html><meta charset="utf-8"><script>${script}location.replace(${JSON.stringify(to)})</script>`)
+    return
+  }
+
   // 静态资源
   let file = path.join(DIST, pathname)
   if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {

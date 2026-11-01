@@ -52,8 +52,36 @@
         <div v-for="n in hardware.notes" :key="n" class="hw-note">{{ n }}</div>
       </div>
 
+      <!-- 画质档：H3 是「步数 + 两遍加速 + 步缓存」四档，与 Wan 的尺寸档正交，不能混用一个列表 -->
+      <div v-if="form.engine === 'h3'" class="field">
+        <label>画质档（步数 / 两遍加速 / 步缓存，不动模型）</label>
+        <div class="quality-cards">
+          <div
+            v-for="t in h3Tiers"
+            :key="t.id"
+            class="quality-card"
+            :class="{ active: form.h3_quality === t.id }"
+            @click="applyH3Tier(t)"
+          >
+            <div class="qc-name">{{ t.name }}</div>
+            <div class="qc-desc">{{ t.desc }}</div>
+            <div class="qc-params">{{ t.params }}</div>
+          </div>
+        </div>
+        <div v-if="h3Limits" class="h3-limits">
+          本机按「{{ h3Limits.tier }}」标定：画布 ≤ {{ h3Limits.max_pixels.toLocaleString() }} 像素，
+          单段 ≤ {{ h3Limits.max_frames }} 帧（约 {{ h3Limits.max_seconds }} 秒）。
+          更长的镜头请拆段，用「续接」接上一段的末帧。
+        </div>
+        <label class="check-line" :class="{ disabled: !h3PreviewOk }">
+          <input type="checkbox" v-model="form.preview" :disabled="!h3PreviewOk" />
+          <span v-if="h3PreviewOk">先出半尺寸预览，满意后再按同一档位二采。</span>
+          <span v-else>当前档位是单遍采样，不支持预览——预览只服务 8 步两遍档。</span>
+        </label>
+      </div>
+
       <!-- 质量档位（Wan 引擎专属：档位参数按 Wan 2.2 尺寸设计） -->
-      <div v-if="form.engine !== 'anime'" class="field">
+      <div v-else-if="form.engine !== 'anime'" class="field">
         <label>质量目标（具体参数按引擎与工作流能力调整）</label>
         <div class="quality-cards">
           <div
@@ -107,15 +135,19 @@
       <div class="param-grid">
         <div class="field">
           <div class="range-label"><span>帧数（时长=帧数/帧率）</span><b>{{ form.num_frames }} 帧 / {{ (form.num_frames / form.fps).toFixed(1) }}s</b></div>
-          <input type="range" min="8" :max="['wan22','h3','h3_native'].includes(form.engine) ? 121 : 32" :step="['wan22','h3','h3_native'].includes(form.engine) ? 4 : 2" v-model.number="form.num_frames" />
+          <input type="range" :min="frameMin" :max="frameMax" :step="frameStep" v-model.number="form.num_frames" />
         </div>
         <div class="field">
           <div class="range-label"><span>帧率 FPS</span><b>{{ form.fps }}</b></div>
-          <input type="range" min="4" :max="['wan22','h3','h3_native'].includes(form.engine) ? 24 : 16" step="1" v-model.number="form.fps" />
+          <input type="range" min="4" :max="['wan22','h3','h3_native'].includes(form.engine) ? 24 : 16" step="1" v-model.number="form.fps" :disabled="form.engine === 'h3'" />
         </div>
-        <div class="field">
+        <div v-if="form.engine !== 'h3'" class="field">
           <div class="range-label"><span>采样步数（越高越精细越慢）</span><b>{{ form.steps }}</b></div>
           <input type="range" min="10" max="50" step="1" v-model.number="form.steps" />
+        </div>
+        <div v-else class="field">
+          <div class="range-label"><span>采样步数</span><b>{{ form.steps }} 步{{ twoPass ? ' 两遍' : ' 单遍' }}</b></div>
+          <div class="hint-text">H3 的步数由画质档决定，不单独调；改成 8 步以外，两遍加速会自动失效。</div>
         </div>
         <div class="field">
           <div class="range-label"><span>提示词引导 CFG</span><b>{{ form.guidance }}</b></div>
@@ -136,7 +168,10 @@
         <div class="field">
           <label>分辨率快捷</label>
           <div class="chips">
-            <template v-if="['wan22','h3','h3_native'].includes(form.engine)">
+            <template v-if="form.engine === 'h3' && h3Limits">
+              <span v-for="c in h3Limits.canvas_options" :key="c.join('x')" class="chip" @click="setSize(c[0], c[1])">{{ c[0] }}×{{ c[1] }}</span>
+            </template>
+            <template v-else-if="['wan22','h3_native'].includes(form.engine)">
               <span class="chip" @click="setSize(832, 480)">480p 横</span>
               <span class="chip" @click="setSize(480, 832)">480p 竖</span>
               <span class="chip" @click="setSize(1280, 720)">720p 横</span>
@@ -155,7 +190,7 @@
       <!-- 提交 -->
       <p v-if="form.engine === 'h3'" class="hint-text" style="margin: 0 0 10px">
         当前走 <b>ComfyUI 通道</b>：按模式自动套用内置 <b>nmvideo_h3_*</b> 预设并固化快照。
-        宽高按 32 对齐、帧数吸附到 17n+5；步数与 CFG 由工作流节点决定（8 步蒸馏图通常固定 8 步、无 CFG）。
+        宽高按 32 对齐、帧数吸附到 17n+5、帧率固定 24；步数由画质档决定，H3 是 CFG 蒸馏模型，无引导系数。
         ComfyUI 侧缺 H3 插件节点时，这张卡会如实标记为不可用。
       </p>
       <p v-else-if="form.engine === 'h3_native'" class="hint-text" style="margin: 0 0 10px">
@@ -210,6 +245,7 @@ const router = useRouter()
 const store = useJobsStore()
 const engines = ref([])
 const qualityPresets = ref([])
+const h3Info = ref({ tiers: [], limits: null })
 const hardware = ref(null)
 const message = ref('')
 const activePreset = ref('')
@@ -229,8 +265,33 @@ const form = reactive({
   guidance: 7.5,
   seed: -1,
   preset: '',
+  h3_quality: '',
   preview: false,
 })
+
+// ---- H3 画质档与画布上限（档位切步数，上限切尺寸/时长，两件事分开） ----
+const h3Tiers = computed(() => h3Info.value.tiers || [])
+const h3Limits = computed(() => h3Info.value.limits || null)
+const currentTier = computed(
+  () => h3Tiers.value.find((t) => t.id === form.h3_quality) || h3Tiers.value[0] || null
+)
+// 预览只服务 8 步两遍档：单遍档下 preview=true 会被节点直接拒
+const h3PreviewOk = computed(() => (form.engine === 'h3' ? !!currentTier.value?.two_pass : true))
+const twoPass = computed(() => !!currentTier.value?.two_pass)
+const frameMin = computed(() => (form.engine === 'h3' ? 39 : 8))
+const frameMax = computed(() => {
+  if (form.engine === 'h3') return h3Limits.value?.max_frames ?? 430
+  return ['wan22', 'h3_native'].includes(form.engine) ? 121 : 32
+})
+// H3 的帧数必须落在 17n+5 上，滑块步长按 17 走，正好只经过合法值
+const frameStep = computed(() => (form.engine === 'h3' ? 17 : ['wan22', 'h3_native'].includes(form.engine) ? 4 : 2))
+
+function applyH3Tier(t) {
+  form.h3_quality = t.id
+  // 步数是档位的产物，不是用户输入：跟着档位写回，界面读数才不会和实际执行不一致
+  form.steps = t.base_steps
+  if (!t.two_pass) form.preview = false
+}
 
 // 按执行通道分组：把"经 ComfyUI"和"本机进程内"分开摆，但两组都开放给用户选，
 // 产品只标注区别，不替用户做取舍。
@@ -275,14 +336,23 @@ function setSize(w, h) {
   form.height = h
 }
 
-// 切到 AnimeDiff 时清掉 Wan 专属字段（档位/预览），避免误提交
+// 切引擎时清掉不属于新引擎的字段，并把 H3 拉回它的坐标系（24 帧率 + 17n+5 帧数）
 watch(
   () => form.engine,
   (e) => {
     if (e === 'anime') {
       form.preset = ''
       form.preview = false
+      return
     }
+    if (e !== 'h3') return
+    form.preset = ''
+    form.fps = 24
+    // 顺手把帧数和画布收进档位上限：切过来时若停在 8 帧 / 512×512 之外的越界值，
+    // 提交才报错不如现在就摆正
+    const frames = Math.min(Math.max(form.num_frames, 39), frameMax.value)
+    form.num_frames = 5 + 17 * Math.max(2, Math.ceil((frames - 5) / 17))
+    if (!form.h3_quality && h3Tiers.value.length) applyH3Tier(h3Tiers.value[0])
   }
 )
 
@@ -318,6 +388,17 @@ onMounted(async () => {
     qualityPresets.value = await api.presets()
   } catch {
     qualityPresets.value = []
+  }
+  try {
+    h3Info.value = await api.h3Tiers()
+    // 默认档落定：后端说了算（light），界面别自己猜一个
+    if (!form.h3_quality) {
+      const wanted = h3Info.value.default || h3Info.value.tiers?.[0]?.id
+      const tier = (h3Info.value.tiers || []).find((t) => t.id === wanted)
+      if (tier) applyH3Tier(tier)
+    }
+  } catch {
+    h3Info.value = { tiers: [], limits: null }
   }
   try {
     hardware.value = await api.hardware()
@@ -392,6 +473,20 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--text-dim);
   cursor: pointer;
+}
+.check-line.disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* H3 上限提示：数字要能一眼读，别和正文混成一片 */
+.h3-limits {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent, #7c6cf0);
+  background: var(--bg-inset, rgba(127, 127, 127, 0.06));
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .anime-tip {

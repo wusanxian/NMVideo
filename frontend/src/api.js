@@ -54,6 +54,8 @@ export const api = {
   deleteJob: (id) => request(`/jobs/${id}`, { method: 'DELETE' }),
   hardware: () => request('/hardware'),
   presets: () => request('/presets'),
+  // H3 画质四档 + 本机画布/时长上限（与 Wan 的尺寸档是两套东西）
+  h3Tiers: () => request('/h3/tiers'),
   jobMetadata: (id) => request(`/jobs/${id}/metadata`),
 
   // ---------- 分镜工作台 ----------

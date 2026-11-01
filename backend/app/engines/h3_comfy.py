@@ -43,7 +43,7 @@ class H3ComfyEngine(ComfyEngine):
         name="MiniMax H3（ComfyUI 通道）",
         description=(
             "MiniMax H3 / VDN-H3 经 ComfyUI 工作流执行 · 按模式自动套用内置 H3 预设 · "
-            "需 ComfyUI 侧装有 H3 插件节点（8GB 显存 / 16GB 内存起）"
+            "需 ComfyUI 侧装有 H3 插件节点（8GB 显存 / 32GB 内存起）"
         ),
         status="ready",
         supported_modes=("t2v", "i2v", "first_last", "continuation"),

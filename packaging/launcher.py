@@ -87,7 +87,7 @@ MIN_PY_VER = (3, 10)
 # backend/app/engines/h3_quant.py 同口径，改一处要三处同步）：
 #   - 插件通道（正路，引擎 h3）：ComfyUI + FreeVideo 节点，权重按 50 个 transformer
 #     块在「显存 → 内存 → 磁盘」之间摆放，装不下的块每步回读磁盘，文本编码器
-#     独立进程跑完即退 → 8GB 显存 / 16GB 内存就能跑，只是慢。四个素材包
+#     独立进程跑完即退 → 8GB 显存 + 32GB 内存就能跑，只是慢。四个素材包
 #     49.50GiB，含下载余量要 57.5GiB 磁盘。
 #     （2026-11-01 真机校正：原来按 model_files.json 的 bf16 分片记成 92.34GiB，
 #      实际跑的是 int8-convrot 预量化包 21.35GiB，原版 bf16 transformer 从不下载，
@@ -97,7 +97,8 @@ MIN_PY_VER = (3, 10)
 # 早先只按原生口径判，于是 8GB/32GB 的机器被告知「跑不了 H3、给你下 Wan」——
 # 那 30GB 白下了，这是 0.1.9 真机跑出来的坑。
 H3_PLUGIN_MIN_VRAM = 8.0
-H3_PLUGIN_MIN_RAM = 16.0
+# 内存线按 32GB 标定（机制 16GB 就能起，但回读磁盘的块太多，慢到不可用）
+H3_PLUGIN_MIN_RAM = 32.0
 H3_PLUGIN_TOTAL_GIB = 49.5
 H3_PLUGIN_DISK_GIB = 57.5
 
@@ -106,6 +107,10 @@ H3_PLUGIN_DISK_GIB = 57.5
 # 于是所有「8GB 卡」都被判成显存不足。真机 4060 上直接暴露：页面说 8GB 能跑，
 # 启动器却打印「显存偏小，强制 int8」。留半 GB 容差，别和标称值较劲。
 VRAM_TOLERANCE_GB = 0.5
+
+# 内存同理：32GB 机器实际报 31.96GB（固件预留 + 核显共享显存），
+# 严格 `>= 32` 会把「正好 32GB」这类目标配置挡在门外。
+RAM_TOLERANCE_GB = 0.6
 
 # 模型磁盘需求（GB，含余量）
 DISK_NEED = {
@@ -388,11 +393,12 @@ def choose_plan(hw: HWInfo) -> Plan:
         # 比较用「带容差的显存」：8GB 卡实机是 7.996GB（8188MiB），
         # 严格 >= 8 会把它判成显存不足。显示仍用真实值，别骗用户。
         veff = vram + VRAM_TOLERANCE_GB
-        # 正路：H3 插件通道（ComfyUI + FreeVideo 节点）。门槛只有 8GB 显存 /
-        # 16GB 内存 —— 权重按块在三级存储间摆放，装不下的块回读磁盘，所以
-        # 内存不是瓶颈，只有「磁盘放不放得下 49.5GB 素材」才是。素材由 FreeVideo
-        # 侧下载（谁跑推理谁放权重），本程序不重复下一份。
-        if (veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb >= H3_PLUGIN_MIN_RAM
+        # 正路：H3 插件通道（ComfyUI + FreeVideo 节点）。门槛是 8GB 显存 /
+        # 32GB 内存 / 57.5GB 磁盘 —— 权重按块在三级存储间摆放，装不下的块回读
+        # 磁盘，所以内存决定的是「快慢」而不是「能不能起」：内存低于 32GB 时
+        # 回读的块太多，一段 10 秒要按小时算，不当作可用档对外承诺。
+        # 素材由 FreeVideo 侧下载（谁跑推理谁放权重），本程序不重复下一份。
+        if (veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb + RAM_TOLERANCE_GB >= H3_PLUGIN_MIN_RAM
                 and hw.disk_free_gb >= H3_PLUGIN_DISK_GIB):
             return Plan("h3", "cuda", "auto", "none",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存 + "
@@ -400,7 +406,7 @@ def choose_plan(hw: HWInfo) -> Plan:
                         f"素材 {H3_PLUGIN_TOTAL_GIB:.0f}GB 在 FreeVideo 插件里装一次即可，"
                         "本程序不重复下载")
         # 显存内存都够、只差磁盘：说清差多少，不要偷偷换成 Wan（用户会白下 30GB）
-        if veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb >= H3_PLUGIN_MIN_RAM:
+        if veff >= H3_PLUGIN_MIN_VRAM and hw.ram_total_gb + RAM_TOLERANCE_GB >= H3_PLUGIN_MIN_RAM:
             short = H3_PLUGIN_DISK_GIB - hw.disk_free_gb
             return Plan("wan-ti2v", "cuda", "auto", "sequential",
                         f"{vram:.0f}GB 显存 + {hw.ram_total_gb:.0f}GB 内存够跑 H3，"

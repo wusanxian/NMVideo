@@ -88,6 +88,8 @@ function reuse(job) {
     guidance: job.guidance,
     seed: job.seed,
     preset: job.preset || '',
+    // H3 的画质档是独立维度，不带上就会静默掉回默认的「轻量」
+    h3_quality: job.h3_quality || '',
     preview: false,
   }
   localStorage.setItem('aivideo:reuse', JSON.stringify(params))

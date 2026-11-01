@@ -11,7 +11,7 @@ Windows 安装：前往 [GitHub Releases](https://github.com/wusanxian/NMVideo/r
 | 引擎 | 模型 | 最低硬件 | 出片速度 |
 |---|---|---|---|
 | **ComfyUI 工作流（默认通道）** | 由你的 ComfyUI 安装决定（H3 / Wan / AnimateDiff 等任意图） | 一台运行中的 ComfyUI 服务器 | 取决于服务端 GPU 与所选工作流 |
-| **MiniMax H3（ComfyUI 通道）** | 内置 H3 工作流预设 | 一台装好 H3 工作流节点的 ComfyUI 服务器 | 取决于 ComfyUI 服务端 GPU |
+| **MiniMax H3（ComfyUI 通道）** | 内置 H3 工作流预设（四档画质：轻量/标准/精细/极致） | 一台装好 H3 工作流节点的 ComfyUI 服务器；插件侧 **8GB 显存 + 32GB 内存 + 57.5GB 磁盘** | 取决于 ComfyUI 服务端 GPU；8GB 卡 1344×768 轻量档单段 ≤17 秒 |
 | AnimeDiff 动漫（兜底） | dreamlike-anime + AnimateDiff v3 | 纯 CPU，8GB 内存 | 256px 8 帧 12 步 ≈ 4 分钟（i5 CPU） |
 | MiniMax H3 原生（兜底 `h3_native`） | VDN-H3 8 步蒸馏 + Qwen3-VL 编码器 | **8~16GB 显存**，内存 int8 ≈ 80GB / int4 ≈ 52GB，模型 139GB | 24GB 卡：5 秒镜头分钟级（8 步前向） |
 | Wan 2.2 文生视频（兜底） | Wan2.2-TI2V-5B | **8GB 显存 + 32GB 内存** | 480p 33 帧 20 步 ≈ 10-30 分钟（8GB 卡） |

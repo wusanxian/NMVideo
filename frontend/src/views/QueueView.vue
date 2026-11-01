@@ -23,7 +23,9 @@
         <div class="job-prompt">{{ job.prompt }}</div>
         <div class="job-params">
           {{ job.width }}×{{ job.height }} · {{ job.num_frames }} 帧 · {{ job.fps }}fps ·
-          {{ job.steps }} 步 · CFG {{ job.guidance }} · seed {{ job.seed }}
+          {{ job.steps }} 步<template v-if="job.h3_quality">（{{ H3_TIERS[job.h3_quality] || job.h3_quality }}档{{
+            job.two_pass ? ' · 两遍' : ' · 单遍' }}）</template>
+          · CFG {{ job.guidance }} · seed {{ job.seed }}
         </div>
         <div v-if="job.status === 'pending' || job.status === 'running'" class="progress">
           <div class="bar"><div class="bar-inner" :style="{ width: Math.round(job.progress * 100) + '%' }"></div></div>
@@ -57,6 +59,9 @@ import { useJobsStore } from '../store/jobs'
 
 const store = useJobsStore()
 const engines = ref([])
+
+// H3 的画质档名：只看 steps 会分不清「8 步两遍」和「8 步单遍」
+const H3_TIERS = { light: '轻量', medium: '标准', high: '精细', max: '极致' }
 
 const statusText = {
   pending: '排队中',

@@ -29,16 +29,22 @@ class JobCreate(BaseModel):
     negative_prompt: str = ""
     # PR-08 后半：多参考图（额外参考图 URL 数组，≤4 张；normalize 校验后冻结为 JSON）
     reference_images: Optional[list] = None
-    # 范围覆盖 Wan 2.2 与 MiniMax H3（720p 竖屏 / 1344×768 画布）；各引擎内部按自身约束吸附
-    width: int = Field(512, ge=256, le=1344)
-    height: int = Field(512, ge=256, le=1344)
-    num_frames: int = Field(16, ge=8, le=121)
+    # 范围覆盖 Wan 2.2 与 MiniMax H3；各引擎内部按自身约束吸附。
+    # 这里的上限取 H3 大显存档的边界（1920×1088 / 855 帧），其余通道在
+    # create_job 里按旧口径再挡一次——只用 Field 卡死会把 H3 的单段 17 秒
+    # 挡在入口，只用注释提醒又会放过 Wan 提交出 800 帧的任务。
+    width: int = Field(512, ge=256, le=2048)
+    height: int = Field(512, ge=256, le=2048)
+    num_frames: int = Field(16, ge=8, le=900)
     fps: int = Field(8, ge=4, le=30)
     steps: int = Field(25, ge=5, le=100)
     guidance: float = Field(7.5, ge=1.0, le=20.0)
     seed: int = Field(-1)  # -1 表示随机
     preset: str = ""       # lite / standard / fine / ultra（空=自定义参数）
     preview: bool = False  # 两遍采样第一遍：半分辨率快速预览
+    # H3 专用档位：light / medium / high / max。与 preset 分开是因为 H3 的档位
+    # 只改「步数 + 两遍加速 + 步缓存」，不改尺寸（尺寸由上面的宽高帧数决定）
+    h3_quality: str = ""
 
 
 class JobUpgrade(BaseModel):
@@ -49,6 +55,19 @@ class JobUpgrade(BaseModel):
 async def create_job(data: JobCreate):
     if data.engine not in ENGINES:
         raise HTTPException(status_code=400, detail=f"未知引擎: {data.engine}")
+    # H3 之外的通道没有「单段 17 秒 / 1344×768」这条能力，放开上限只会让人
+    # 提交出必然失败或跑几小时的任务，所以在入口按旧口径挡住并指向 H3。
+    if data.engine != "h3" and (
+        data.num_frames > 121 or data.width > 1344 or data.height > 1344
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"当前引擎的范围内是 1344×1344 / 121 帧，本次提交 "
+                f"{data.width}×{data.height} / {data.num_frames} 帧。"
+                "更长的镜头或更大的画布请切到 H3 通道（单段最长 17 秒）。"
+            ),
+        )
     try:
         params = normalize_generation(data.model_dump(), data.model_dump(exclude_unset=True))
     except ValueError as exc:

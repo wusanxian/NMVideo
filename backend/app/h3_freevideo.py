@@ -59,7 +59,16 @@ MEASURED_AT = "2026-11-01 · FreeVideo 2026.11.1.50531 · int8-convrot · G:/AI/
 
 #: 官方最低配置（README：as little as 8 GB of VRAM and 16 GB of RAM）
 MIN_VRAM_GIB = 8.0
-MIN_RAM_GIB = 16.0
+#: 本程序标定的内存线：32GB。官方机制 16GB 就能起，但内存越少，装不下的
+#: transformer 块越多地走「磁盘回读」，一段 10 秒的片子会从十分钟变成几小时，
+#: 中途还可能被判超时。承诺「能跑」就该按实际能用的线来标，16GB 归到「很慢」，
+#: 不当作可用档对外说。
+MIN_RAM_GIB = 32.0
+
+#: 门槛比较的容差。32GB 机器实际报 31.96GB（固件预留 / 核显共享显存），
+#: 严格 ``< 32`` 会把「正好 32GB」判成不够——与显存 8188MiB 报成 7.996GB
+#: 是同一类坑：门槛要对齐「装了多少」，不是「系统报了多少」。
+RAM_TOLERANCE_GIB = 0.6
 
 #: 磁盘余量：下载中的 .incomplete 临时文件 + 运行时补生成的采样缓存 + 出片输出。
 #: 权重包是「整个下完改名」，不会长期存在双份，所以 8GiB 够用，不必按体积翻倍。
@@ -174,11 +183,12 @@ def _speed_note(ram_gib: float) -> str:
     官方表格只有 8GB+64GB 的实测（4060 Ti 8GB / 64GB：1344×768 10 秒约 603s）。
     32GB 内存能钉住的块更少，每步回读磁盘的块更多，只会更慢——不给具体秒数。
     """
-    if ram_gib and ram_gib < 32:
+    if ram_gib and ram_gib + RAM_TOLERANCE_GIB < MIN_RAM_GIB:
         return ("8GB 显存 + 内存偏紧：大部分块每步从磁盘回读，10 秒 768p 出片可能要"
                 "二十分钟以上，属于正常现象")
     return ("8GB 显存按块流式运行：官方实测 4060 Ti 8GB + 64GB 内存，"
-            "1344×768 10 秒约 10 分钟；内存越少回读磁盘的块越多、越慢")
+            "1344×768 10 秒约 10 分钟；32GB 内存回读的块更多，只会更慢，"
+            "10 秒 768p 按二十分钟以上预期")
 
 
 def plan(vram_gib: float, ram_gib: float, disk_free_gib: float = 0.0) -> FreeVideoPlan:
@@ -196,8 +206,12 @@ def plan(vram_gib: float, ram_gib: float, disk_free_gib: float = 0.0) -> FreeVid
     # 0 表示没探到（探测失败），不拿它当门槛——否则会告诉用户「你的显存是 0GB」
     if 0 < vram < MIN_VRAM_GIB:
         blockers.append(f"显存 {vram:.0f}GB，低于插件最低 {MIN_VRAM_GIB:.0f}GB")
-    if 0 < ram < MIN_RAM_GIB:
-        blockers.append(f"内存 {ram:.0f}GB，低于插件最低 {MIN_RAM_GIB:.0f}GB")
+    if 0 < ram and ram + RAM_TOLERANCE_GIB < MIN_RAM_GIB:
+        blockers.append(
+            f"内存 {ram:.0f}GB，低于本程序标定的 {MIN_RAM_GIB:.0f}GB"
+            "（插件机制 16GB 就能起，但内存不够时大部分块要走磁盘回读，"
+            "一段 10 秒的片子得按小时算）"
+        )
     if 0 < disk < need:
         blockers.append(
             f"磁盘可用 {disk:.0f}GB，装不下四个资源包（需 {need:.0f}GB，含余量）"

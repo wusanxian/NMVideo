@@ -25,14 +25,18 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         raise ValueError("工作流模板为空或缺少 prompt 节点图")
     from . import h3_protocol
     native = h3_protocol.is_h3_protocol(template)
+    h3_available: set = set()
     if native:
         h3_protocol.normalize_request(params)
         info = client.object_info(node_names=["FreeVideoGenerate"])
         schema = ((info or {}).get("FreeVideoGenerate") or {}).get("input") or {}
-        available = set(schema.get("required") or {}) | set(schema.get("optional") or {})
+        h3_available = set(schema.get("required") or {}) | set(schema.get("optional") or {})
+        # 必需集合只放「没有就跑不了」的输入。档位里新用到的 refine_steps /
+        # upscale_factor / step_cache 在旧版插件里可能不存在，缺了应该降级
+        # （跳过这几个输入）而不是把整个 H3 引擎判成「接口不兼容」。
         needed = {"text", "width", "height", "seconds", "seed", "base_steps", "two_pass", "frames", "preview", "refine_from"}
-        if not needed.issubset(available):
-            raise ValueError(f"H3 节点接口不兼容，缺少输入：{'、'.join(sorted(needed - available))}")
+        if not needed.issubset(h3_available):
+            raise ValueError(f"H3 节点接口不兼容，缺少输入：{'、'.join(sorted(needed - h3_available))}")
     mode = params.get("mode") or "t2v"
     cap = capability_from_template(template)
     if cap:
@@ -61,6 +65,10 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
     inject = dict(params)
     if native:
         inject["seconds"] = params["num_frames"] / 24
+        # 旧版插件没有这仨输入：去掉就不会往节点塞不认识的字段
+        for key in ("refine_steps", "upscale_factor", "step_cache"):
+            if h3_available and key not in h3_available:
+                inject.pop(key, None)
     if mode != "t2v":
         first = params.get("first_frame_image") or params.get("reference_image")
         if not first:

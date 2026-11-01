@@ -15,12 +15,19 @@
       "continuation"
     ],
     "min_vram_gb": 8,
-    "vram_hint": "The H3 plugin manages runtime resources; official minimum: 8GB VRAM / 16GB RAM. Reference conditioning is experimental.",
+    "vram_hint": "The H3 plugin manages runtime resources itself. Calibrated floor: 8GB VRAM / 32GB RAM (official mechanism minimum is 16GB RAM, but with less than 32GB more blocks get re-read from disk and a single shot can take hours). 8GB tier limits: 1344x768 canvas, 430 frames per segment.",
     "native_preview": true,
     "character_images": true,
     "character_lora": true,
     "source": "https://github.com/FlashML-org/FreeVideo/blob/main/freevideo_engine/comfy_nodes.py",
-    "schema_checked_on": "2026-10-20"
+    "schema_checked_on": "2026-10-20",
+    "calibrated_min": "8GB VRAM / 32GB RAM",
+    "tiers": [
+      "light",
+      "medium",
+      "high",
+      "max"
+    ]
   },
   "prompt": {
     "1": {
@@ -40,7 +47,9 @@
         "first": [
           "2",
           0
-        ]
+        ],
+        "upscale_factor": "2",
+        "step_cache": "none"
       }
     },
     "2": {
@@ -90,6 +99,22 @@
     "first_frame_image": {
       "node": "2",
       "input": "image"
+    },
+    "two_pass": {
+      "node": "1",
+      "input": "two_pass"
+    },
+    "refine_steps": {
+      "node": "1",
+      "input": "refine_steps"
+    },
+    "upscale_factor": {
+      "node": "1",
+      "input": "upscale_factor"
+    },
+    "step_cache": {
+      "node": "1",
+      "input": "step_cache"
     }
   }
 }

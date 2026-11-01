@@ -19,6 +19,8 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
         "reference_images",  # PR-08 后半：升级保留多参考快照（JSON 字符串）
         "generation_inputs", "comfy_url",
         "use_character_images", "use_character_lora",
+        # H3 画质档：预览升成片必须同档，否则「预览选极致、成片掉回轻量」
+        "h3_quality",
     )
     params = {key: source[key] for key in fields if source.get(key) is not None}
     selected = preset or source.get("preset") or ""
@@ -33,6 +35,9 @@ def prepare_upgrade(source: dict, preset: str = "", *, output_dir=None) -> tuple
     numeric_fields = ("width", "height", "num_frames", "fps", "steps", "guidance")
     if target and (not preset or (source.get("preview_kind") == "native" and preset == source.get("preset"))):
         params.update({key: target[key] for key in numeric_fields if key in target})
+        # 档位也是目标参数的一部分：它不属于尺寸，但二采要按同一档继续
+        if target.get("h3_quality"):
+            params["h3_quality"] = target["h3_quality"]
     elif selected:
         params.update({key: QUALITY_PRESETS[selected][key] for key in numeric_fields})
     else:
