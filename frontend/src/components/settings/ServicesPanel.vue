@@ -21,16 +21,23 @@
       <div class="set-row">
         <div class="set-row-main">
           <div class="set-row-title">连接</div>
-          <div class="set-row-desc">{{ comfy.note || (comfy.online ? 'ComfyUI 已响应，可以出片。' : '请先启动 ComfyUI（python main.py --listen）。') }}</div>
+          <div class="set-row-desc">{{ comfy.note || (comfy.online ? 'ComfyUI 已响应，可以出片。' : '请先启动 ComfyUI。') }}</div>
         </div>
         <div class="set-row-ctl">
+          <button v-if="lifecycle.starting" class="btn" disabled>启动中…</button>
+          <button v-else-if="lifecycle.can_start" class="btn btn-primary" :disabled="busy.comfyAction" @click="startComfy">
+            {{ busy.comfyAction ? '启动中…' : '一键启动' }}
+          </button>
+          <button v-if="lifecycle.can_stop" class="btn" :disabled="busy.comfyAction" @click="stopComfy">关闭</button>
           <button class="btn" :disabled="busy.refresh" @click="refreshAll">
             {{ busy.refresh ? '检测中…' : '重新检测' }}
           </button>
         </div>
       </div>
+      <div v-if="comfyMsg" class="set-msg" :class="comfyMsgOk ? 'ok' : 'err'">{{ comfyMsg }}</div>
       <div class="set-hint">
-        ComfyUI 由你自行启动，本产品只提交任务、不托管它的 Python 环境。桌面端可在「系统管理」里看启动状态。
+        本机安装的 ComfyUI 可在这里一键启动 / 关闭，不用再开命令行；退出本应用时会自动关闭托管进程。
+        自己启动的或远程机器上的 ComfyUI 仍由你自己管理，本产品只负责连接与提交任务。
       </div>
     </div>
 
@@ -186,9 +193,13 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../../api'
 
 const status = ref({ comfyui: {}, llm: {}, imagegen: {}, tts: {} })
-const busy = reactive({ comfy: false, refresh: false, llm: false, imagegen: false, llmTest: false, imagegenTest: false, mcp: false })
+const busy = reactive({ comfy: false, refresh: false, comfyAction: false, llm: false, imagegen: false, llmTest: false, imagegenTest: false, mcp: false })
 const msg = reactive({ llm: '', imagegen: '' })
 const testResults = reactive({ llm: { ok: false }, imagegen: { ok: false } })
+// 托管 ComfyUI 生命周期（一键启停）
+const lifecycle = ref({ can_start: false, can_stop: false, starting: false, online: false, note: '' })
+const comfyMsg = ref('')
+const comfyMsgOk = ref(false)
 
 const mcpState = ref({ enabled: false, token_masked: '', has_token: false })
 const mcpToken = ref('')
@@ -213,6 +224,11 @@ async function refreshAll() {
     busy.refresh = false
   }
   try {
+    lifecycle.value = await api.comfyLifecycle()
+  } catch {
+    /* ignore */
+  }
+  try {
     const c = await api.servicesConfig()
     comfyForm.comfy_url = c.comfy_url || (c.comfy && c.comfy.url) || ''
     // api_key 打码返回：留空表示不修改
@@ -235,6 +251,56 @@ async function refreshAll() {
     }
   } catch {
     /* ignore */
+  }
+}
+
+// ---- 托管 ComfyUI 一键启停 ----
+async function pollLifecycle(maxTimes = 70) {
+  // 冷启动（扫插件 + 加载权重）可达一分钟以上：后端兜底 120s，这里轮到在线为止
+  for (let i = 0; i < maxTimes; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    try {
+      lifecycle.value = await api.comfyLifecycle()
+    } catch {
+      /* 单次轮询失败不中断 */
+    }
+    if (lifecycle.value.online) return true
+  }
+  return false
+}
+
+async function startComfy() {
+  comfyMsg.value = ''
+  busy.comfyAction = true
+  try {
+    await api.comfyStart()
+    const ok = await pollLifecycle()
+    comfyMsgOk.value = ok
+    comfyMsg.value = ok
+      ? 'ComfyUI 已就绪'
+      : (lifecycle.value.note || '启动超时：可在 logs/comfyui-managed.log 查看日志')
+  } catch (e) {
+    comfyMsgOk.value = false
+    comfyMsg.value = e.message
+  } finally {
+    busy.comfyAction = false
+    refreshAll()
+  }
+}
+
+async function stopComfy() {
+  comfyMsg.value = ''
+  busy.comfyAction = true
+  try {
+    await api.comfyStop()
+    comfyMsgOk.value = true
+    comfyMsg.value = '已关闭 ComfyUI'
+  } catch (e) {
+    comfyMsgOk.value = false
+    comfyMsg.value = e.message
+  } finally {
+    busy.comfyAction = false
+    refreshAll()
   }
 }
 

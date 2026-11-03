@@ -21,13 +21,26 @@ def services_status():
     # 与 /api/engines、/api/launch/status 共用同一份可达性缓存：设置页和启动页
     # 都在这上面轮询，直连探测会让 ComfyUI 离线时每次请求都白等满超时。
     comfy_ok = probe_available(client.base_url)
+    # 离线时顺便看看本机托管实例能不能一键启动（在线时不探，省请求）
+    comfy_note = "" if comfy_ok else "未检测到 ComfyUI，启动后可连接"
+    comfy_can_start = False
+    if not comfy_ok:
+        try:
+            from .. import comfy_manager
+
+            ls = comfy_manager.state()
+            comfy_note = ls["note"] or comfy_note
+            comfy_can_start = ls["can_start"]
+        except Exception:
+            pass
     tts_ok, tts_note = tts.tts_available()
     return {
         "comfyui": {
             "configured": True,
             "online": comfy_ok,
             "base_url": client.base_url,
-            "note": "" if comfy_ok else "未检测到 ComfyUI，启动后可连接",
+            "can_start": comfy_can_start,
+            "note": comfy_note,
         },
         "llm": {
             **llm.status(),
@@ -104,6 +117,52 @@ def put_comfy_config(data: ComfyConfig):
 
     h3_protocol.reset_limits()
     return got
+
+
+# =====================================================================
+# 托管 ComfyUI 生命周期（一键启动 / 关闭）
+# =====================================================================
+@router.get("/comfy/lifecycle")
+def comfy_lifecycle():
+    """托管 ComfyUI 状态总览：本机实例定位、进程归属、在线与否。
+
+    外部（用户自己启动的 / 远程的）只连接不接管：can_stop 仅对本应用
+    spawn 的进程为真。"""
+    from .. import comfy_manager
+
+    return comfy_manager.state()
+
+
+@router.post("/comfy/start")
+def comfy_start():
+    """启动本机托管 ComfyUI（spawn 后立即返回，就绪看 lifecycle.online）"""
+    from .. import comfy_manager
+
+    result = comfy_manager.start()
+    if not result.get("started"):
+        raise HTTPException(409, result.get("note") or result.get("reason", "无法启动"))
+    return result
+
+
+@router.post("/comfy/stop")
+def comfy_stop():
+    """停止托管 ComfyUI（只停本应用启动的进程树；外部启动的不碰）"""
+    from .. import comfy_manager
+
+    result = comfy_manager.stop()
+    if not result.get("stopped"):
+        raise HTTPException(409, result.get("note") or result.get("reason", "无法停止"))
+    return result
+
+
+class ComfyDirConfig(BaseModel):
+    comfy_dir: str = ""
+
+
+@router.put("/comfy/dir")
+def put_comfy_dir(data: ComfyDirConfig):
+    """指定/清除本机托管 ComfyUI 目录（空串清除，恢复自动发现）"""
+    return settings_module.update_settings({"comfy_dir": data.comfy_dir.strip()})
 
 
 # =====================================================================

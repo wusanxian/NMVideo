@@ -16,13 +16,19 @@
     <div class="panel status-panel">
       <div class="status-row">
         <span class="dot" :class="status.online ? 'ready' : 'unavailable'"></span>
-        <b>{{ status.online ? '已连接' : '未连接' }}</b>
+        <b>{{ lifecycle.starting ? '启动中…' : (status.online ? '已连接' : '未连接') }}</b>
         <span class="status-url">{{ status.url }}</span>
+        <button v-if="lifecycle.starting" class="btn" style="margin-left: auto" disabled>启动中，请稍候…</button>
+        <button v-else-if="lifecycle.can_start" class="btn btn-primary" style="margin-left: auto"
+                :disabled="comfyBusy" @click="startComfy">▶ 一键启动 ComfyUI</button>
+        <button v-if="lifecycle.can_stop" class="btn" :disabled="comfyBusy" @click="stopComfy">■ 关闭</button>
         <button class="btn" style="margin-left: auto" @click="checkStatus">🔄 重新检测</button>
       </div>
+      <p v-if="lifecycleNote" class="hint">{{ lifecycleNote }}</p>
       <p class="hint">
-        未连接时：请先在本机启动 ComfyUI（默认 127.0.0.1:8188），
-        或到<router-link to="/settings?tab=env">设置 · 环境</router-link>把地址改成你的 ComfyUI 服务器。
+        本机安装的 ComfyUI 可在这里一键启动 / 关闭（退出应用时会自动关闭托管进程）；
+        自己启动的或远程的 ComfyUI 由你自己管理。要把地址指向别的服务器，
+        到<router-link to="/settings?tab=env">设置 · 环境</router-link>修改。
       </p>
     </div>
 
@@ -152,6 +158,55 @@ const presets = ref([])
 const workflowMeta = ref(null)
 const selectedPreset = ref('')
 
+// ---- 托管 ComfyUI 生命周期（一键启停） ----
+const lifecycle = ref({ can_start: false, can_stop: false, starting: false, online: false, managed: null, note: '' })
+const comfyBusy = ref(false)
+const lifecycleNote = computed(() => {
+  const m = lifecycle.value.managed
+  const dirLine = m && m.dir ? `本机 ComfyUI：${m.dir}${m.source === 'auto' ? '（自动发现）' : ''}` : ''
+  const note = lifecycle.value.note || ''
+  return [dirLine, note].filter(Boolean).join(' · ')
+})
+
+async function loadLifecycle() {
+  try {
+    lifecycle.value = await api.comfyLifecycle()
+  } catch {
+    /* ignore */
+  }
+}
+
+async function startComfy() {
+  comfyBusy.value = true
+  try {
+    await api.comfyStart()
+    // 冷启动可达一分钟以上，轮询直到在线（后端 120s 兜底）
+    for (let i = 0; i < 70; i++) {
+      await new Promise((r) => setTimeout(r, 2000))
+      await loadLifecycle()
+      if (lifecycle.value.online) break
+    }
+    await checkStatus()
+  } catch (e) {
+    wfMsg.value = e.message
+  } finally {
+    comfyBusy.value = false
+  }
+}
+
+async function stopComfy() {
+  comfyBusy.value = true
+  try {
+    await api.comfyStop()
+  } catch (e) {
+    wfMsg.value = e.message
+  } finally {
+    comfyBusy.value = false
+    await loadLifecycle()
+    await checkStatus()
+  }
+}
+
 // ---- 工作流能力中心（PR-03） ----
 const capItems = ref([])
 const capMsg = ref('')
@@ -220,6 +275,7 @@ async function checkStatus() {
   } catch {
     status.value = { online: false, url: '', queue: null }
   }
+  await loadLifecycle()
 }
 
 async function loadWorkflow() {

@@ -149,6 +149,9 @@ export const api = {
   comfyPresets: () => request('/comfy/presets'),
   applyComfyPreset: (id) => request(`/comfy/presets/${id}/apply`, { method: 'POST' }),
   comfyCapabilities: () => request('/comfy/capabilities'),
+  comfyLifecycle: () => request('/comfy/lifecycle'),
+  comfyStart: () => request('/comfy/start', { method: 'POST' }),
+  comfyStop: () => request('/comfy/stop', { method: 'POST' }),
 
   // ---------- 模型服务（LLM / 图像生成 / 服务配置） ----------
   servicesStatus: () => request('/services/status'),
