@@ -109,7 +109,7 @@ LIMITS = (
 _limits_cache: Optional[Tuple[float, int, int, str]] = None
 _limits_ts = 0.0
 _per_url: dict = {}
-#: 判定依据（显存、来源、显卡名、量化格式），按 url 记，给界面解释上限从哪来
+#: 判定依据（显存、来源、显卡名、服务端地址），按 url 记，给界面解释上限从哪来
 _basis_by_url: dict = {}
 _LIMITS_TTL = 60.0
 
@@ -202,11 +202,13 @@ def limits_info(base_url: Optional[str] = None) -> dict:
     """上限的判定依据（给界面解释「为什么只能到这里」）。"""
     row = limits(base_url)
     basis = _basis_by_url.get((base_url or "").rstrip("/")) or {}
+    vram = basis.get("_vram")
     return {
         "tier": row[3],
         "max_pixels": row[1],
         "max_frames": row[2],
-        "vram_gib": round(basis.get("_vram") or 0, 2) or None,
+        # 读不到就是 null，别把哨兵值 -1 当显存透出去（界面会显示「-1GB」）
+        "vram_gib": round(vram, 2) if vram and vram > 0 else None,
         "vram_source": basis.get("vram_source") or "unknown",
         "gpu_name": basis.get("gpu_name") or "",
         "comfy_url": basis.get("comfy_url") or "",
