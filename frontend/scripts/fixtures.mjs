@@ -58,6 +58,11 @@ export const FIXTURES = {
     limits: {
       tier: '8GB 档', max_pixels: 1032192, max_frames: 430, max_seconds: 17.9,
       canvas_options: [[1344, 768], [768, 1344], [1024, 1024]],
+      // 上限按 ComfyUI 服务端显存算，界面要能把依据说出来
+      basis: {
+        vram_gib: 8, vram_source: 'server', gpu_name: 'NVIDIA GeForce RTX 4060',
+        comfy_url: 'http://127.0.0.1:8188', server_ram_gib: 32,
+      },
     },
   },
   // 启动页：首启现场（ComfyUI 还没起来）——正是要验收的那个状态
@@ -199,9 +204,12 @@ export const PAGE_EXPECT = [
   ['/', ['环境准备', 'ComfyUI 地址']],
   ['/launch', ['环境准备', '需要安装 / 对接的工具', '已按配置推荐', '打开目录']],
   ['/generate', ['ComfyUI 通道', '本机进程内通道', 'AnimeDiff']],
-  // H3 画质档：默认引擎是 comfyui，这个分支只有选中 h3 才渲染，所以先种偏好再跳
+  // H3 画质档：默认引擎是 comfyui，这个分支只有选中 h3 才渲染，所以先种偏好再跳。
+  // 「按 ComfyUI 服务端…标定」是 2026-11-03 的新口径：上限按服务端显存算，
+  // 而不是按本机——这句话必须真的渲染出来，否则用户不知道上限是从哪来的。
   ['/__seed?aivideo%3Aengine=h3&to=/generate',
-    ['画质档', '轻量', '标准', '精细', '极致', '8 步 两遍', '20 步 单遍', '8GB 档', '430 帧']],
+    ['画质档', '轻量', '标准', '精细', '极致', '8 步 两遍', '20 步 单遍',
+     '按 ComfyUI 服务端', 'RTX 4060', '430 帧']],
   ['/queue', ['雨夜霓虹街景', '已自动降档', '精细档', '单遍']],
   ['/gallery', ['雨夜霓虹街景']],
   ['/projects', ['测试项目']],

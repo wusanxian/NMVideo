@@ -81,8 +81,8 @@ class ComfyUIClient:
         except Exception:
             return False
 
-    def system_stats(self) -> dict:
-        r = requests.get(f"{self.base_url}/system_stats", timeout=5)
+    def system_stats(self, timeout: float = 5) -> dict:
+        r = requests.get(f"{self.base_url}/system_stats", timeout=timeout)
         r.raise_for_status()
         return r.json()
 

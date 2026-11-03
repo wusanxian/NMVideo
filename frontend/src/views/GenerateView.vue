@@ -69,7 +69,7 @@
           </div>
         </div>
         <div v-if="h3Limits" class="h3-limits">
-          本机按「{{ h3Limits.tier }}」标定：画布 ≤ {{ h3Limits.max_pixels.toLocaleString() }} 像素，
+          {{ h3Basis }} → 画布 ≤ {{ h3Limits.max_pixels.toLocaleString() }} 像素，
           单段 ≤ {{ h3Limits.max_frames }} 帧（约 {{ h3Limits.max_seconds }} 秒）。
           更长的镜头请拆段，用「续接」接上一段的末帧。
         </div>
@@ -277,6 +277,17 @@ const currentTier = computed(
 )
 // 预览只服务 8 步两遍档：单遍档下 preview=true 会被节点直接拒
 const h3PreviewOk = computed(() => (form.engine === 'h3' ? !!currentTier.value?.two_pass : true))
+// 上限是按谁的显卡算的：H3 跑在 ComfyUI 上，所以正常应该是服务端；
+// 服务端连不上时退回本机估算，这里必须说清，别让用户以为上限是凭空来的
+const h3Basis = computed(() => {
+  const b = h3Limits.value?.basis || {}
+  if (b.vram_source === 'server') {
+    const gpu = b.gpu_name || 'ComfyUI 服务端'
+    return `按 ComfyUI 服务端 ${gpu}${b.vram_gib ? `（${b.vram_gib}GB）` : ''} 标定`
+  }
+  if (b.vram_source === 'local') return 'ComfyUI 服务端未连上，暂按本机显卡估算'
+  return '显存读不到，按最低档保守标定'
+})
 const twoPass = computed(() => !!currentTier.value?.two_pass)
 const frameMin = computed(() => (form.engine === 'h3' ? 39 : 8))
 const frameMax = computed(() => {

@@ -32,6 +32,11 @@ FreeVideo 的「画质档」不是换模型，而是 **步数 + 两遍加速 + �
 | < 16GB（8GB 档） | 1344×768（≈103 万像素） | 430 帧（约 17 秒） |
 | ≥ 16GB | 1920×1088（≈209 万像素） | 855 帧（约 35 秒） |
 
+**这里的显存取 ComfyUI 服务端的，不是本机的**（见 ``h3_server``）：H3 的推理
+跑在 ComfyUI 那台机上，8GB 笔记本连 24GB 工作站按 8GB 限死是浪费，反过来
+24GB 机器连 8GB 服务器放行 1080p 会让对面 OOM。服务端探不到才退回本机口径，
+并在界面上标明「按本机估算」——不让用户以为这个上限是拍出来的。
+
 超过标定规模在对应卡上会 OOM 或慢到不可用，所以在归一阶段就拦住并给出
 可执行的替代方案（拆段续接、降分辨率、换档位），而不是默默截断——存档参数
 必须等于实际输出，否则用户拿到 8 秒片却以为自己要了 17 秒，问题会被记到
@@ -40,9 +45,11 @@ FreeVideo 的「画质档」不是换模型，而是 **步数 + 两遍加速 + �
 import copy
 import json
 import math
+import time
 from typing import Optional, Tuple
 
 from . import comfyui
+from . import h3_server
 
 #: 档位表：字段名与节点输入一一对应，直接注入，不做二次翻译
 QUALITY_TIERS = {
@@ -96,30 +103,115 @@ LIMITS = (
     (0.0, 1344 * 768, 430, "8GB 档"),
 )
 
-#: 显存探测只做一次：nvidia-smi 每次调用可能几百毫秒，任务提交是高频路径
+#: 上限结果的缓存：探测一次 ComfyUI 要发 HTTP，提交任务是高频路径。
+#: 但服务端可能换机、ComfyUI 地址可能改，所以带 TTL 而不是记一辈子。
+#: 任务自带 ``comfy_url`` 时（可以连别的服务）按 url 分开缓存。
 _limits_cache: Optional[Tuple[float, int, int, str]] = None
+_limits_ts = 0.0
+_per_url: dict = {}
+#: 判定依据（显存、来源、显卡名、量化格式），按 url 记，给界面解释上限从哪来
+_basis_by_url: dict = {}
+_LIMITS_TTL = 60.0
 
 
-def limits() -> Tuple[float, int, int, str]:
-    """本机适用的 (显存下限, 画布像素上限, 帧数上限, 档名)。
+def _probe_vram(base_url: str = "") -> Tuple[float, str, str]:
+    """判定用的显存 → (GiB, 来源, 显卡名)。
 
-    探测不到显存时按 8GB 档算——保守一侧，宁可提示「上限 1344×768」，
-    也不要在没显存信息的机器上放行 1080p 然后 OOM。
+    H3 跑在 ComfyUI 上，先问服务端；服务端不可达才退回本机。返回的来源字符串
+    会被界面直接展示，所以必须诚实：``server`` / ``local`` / ``unknown``。
     """
-    global _limits_cache
-    if _limits_cache is None:
-        try:
-            from . import hw_probe
-            vram = hw_probe.vram_total_gb()
-        except Exception:  # noqa: BLE001 - 探测失败不影响出片
-            vram = -1.0
-        for row in LIMITS:
-            if vram >= row[0]:
-                _limits_cache = row
-                break
-        else:
-            _limits_cache = LIMITS[-1]
-    return _limits_cache
+    key = (base_url or "").rstrip("/")
+    try:
+        srv = h3_server.probe(base_url or None)
+    except Exception:  # noqa: BLE001 - 探测失败不影响出片
+        srv = {}
+    basis = {"comfy_url": srv.get("base_url") or key}
+    if srv.get("reachable") and float(srv.get("vram_gib") or -1) > 0:
+        vram = float(srv["vram_gib"])
+        basis.update({
+            "vram_source": "server",
+            "gpu_name": srv.get("gpu_name") or "",
+            "server_ram_gib": srv.get("ram_gib", -1),
+            "_vram": vram,
+        })
+        _basis_by_url[key] = basis
+        return vram, "server", srv.get("gpu_name") or ""
+    try:
+        from . import hw_probe
+
+        local = hw_probe.vram_total_gb()
+    except Exception:  # noqa: BLE001
+        local = -1.0
+    source = "local" if local > 0 else "unknown"
+    basis.update({
+        "vram_source": source, "gpu_name": "", "server_ram_gib": -1,
+        "_vram": local if local > 0 else -1.0,
+    })
+    _basis_by_url[key] = basis
+    return (local if local > 0 else -1.0), source, ""
+
+
+def _row_for(vram: float) -> Tuple[float, int, int, str]:
+    for row in LIMITS:
+        if vram >= row[0]:
+            return row
+    return LIMITS[-1]
+
+
+def limits(base_url: Optional[str] = None) -> Tuple[float, int, int, str]:
+    """当前适用的 (显存下限, 画布像素上限, 帧数上限, 档名)。
+
+    显存优先取 ComfyUI 服务端；探测不到才按本机算。两者都拿不到时按 8GB 档
+    处理——保守一侧，宁可提示「上限 1344×768」，也不要在没显存信息的机器上
+    放行 1080p 然后 OOM。
+
+    ``base_url`` 给定时按那台服务算：任务可以自带 ``comfy_url`` 连别的 ComfyUI，
+    拿默认服务的显存去卡它同样是错的。
+    """
+    global _limits_cache, _limits_ts
+    url = (base_url or "").rstrip("/")
+    is_default = not url or url == comfyui._default_base_url().rstrip("/")
+    now = time.time()
+    if is_default:
+        if _limits_cache is not None and (not _limits_ts or now - _limits_ts < _LIMITS_TTL):
+            return _limits_cache
+    else:
+        hit = _per_url.get(url)
+        if hit and now - hit[0] < _LIMITS_TTL:
+            return hit[1]
+    vram, _, _ = _probe_vram(url)
+    row = _row_for(vram)
+    if is_default:
+        _limits_cache, _limits_ts = row, now
+    else:
+        _per_url[url] = (now, row)
+    return row
+
+
+def reset_limits() -> None:
+    """改 ComfyUI 地址、或手动要求重新探测时调用。"""
+    global _limits_cache, _limits_ts
+    _limits_cache = None
+    _limits_ts = 0.0
+    _per_url.clear()
+    _basis_by_url.clear()
+    h3_server.reset_cache()
+
+
+def limits_info(base_url: Optional[str] = None) -> dict:
+    """上限的判定依据（给界面解释「为什么只能到这里」）。"""
+    row = limits(base_url)
+    basis = _basis_by_url.get((base_url or "").rstrip("/")) or {}
+    return {
+        "tier": row[3],
+        "max_pixels": row[1],
+        "max_frames": row[2],
+        "vram_gib": round(basis.get("_vram") or 0, 2) or None,
+        "vram_source": basis.get("vram_source") or "unknown",
+        "gpu_name": basis.get("gpu_name") or "",
+        "comfy_url": basis.get("comfy_url") or "",
+        "server_ram_gib": basis.get("server_ram_gib", -1),
+    }
 
 
 def tiers() -> list:
@@ -149,10 +241,26 @@ def resolve_tier(params: dict) -> dict:
     return QUALITY_TIERS.get(tier_id) or QUALITY_TIERS[DEFAULT_TIER]
 
 
+#: 各档的标定画幅（界面第一个推荐值）。8GB 档就是 FreeVideo 官方标的
+#: 1344×768——注意它是 7:4，不是 16:9；按 16:9 反推只能得到 1344×736，
+#: 比标定少一档，用户点下去就永远拿不到官方那个画幅。
+_CANVAS_BY_PIXELS = {
+    1344 * 768: (1344, 768),
+    1920 * 1088: (1920, 1088),
+}
+
+
 def _canvas_options(pixels: int) -> list:
-    """按上限反推三档常见画幅（16:9 / 9:16 / 1:1），边长取 32 的整数倍。"""
+    """按上限反推常见画幅，边长取 32 的整数倍。
+
+    有标定画幅时先给标定值，再补竖屏与方形；没有才按 16:9 推。
+    """
     out = []
-    for aspect in (16 / 9, 9 / 16, 1.0):
+    native = _CANVAS_BY_PIXELS.get(pixels)
+    if native:
+        out.append(list(native))
+    aspects = (9 / 16, 1.0) if native else (16 / 9, 9 / 16, 1.0)
+    for aspect in aspects:
         width = int(math.sqrt(pixels * aspect) // 32 * 32)
         height = int((width / aspect) // 32 * 32)
         if width >= 256 and height >= 256 and [width, height] not in out:
@@ -160,9 +268,10 @@ def _canvas_options(pixels: int) -> list:
     return out
 
 
-def payload() -> dict:
-    """界面要的一整包：档位清单 + 本机上限。"""
-    _, max_pixels, max_frames, tier_name = limits()
+def payload(base_url: Optional[str] = None) -> dict:
+    """界面要的一整包：档位清单 + 当前上限 + 上限的判定依据。"""
+    _, max_pixels, max_frames, tier_name = limits(base_url)
+    info = limits_info(base_url)
     return {
         "tiers": tiers(),
         "default": DEFAULT_TIER,
@@ -172,6 +281,10 @@ def payload() -> dict:
             "max_frames": max_frames,
             "max_seconds": round(max_frames / 24, 1),
             "canvas_options": _canvas_options(max_pixels),
+            # 依据一起返回：界面要能说清「上限是按哪台机器、什么量化定的」，
+            # 而不是甩一句「超上限」让用户自己猜
+            "basis": {k: v for k, v in info.items()
+                      if k not in ("tier", "max_pixels", "max_frames")},
         },
     }
 
@@ -180,19 +293,34 @@ def is_h3_protocol(template: dict) -> bool:
     return (template.get("_meta") or {}).get("model_id") == "vdn-minimax-h3"
 
 
+def _basis_note(base_url: str = "") -> str:
+    """上限依据的一句话说明，拼在拒绝信息后面。"""
+    info = limits_info(base_url)
+    src = info.get("vram_source")
+    if src == "server":
+        who = info.get("gpu_name") or "ComfyUI 服务端"
+        return f"上限按 ComfyUI 服务端 {who} 标定"
+    if src == "local":
+        return "上限按本机显卡估算（ComfyUI 服务端暂不可达）"
+    return "显存读不到，按最低档保守标定"
+
+
 def _too_big(params: dict) -> None:
-    """超过本机档位的上限就明确拒绝，并给一条能走的路。
+    """超过当前档位的上限就明确拒绝，并给一条能走的路。
 
     不悄悄缩、不悄悄截：存档参数必须和实际输出一致，否则用户拿到 8 秒片
     却以为自己要了 17 秒，问题会被记到「引擎不稳定」上。
     """
-    _, max_pixels, max_frames, tier_name = limits()
+    # 按这个任务实际要连的 ComfyUI 算：params 里带着 comfy_url 时可能不是默认服务
+    url = str(params.get("comfy_url") or "")
+    _, max_pixels, max_frames, tier_name = limits(url)
+    note = _basis_note(url)
     pixels = int(params["width"]) * int(params["height"])
     if pixels > max_pixels:
         raise ValueError(
             f"{tier_name}的画布上限是 {max_pixels} 像素（如 1344×768 或 768×1344），"
             f"当前 {params['width']}×{params['height']} = {pixels} 像素。"
-            "请调小分辨率——H3 跑到标定画布已经是满负荷。"
+            f"请调小分辨率——H3 跑到标定画布已经是满负荷。{note}。"
         )
     frames = int(params["num_frames"])
     if frames > max_frames:
@@ -201,6 +329,7 @@ def _too_big(params: dict) -> None:
             f"{tier_name}的单段上限是 {max_frames} 帧（约 {int(max_frames / 24)} 秒），"
             f"当前 {frames} 帧（约 {seconds:.0f} 秒）。"
             "更长的镜头请拆成两段，用「续接」以上一段的末帧继续（场景与角色能接上）。"
+            f"{note}。"
         )
 
 

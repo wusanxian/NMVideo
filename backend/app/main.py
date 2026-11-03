@@ -124,16 +124,17 @@ def presets():
 
 
 @app.get("/api/h3/tiers")
-def h3_tiers():
-    """H3 专用档位（light / medium / high / max）+ 本机画布/时长上限。
+def h3_tiers(comfy_url: str = ""):
+    """H3 专用档位（light / medium / high / max）+ 画布/时长上限。
 
     与 ``/api/presets`` 分开：那把刀切的是「尺寸 × 帧数」，H3 的档位切的是
     「步数 + 两遍加速 + 步缓存」，两者正交，混成一个列表会让人以为选了
     「极致」就等于 20 步两遍——节点根本不支持那个组合。
     上限一起返回，界面才能在提交前就把范围画出来，而不是等报错。
+    上限按 ComfyUI 服务端的显存算，``comfy_url`` 可指定别的服务预演。
     """
     from .h3_protocol import payload
-    return payload()
+    return payload(comfy_url or None)
 
 # 生产模式：前端构建产物由后端统一托管（单端口 8000）
 # 注意：SPA catch-all 必须最后注册，否则会覆盖 /api/* 路由

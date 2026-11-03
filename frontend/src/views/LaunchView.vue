@@ -65,7 +65,7 @@
     </section>
 
     <!-- ② 视频生成引擎：H3 / Wan 二选一，可用性来自本机实测。
-         H3 走 ComfyUI 插件通道（FreeVideo 那套资源包），门槛与原生通道差三倍，
+         H3 走 ComfyUI 通道（工作流那套资源包），门槛与原生通道差三倍，
          所以这里按「通道」展示要求，不按单一内存数字一刀切。 -->
     <section class="tool-card">
       <div class="tc-top">

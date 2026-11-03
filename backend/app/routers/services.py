@@ -97,7 +97,13 @@ def put_imagegen_config(data: ImageGenConfig):
 
 @router.put("/services/comfy")
 def put_comfy_config(data: ComfyConfig):
-    return settings_module.update_settings({"comfy_url": data.comfy_url})
+    got = settings_module.update_settings({"comfy_url": data.comfy_url})
+    # 换了 ComfyUI 就是换了算力机器：H3 的画布/时长上限按服务端显存算，
+    # 缓存不清会拿上一台的显存去卡新任务（8GB↔24GB 之间判反）
+    from .. import h3_protocol
+
+    h3_protocol.reset_limits()
+    return got
 
 
 # =====================================================================
