@@ -13,6 +13,7 @@
 自己从 ComfyUI 导出的工作流（含 AnimateDiff / VHS_VideoCombine 等自定义节点）。
 """
 import hashlib
+import ipaddress
 import json
 import os
 import threading
@@ -50,6 +51,49 @@ def _ws_url(base: str, client_id: str) -> str:
     return f"{u.rstrip('/')}/ws?clientId={urllib.parse.quote(client_id)}"
 
 
+#: 本机/内网之外才走系统代理。ComfyUI 默认就装在本机，走代理必错。
+_PRIVATE_NETS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+)
+
+
+def _is_direct(base_url: str) -> bool:
+    """这个 ComfyUI 地址是否应该绕过系统代理直连。
+
+    为什么必须判：``requests`` 默认认 ``HTTP_PROXY`` / ``HTTPS_PROXY`` 环境变量，
+    而 ComfyUI 就在本机——一旦用户开着 Clash 之类把代理写进环境变量（或宿主的
+    启动器带着代理变量拉起本程序），连 ``127.0.0.1:8188`` 的请求会被发给代理，
+    拿回 502，界面上就变成「ComfyUI 未连接」，而 ComfyUI 明明在跑。
+    （真机实测：``http_proxy=http://127.0.0.1:51857`` 下 /system_stats 返回 502。）
+
+    判定只认「这个地址是不是内网」：回环、私有网段、链路本地，以及不带点的
+    主机名（``comfyui`` / ``gpu01`` 这类内网 DNS 名）。公网地址照旧走代理——
+    那是用户为了连远端 ComfyUI 特意配的，不能替他关。
+    """
+    try:
+        host = urllib.parse.urlsplit(base_url).hostname or ""
+    except ValueError:
+        return False
+    if not host:
+        # 解析不出主机名：不做判断，交回默认行为
+        return False
+    if host in ("localhost", "0.0.0.0"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # 不是 IP：带点的是公网域名，不带点的是内网主机名
+        return "." not in host
+    if ip.is_loopback or ip.is_link_local:
+        return True
+    return any(ip in net for net in _PRIVATE_NETS if net.version == ip.version)
+
+
 class ComfyUIError(RuntimeError):
     pass
 
@@ -62,6 +106,11 @@ class ComfyUICancelled(ComfyUIError):
 class ComfyUIClient:
     def __init__(self, base_url: str = None):
         self.base_url = (base_url or _default_base_url()).rstrip("/")
+        # 内网/本机服务一律直连，不吃 HTTP_PROXY（见 _is_direct）
+        self.direct = _is_direct(self.base_url)
+        self._session = requests.Session()
+        if self.direct:
+            self._session.trust_env = False
 
     @staticmethod
     def new_client_id(prefix: str = "aivideo") -> str:
@@ -76,19 +125,19 @@ class ComfyUIClient:
     # ---------- 连接性 ----------
     def is_available(self, timeout: float = 2.5) -> bool:
         try:
-            r = requests.get(f"{self.base_url}/system_stats", timeout=timeout)
+            r = self._session.get(f"{self.base_url}/system_stats", timeout=timeout)
             return r.status_code == 200
         except Exception:
             return False
 
     def system_stats(self, timeout: float = 5) -> dict:
-        r = requests.get(f"{self.base_url}/system_stats", timeout=timeout)
+        r = self._session.get(f"{self.base_url}/system_stats", timeout=timeout)
         r.raise_for_status()
         return r.json()
 
     # ---------- 提交 ----------
     def submit(self, workflow: dict, client_id: str = "aivideo") -> str:
-        r = requests.post(
+        r = self._session.post(
             f"{self.base_url}/prompt",
             json={"prompt": workflow, "client_id": client_id},
             timeout=15,
@@ -111,7 +160,7 @@ class ComfyUIClient:
         不再调用它；仅保留给管理用途，默认不应触发。
         """
         try:
-            requests.post(f"{self.base_url}/interrupt", timeout=5)
+            self._session.post(f"{self.base_url}/interrupt", timeout=5)
         except Exception:
             pass
 
@@ -132,7 +181,7 @@ class ComfyUIClient:
         upload_name = name or f"{uuid.uuid4().hex[:12]}_{path.name}"
         with open(path, "rb") as f:
             files = {"image": (upload_name, f, "application/octet-stream")}
-            r = requests.post(
+            r = self._session.post(
                 f"{self.base_url}/upload/image",
                 files=files, data={"overwrite": "true"}, timeout=120,
             )
@@ -195,10 +244,19 @@ class ComfyUIClient:
 
         stage = "提交中"
         last_hist_check = 0.0
+        # WS 也吃 HTTP(S)_PROXY：websockets 14+ 会按环境变量转代理，连本机同样
+        # 拿不到进度。内网地址显式关掉代理；12/13 版没有这个参数（本来也不读
+        # 环境变量），传了会 TypeError，所以按能力降级重试一次。
+        opts = dict(open_timeout=10, close_timeout=5)
+        if self.direct:
+            opts["proxy"] = None
         try:
-            ws = websockets.sync.client.connect(
-                _ws_url(self.base_url, client_id), open_timeout=10, close_timeout=5
-            )
+            try:
+                ws = websockets.sync.client.connect(_ws_url(self.base_url, client_id), **opts)
+            except TypeError:
+                ws = websockets.sync.client.connect(
+                    _ws_url(self.base_url, client_id), open_timeout=10, close_timeout=5
+                )
         except Exception as e:
             # 连不上（ComfyUI 没开/WS 不可用）：转 ComfyUIError 让上层降级轮询
             raise ComfyUIError(f"WS 连接失败: {e}")
@@ -278,7 +336,7 @@ class ComfyUIClient:
         raise ComfyUIError("等待超时")
 
     def get_history(self, prompt_id: str) -> dict:
-        r = requests.get(f"{self.base_url}/history/{prompt_id}", timeout=10)
+        r = self._session.get(f"{self.base_url}/history/{prompt_id}", timeout=10)
         if r.status_code != 200:
             return {}
         return r.json()
@@ -287,7 +345,7 @@ class ComfyUIClient:
         # 与 get_history 一致显式查状态码（不依赖 raise_for_status）：
         # 非 200 抛 ComfyUIError，probe 据此判 temporarily_unavailable
         # （HF-04：服务端错误 ≠ 任务不存在）
-        r = requests.get(f"{self.base_url}/queue", timeout=8)
+        r = self._session.get(f"{self.base_url}/queue", timeout=8)
         if r.status_code != 200:
             raise ComfyUIError(f"queue 接口状态码 {r.status_code}: {r.text[:200]}")
         return r.json()
@@ -312,13 +370,13 @@ class ComfyUIClient:
                    if it and len(it) > 1 and it[1] == prompt_id]
         try:
             if pending:
-                requests.post(
+                self._session.post(
                     f"{self.base_url}/queue",
                     json={"delete": [prompt_id]}, timeout=5,
                 )
                 return "deleted"
             if running:
-                requests.post(f"{self.base_url}/interrupt", timeout=5)
+                self._session.post(f"{self.base_url}/interrupt", timeout=5)
                 return "interrupted"
         except Exception as e:  # noqa: BLE001 - 停不掉也不能挡住中止流程
             return f"error: {e}"
@@ -332,7 +390,7 @@ class ComfyUIClient:
         是「能力查询如实报告不可探测」还是「生成前阻断」。
         """
         try:
-            r = requests.get(f"{self.base_url}/object_info", timeout=10)
+            r = self._session.get(f"{self.base_url}/object_info", timeout=10)
         except requests.RequestException as e:
             raise ComfyUIError(f"object_info 请求失败: {e}") from e
         if r.status_code != 200:
@@ -381,7 +439,7 @@ class ComfyUIClient:
     # ---------- 产物 ----------
     def download(self, filename: str, subfolder: str = "", ftype: str = "output") -> bytes:
         params = {"filename": filename, "subfolder": subfolder or "", "type": ftype}
-        r = requests.get(f"{self.base_url}/view", params=params, timeout=120)
+        r = self._session.get(f"{self.base_url}/view", params=params, timeout=120)
         r.raise_for_status()
         return r.content
 
