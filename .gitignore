@@ -85,3 +85,6 @@ backend/tests/
 desktop/tests/
 test_*.py
 *_test.py
+
+# 本地参考素材（toonflow 等工作流示例，仅本地保留，不入库）
+reference/
