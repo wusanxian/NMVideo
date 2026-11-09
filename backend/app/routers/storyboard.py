@@ -23,6 +23,8 @@ from ..generation import prepare_comfy_workflow, persist_prepared_job
 from .. import db as db_module
 from .. import motion
 from .. import resource_guard
+from .. import assets
+from .. import imagegen
 from ..export import start_export
 from ..queue_manager import job_queue
 
@@ -76,6 +78,10 @@ class SceneUpdate(BaseModel):
     description: Optional[str] = None
     environment: Optional[str] = None
     lighting: Optional[str] = None
+    # 场景幕布（背景图）：拖图 / AI 生成后回写；layout/style 补齐资产面板保存缺口
+    layout: Optional[str] = None
+    style: Optional[str] = None
+    reference_image: Optional[str] = None
 
 
 class ShotCreate(BaseModel):
@@ -294,6 +300,21 @@ def delete_scene(scene_id: str):
     return {"ok": True}
 
 
+@router.post("/scenes/{scene_id}/backdrop")
+def scene_backdrop(scene_id: str):
+    """AI 生成场景幕布（背景）图，回写 scene.reference_image 并返回 URL。"""
+    sc = sb.get_scene(scene_id)
+    if not sc:
+        raise HTTPException(404, "场景不存在")
+    try:
+        url = assets.generate_scene_backdrop(sc)
+    except imagegen.ImageGenError as e:
+        raise HTTPException(400, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"reference_image": url}
+
+
 @router.post("/scenes/{scene_id}/shots/reorder")
 def reorder_shots(scene_id: str, data: ReorderBody):
     sb.reorder_shots(scene_id, data.ids)
@@ -510,6 +531,11 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     motion_seg = motion.compose_motion_prompt(shot, characters)
     if motion_seg:
         prompt = f"{prompt} || {motion_seg}" if prompt.strip() else motion_seg
+    # 场景幕布：把环境/光照拼进提示词（跨镜头场景一致；角色管「谁」、场景管「在哪/什么光」）
+    scene_id = shot.get("scene_id") or ""
+    scene = sb.get_scene(scene_id) if scene_id else None
+    if scene:
+        prompt = assets.compose_prompt_with_scene({"prompt": prompt}, scene)
     if mode == "continuation":
         prompt = (prompt + " || continuous shot, seamless continuation, "
                   "same character and scene as the previous shot").strip(" |")

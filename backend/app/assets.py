@@ -173,6 +173,53 @@ def compose_prompt_with_characters(shot: dict, characters: list) -> str:
     return f"{prefix} || {base}" if base else prefix
 
 
+def compose_prompt_with_scene(shot: dict, scene: dict) -> str:
+    """把场景 environment/lighting 拼到分镜提示词尾部（跨镜头场景一致）。
+
+    角色管「谁」，场景管「在哪 / 什么光」——两者正交、互不干扰。
+    与 compose_prompt_with_characters 完全镜像，只是拼装段不同。
+    """
+    base = (shot.get("prompt") or "").strip()
+    if not scene:
+        return base
+    seg = []
+    if scene.get("environment"):
+        seg.append(f"scene: {scene['environment'].strip()}")
+    if scene.get("lighting"):
+        seg.append(f"lighting: {scene['lighting'].strip()}")
+    if not seg:
+        return base
+    suffix = " || ".join(seg)
+    return f"{base} || {suffix}" if base else suffix
+
+
+def generate_scene_backdrop(scene: dict) -> str:
+    """根据场景环境 / 风格 / 光照 / 布局生成幕布（背景）图，回写 scene.reference_image。
+
+    返回生成的 URL。依赖「模型服务」页配置的 imagegen（OpenAI 兼容 images 端点）。
+    背景图刻意加负向语义的提示（空镜、无人物）以避免把角色画进幕布。
+    """
+    from . import imagegen
+    from . import storyboard as sb
+
+    env = (scene.get("environment") or "").strip()
+    style = (scene.get("style") or "").strip()
+    light = (scene.get("lighting") or "").strip()
+    layout = (scene.get("layout") or "").strip()
+    if not env and not style:
+        raise ValueError("场景缺少 environment / style，无法生成幕布图")
+    seg = [s for s in (env, style, light, layout) if s]
+    prompt = "，".join(seg)
+    prompt += ("，电影感环境背景，空镜，无人物，宽视角展现场景空间与氛围，"
+               "高细节，用于动画分镜背景")
+    urls = imagegen.generate_image(prompt=prompt, size="1280x720", n=1)
+    if not urls:
+        raise ValueError("图像服务未返回幕布图")
+    url = urls[0]
+    sb.update_scene(scene["id"], reference_image=url)
+    return url
+
+
 def _decode(c: dict) -> None:
     for key in ("expressions", "reference_images"):
         try:

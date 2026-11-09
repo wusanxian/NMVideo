@@ -119,7 +119,7 @@
 
       <div class="panel">
         <h3>场景资产</h3>
-        <p class="hint">保存环境、光照、布局与风格；生成该场景下的镜头时可作氛围参考。</p>
+        <p class="hint">保存环境、光照、布局与风格，并可为场景设置一张幕布（背景）图（拖图 / 选图 / AI 生成）。该场景下的镜头生成时会自动把「环境 + 光照」拼入提示词，保证跨镜头场景一致。</p>
         <div v-for="scene in project.scenes" :key="scene.id" class="scene-asset">
           <div class="sa-title">🎬 {{ scene.title }}</div>
           <div class="sa-grid">
@@ -131,6 +131,25 @@
                    @change="store.saveScene(scene.id, { layout: $event.target.value })" />
             <input :value="scene.style" placeholder="风格，如：赛博朋克动漫"
                    @change="store.saveScene(scene.id, { style: $event.target.value })" />
+          </div>
+          <!-- 场景幕布：拖图 / 选图设为背景，或 AI 生成 -->
+          <div class="sa-backdrop" @drop.prevent="onBackdropDrop(scene, $event)" @dragover.prevent>
+            <div class="sa-bd-head">
+              <span class="sa-bd-label">幕布图（拖图片到此 / 点击选择）</span>
+              <button class="btn small" :disabled="backdropBusy === scene.id"
+                      @click="generateBackdrop(scene)">
+                {{ backdropBusy === scene.id ? '生成中…' : '✨ AI 生成幕布' }}
+              </button>
+            </div>
+            <div v-if="scene.reference_image" class="sa-bd-preview">
+              <img :src="scene.reference_image" alt="幕布" />
+              <button class="icon-btn danger" title="移除幕布" @click.stop="removeBackdrop(scene)">✕</button>
+            </div>
+            <label v-else class="sa-bd-drop">
+              <span class="sa-bd-icon">🖼</span>
+              <span>拖拽图片到此处，或<span class="link">点击选择</span></span>
+              <input type="file" accept="image/*" hidden @change="onBackdropPick(scene, $event)" />
+            </label>
           </div>
         </div>
         <div v-if="!project.scenes.length" class="empty">还没有场景。</div>
@@ -569,6 +588,7 @@ const comfy = ref({ online: false, url: '' })
 // 资产库
 const characters = ref([])
 const editingCharacter = ref(null)
+const backdropBusy = ref('')
 
 // 时间线（多轨）
 const timeline = ref([])
@@ -833,6 +853,53 @@ async function removeCharacter(c) {
   if (!confirm(`删除角色「${c.name}」？关联分镜会解除绑定。`)) return
   await api.deleteCharacter(c.id)
   await loadCharacters()
+}
+
+// ---------- 场景幕布（拖图 / 选图 / AI 生成） ----------
+async function uploadBackdrop(scene, file) {
+  if (!file) return
+  try {
+    const up = await api.uploadFile(file)
+    await store.saveScene(scene.id, { reference_image: up.url })
+    message.value = '已设为场景幕布图'
+    setTimeout(() => (message.value = ''), 2000)
+  } catch (e) {
+    message.value = e.message
+  }
+}
+
+async function onBackdropDrop(scene, e) {
+  const file = e.dataTransfer?.files?.[0]
+  if (file) { await uploadBackdrop(scene, file); return }
+  // 兼容应用内拖拽的图片 URL（如未来画廊拖入）
+  const url = e.dataTransfer?.getData('text/plain')
+  if (url && /^(https?:\/\/|\/outputs)/.test(url)) {
+    await store.saveScene(scene.id, { reference_image: url })
+  }
+}
+
+function onBackdropPick(scene, e) {
+  const file = e.target.files?.[0]
+  uploadBackdrop(scene, file)
+  e.target.value = ''
+}
+
+async function generateBackdrop(scene) {
+  backdropBusy.value = scene.id
+  try {
+    await api.generateSceneBackdrop(scene.id)
+    await store.refresh()
+    message.value = '已生成场景幕布图'
+    setTimeout(() => (message.value = ''), 2500)
+  } catch (e) {
+    message.value = e.message
+  } finally {
+    backdropBusy.value = ''
+  }
+}
+
+async function removeBackdrop(scene) {
+  await store.saveScene(scene.id, { reference_image: '' })
 }
 
 // ---------- 剧本 ----------
@@ -1196,6 +1263,32 @@ async function loadHistory() {
   color: var(--text); padding: 7px 10px; font-size: 12.5px; font-family: inherit;
 }
 .sa-grid input:focus { border-color: var(--accent); outline: none; }
+
+/* ---- 场景幕布（拖图 / AI 生成） ---- */
+.sa-backdrop {
+  margin-top: 12px; border: 1px dashed var(--border); border-radius: 8px;
+  padding: 10px 12px; background: var(--bg-panel);
+}
+.sa-bd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.sa-bd-label { font-size: 12.5px; color: var(--text-dim); }
+.sa-bd-head .btn.small { margin-left: auto; }
+.sa-bd-preview { position: relative; display: inline-block; }
+.sa-bd-preview img {
+  width: 100%; max-height: 180px; object-fit: cover; border-radius: 6px;
+  border: 1px solid var(--border); display: block;
+}
+.sa-bd-preview .icon-btn.danger {
+  position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.55); color: #fff;
+}
+.sa-bd-preview .icon-btn.danger:hover { color: #fff; background: var(--red); }
+.sa-bd-drop {
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  min-height: 72px; cursor: pointer; color: var(--text-dim); font-size: 12.5px;
+  border-radius: 6px;
+}
+.sa-bd-drop:hover { border-color: var(--accent); color: var(--text); }
+.sa-bd-icon { font-size: 22px; }
+.sa-bd-drop .link { color: var(--accent); text-decoration: underline; }
 
 /* ---------- 多轨时间线 ---------- */
 .tl-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }

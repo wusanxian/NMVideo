@@ -73,6 +73,8 @@ export const api = {
   createScene: (pid, data) => request(`/projects/${pid}/scenes`, { method: 'POST', body: JSON.stringify(data) }),
   updateScene: (id, data) => request(`/scenes/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteScene: (id) => request(`/scenes/${id}`, { method: 'DELETE' }),
+  // 场景幕布：AI 生成背景图，回写 scene.reference_image
+  generateSceneBackdrop: (id) => request(`/scenes/${id}/backdrop`, { method: 'POST' }),
   reorderShots: (sceneId, ids) => request(`/scenes/${sceneId}/shots/reorder`, { method: 'POST', body: JSON.stringify({ ids }) }),
 
   createShot: (sceneId, data) => request(`/scenes/${sceneId}/shots`, { method: 'POST', body: JSON.stringify(data) }),
