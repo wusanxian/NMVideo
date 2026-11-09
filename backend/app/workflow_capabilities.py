@@ -26,7 +26,7 @@ import json
 import re
 from typing import Optional
 
-SUPPORTED_MODES = ("t2v", "i2v", "first_last", "continuation")
+SUPPORTED_MODES = ("t2v", "i2v", "first_last", "continuation", "v2v")
 
 EXECUTION_KINDS = ("local", "paid_api")
 

@@ -62,6 +62,7 @@ class BaseEngine(ABC):
         reference_image: str = "",
         first_frame_image: str = "",
         last_frame_image: str = "",
+        reference_video: str = "",
         resume_prompt_id: str = "",
         workflow_snapshot: str = "",
         on_submitted: Optional[SubmittedCallback] = None,

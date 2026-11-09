@@ -46,6 +46,10 @@ class H3ComfyEngine(ComfyEngine):
             "需 ComfyUI 侧装有 H3 插件节点（8GB 显存 / 32GB 内存起）"
         ),
         status="ready",
+        # 注意：v2v（白模替换/视频参考）走的是 minimax_h3_v2v API 预设（B 包
+        # MiniMax H3 Max Generate Video），由「comfyui 通用引擎 + 应用该模板」
+        # 执行；本 h3 引擎只路由原生 FreeVideoGenerate 预设（家族 A 无视频参考），
+        # 故这里不包含 v2v（否则会静默回退到 t2v 原生预设，生成结果错误）。
         supported_modes=("t2v", "i2v", "first_last", "continuation"),
         # 与 comfyui 引擎同属 ComfyUI 通道：队列、快照、断线恢复走同一套逻辑
         execution_channel="comfyui",

@@ -549,6 +549,7 @@ class JobQueue:
                     reference_image=job.get("reference_image") or "",
                     first_frame_image=job.get("first_frame_image") or "",
                     last_frame_image=job.get("last_frame_image") or "",
+                    reference_video=job.get("reference_video") or "",
                     resume_prompt_id=resume_prompt_id,
                     workflow_snapshot=workflow_snapshot,
                     on_submitted=on_submitted,

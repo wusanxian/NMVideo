@@ -156,11 +156,16 @@ def main():
     # 9) ComfyUI 预设：列表 / 应用 / 落盘
     st, r = call("GET", "/comfy/presets")
     ids = [p["id"] for p in r["presets"]]
-    assert ids == ["default", "anime_diff", "minimax_h3_i2v", "minimax_h3_t2v", "wan_ti2v"], ids
+    # 关键预设必须存在（子集断言：避免其它大类预设新增时整条易碎；
+    # minimax_h3_* 系列已改用 B 包 MiniMax H3 Max Generate Video 节点）
+    for pid in ("default", "anime_diff", "minimax_h3_i2v", "minimax_h3_t2v",
+                "minimax_h3_v2v", "wan_ti2v"):
+        assert pid in ids, (pid, ids)
     st, wf = call("POST", "/comfy/presets/minimax_h3_t2v/apply")
-    assert st == 200 and "MiniMaxTextToVideo" in json.dumps(wf["prompt"]), wf
+    assert st == 200 and "MiniMax H3 Max Generate Video" in json.dumps(wf["prompt"]), wf
     st, cur = call("GET", "/comfy/workflow")
-    assert any(n.get("class_type") == "MiniMaxTextToVideo" for n in cur["prompt"].values()), cur
+    assert any(n.get("class_type") == "MiniMax H3 Max Generate Video"
+               for n in cur["prompt"].values()), cur
     st, _ = call("POST", "/comfy/presets/wan_ti2v/apply")
     st, cur = call("GET", "/comfy/workflow")
     assert any(n.get("class_type") == "UNETLoader" for n in cur["prompt"].values()), cur

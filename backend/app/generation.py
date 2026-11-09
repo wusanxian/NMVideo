@@ -13,7 +13,7 @@ from .workflow_capabilities import (
 
 def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_dir=None) -> tuple:
     from .config import OUTPUTS_DIR
-    from .generation_assets import upload_condition
+    from .generation_assets import upload_condition, upload_condition_video
     output_dir = Path(output_dir or OUTPUTS_DIR)
     client = client or comfyui.ComfyUIClient(params.get("comfy_url") or None)
     params["comfy_url"] = client.base_url
@@ -54,13 +54,20 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         if not isinstance(target, dict) or str(target.get("node")) not in template["prompt"] or not target.get("input"):
             raise ValueError(f"工作流参数映射无效：{key}，请检查节点与输入字段")
     first_key = "first_frame_image" if mapping.get("first_frame_image") else "reference_image"
-    if mode != "t2v" and not mapping.get(first_key):
+    if mode not in ("t2v", "v2v") and not mapping.get(first_key):
         raise ValueError("当前工作流模板未映射首帧节点，无法执行图片条件模式")
     if mode == "first_last":
         if not mapping.get("last_frame_image"):
             raise ValueError("当前工作流模板未映射尾帧节点，无法执行首尾帧模式")
         if mapping[first_key] == mapping["last_frame_image"]:
             raise ValueError("首帧与尾帧不能映射到同一输入字段")
+    if mode == "v2v":
+        # 白模替换（视频参考）：参考视频(运动) + 角色参考图(外观) 二者缺一不可。
+        # 视频参考不进入「首帧」语义——v2v 的参考视频是运动条件而非首帧图。
+        if not mapping.get("reference_video"):
+            raise ValueError("当前工作流模板未映射参考视频节点，无法执行视频参考（白模替换）模式")
+        if not mapping.get("reference_image"):
+            raise ValueError("当前工作流模板未映射参考图节点，无法执行视频参考（白模替换）模式")
 
     inject = dict(params)
     if native:
@@ -69,7 +76,29 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         for key in ("refine_steps", "upscale_factor", "step_cache"):
             if h3_available and key not in h3_available:
                 inject.pop(key, None)
-    if mode != "t2v":
+    if mode == "v2v":
+        # 白模替换：参考视频（白模运动）+ 角色参考图（外观），二者缺一不可。
+        rv = params.get("reference_video")
+        if not rv:
+            raise ValueError("视频参考（白模替换）模式需要设置白模视频（运动参考）")
+        ri = params.get("reference_image")
+        if not ri:
+            raise ValueError("视频参考（白模替换）模式需要设置角色参考图（外观参考）")
+        inject["reference_video"] = rv
+        inject["reference_image"] = ri
+        # 视频走视频专用上传分支（VHS_LoadVideo / ComfyUI input 目录）
+        try:
+            rv_remote = upload_condition_video(params, client, rv, "reference_video", output_dir)
+        except Exception as exc:
+            raise ValueError(f"白模视频上传 ComfyUI 失败: {exc}") from exc
+        inject["reference_video"] = rv_remote
+        # 角色图走图片上传分支（LoadImage / ComfyUI input 目录）
+        try:
+            ri_remote = upload_condition(params, client, ri, "reference_image", output_dir)
+        except Exception as exc:
+            raise ValueError(f"角色参考图上传 ComfyUI 失败: {exc}") from exc
+        inject["reference_image"] = ri_remote
+    elif mode != "t2v":
         first = params.get("first_frame_image") or params.get("reference_image")
         if not first:
             raise ValueError("图片条件模式需要设置参考图/首帧图片")
@@ -81,15 +110,19 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         if mode == "first_last" and not params.get("last_frame_image"):
             raise ValueError("首尾帧模式需要同时设置尾帧图片")
     uploaded = {}
-    for key in ("reference_image", "first_frame_image", "last_frame_image"):
-        if inject.get(key) and mapping.get(key):
-            url = inject[key]
-            if url not in uploaded:
-                try:
-                    uploaded[url] = upload_condition(params, client, url, key, output_dir)
-                except Exception as exc:
-                    raise ValueError(f"参考图上传 ComfyUI 失败: {exc}") from exc
-            inject[key] = uploaded[url]
+    if mode != "v2v":
+        # 图片条件模式（i2v / first_last / continuation）上传首/尾帧参考图。
+        # 多参考图（reference_image_2+）在下方单独处理；v2v 的参考图/视频已
+        # 在上方的 v2v 分支上传，不在此重复。
+        for key in ("reference_image", "first_frame_image", "last_frame_image"):
+            if inject.get(key) and mapping.get(key):
+                url = inject[key]
+                if url not in uploaded:
+                    try:
+                        uploaded[url] = upload_condition(params, client, url, key, output_dir)
+                    except Exception as exc:
+                        raise ValueError(f"参考图上传 ComfyUI 失败: {exc}") from exc
+                inject[key] = uploaded[url]
 
     # ---- 多参考图（改造.md PR-08 后半）：注入模板声明的 reference_image_N 槽位 ----
     # 模板 _aivideo_map 里映射了 reference_image_2..N 即声明支持对应数量的额外

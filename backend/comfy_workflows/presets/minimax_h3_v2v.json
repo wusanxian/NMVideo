@@ -1,0 +1,54 @@
+{
+  "_comment": "白模替换 / video-reference（H3 API 全能参考，magicwang1111/ComfyUI-MiniMax-H3-API 包）。节点名已对照该包 NODE_CLASS_MAPPINGS 核实。白模视频(VHS_LoadVideo)→Content Builder.video_1 + 角色图(LoadImage)→Content Builder.image_1 + prompt → Max Generate Video。未集成/未实机验证。",
+  "_meta": {
+    "name": "MiniMax H3 · 视频参考替换（白模替换，API）",
+    "description": "以白模视频为运动参考(video_1) + 角色图为外观参考(image_1)，生成替换后的视频（H3 API 计费）。需 magicwang1111/ComfyUI-MiniMax-H3-API 节点包 + ComfyUI-VideoHelperSuite(VHS_LoadVideo)。",
+    "requires": "magicwang1111/ComfyUI-MiniMax-H3-API + ComfyUI-VideoHelperSuite",
+    "api_provider_package": "magicwang1111/ComfyUI-MiniMax-H3-API",
+    "mode": "v2v",
+    "execution_kind": "paid_api",
+    "model_id": "minimax-h3",
+    "required_nodes": ["MiniMax H3 Content Builder", "MiniMax H3 Max Generate Video", "VHS_LoadVideo", "LoadImage"],
+    "required_models": [],
+    "supports": ["v2v"],
+    "max_reference_videos": 1,
+    "max_reference_images": 1,
+    "min_vram_gb": 0,
+    "vram_hint": "云端 API 计算：本地仅节点编排，显存占用低；按 H3 API 计费",
+    "constraint": "Max Generate Video 的 first_frame/last_frame 不能与参考媒体混用；白模替换只用 video_1 参考。参考视频上限 3 段/每段 2-15s/合计≤15s（H3 API 限制）。"
+  },
+  "prompt": {
+    "1": {
+      "class_type": "LoadImage",
+      "inputs": {"image": ""}
+    },
+    "2": {
+      "class_type": "VHS_LoadVideo",
+      "inputs": {"video": ""}
+    },
+    "3": {
+      "class_type": "MiniMax H3 Content Builder",
+      "inputs": {
+        "prompt": "",
+        "image_1": ["1", 0],
+        "video_1": ["2", 0]
+      }
+    },
+    "4": {
+      "class_type": "MiniMax H3 Max Generate Video",
+      "inputs": {
+        "content": ["3", 0],
+        "resolution": "768P",
+        "duration": "6",
+        "ratio": "adaptive",
+        "prompt_expansion_mode": "balanced",
+        "seed": 0
+      }
+    }
+  },
+  "_aivideo_map": {
+    "prompt": {"node": "3", "input": "prompt"},
+    "reference_image": {"node": "1", "input": "image"},
+    "reference_video": {"node": "2", "input": "video"}
+  }
+}

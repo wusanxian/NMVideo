@@ -1,30 +1,39 @@
 {
-  "_comment": "MiniMax H3 文生视频工作流（需要 ComfyUI 安装 MiniMax API 自定义节点，如 ComfyUI-MiniMax-Nodes）。",
+  "_comment": "MiniMax H3 文生视频（云端 API，magicwang1111/ComfyUI-MiniMax-H3-API 包）。节点名已对照该包 NODE_CLASS_MAPPINGS 核实。API Key 走该包 local.json（节点执行时读取，不写进 workflow）。",
   "_meta": {
-    "name": "MiniMax H3 · 文生视频",
-    "description": "调用 MiniMax H3 视频模型生成（API 计费）。需要安装 MiniMax 自定义节点并填 API Key。",
-    "requires": "ComfyUI-MiniMax 自定义节点",
+    "name": "MiniMax H3 · 文生视频（API）",
+    "description": "调用 MiniMax H3 视频模型生成（API 计费）。需安装 magicwang1111/ComfyUI-MiniMax-H3-API 节点包，并在其 local.json 填 API Key。",
+    "requires": "magicwang1111/ComfyUI-MiniMax-H3-API（ComfyUI 节点包）",
+    "api_provider_package": "magicwang1111/ComfyUI-MiniMax-H3-API",
     "mode": "t2v",
     "execution_kind": "paid_api",
     "model_id": "minimax-h3",
-    "required_nodes": ["MiniMaxAPIConfig", "MiniMaxTextToVideo", "SaveVideo"],
+    "required_nodes": ["MiniMax H3 Content Builder", "MiniMax H3 Max Generate Video"],
+    "required_models": [],
     "supports": ["t2v"],
     "min_vram_gb": 0,
-    "vram_hint": "云端 API 计算：本地显存占用低；按 API 计费（不是免费本地模型）"
+    "vram_hint": "云端 API 计算：本地仅节点编排，显存占用低；按 H3 API 计费（非免费本地模型）"
   },
   "prompt": {
-    "1": {"class_type": "MiniMaxAPIConfig",
-          "inputs": {"api_key": "", "model": "MiniMax-H3"}},
-    "2": {"class_type": "MiniMaxTextToVideo",
-          "inputs": {"prompt": " cinematic shot, anime style",
-                     "duration": 6,
-                     "resolution": "720P",
-                     "config": ["1", 0]}},
-    "3": {"class_type": "SaveVideo",
-          "inputs": {"filename_prefix": "aivideo_minimax",
-                     "fps": 24, "video": ["2", 0]}}
+    "1": {
+      "class_type": "MiniMax H3 Content Builder",
+      "inputs": {
+        "prompt": ""
+      }
+    },
+    "2": {
+      "class_type": "MiniMax H3 Max Generate Video",
+      "inputs": {
+        "content": ["1", 0],
+        "resolution": "768P",
+        "duration": "6",
+        "ratio": "16:9",
+        "prompt_expansion_mode": "balanced",
+        "seed": 0
+      }
+    }
   },
   "_aivideo_map": {
-    "prompt": {"node": "2", "input": "prompt"}
+    "prompt": {"node": "1", "input": "prompt"}
   }
 }

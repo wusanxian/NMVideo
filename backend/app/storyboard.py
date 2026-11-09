@@ -253,7 +253,7 @@ def create_shot(scene_id: str, **fields) -> dict:
         "shots",
         ["id", "scene_id", "title", "dialogue", "shot_size", "camera_movement",
          "duration_s", "prompt", "negative_prompt", "reference_image",
-         "first_frame_image", "last_frame_image",
+         "first_frame_image", "last_frame_image", "reference_video",
          "character_ids", "mode", "continue_from", "order_index",
          # PR-10 后半：动作模板 + 构图约束
          "motion_template_id", "composition",
@@ -263,7 +263,8 @@ def create_shot(scene_id: str, **fields) -> dict:
          fields.get("camera_movement", "固定"), float(fields.get("duration_s", 3)),
          fields.get("prompt", ""), fields.get("negative_prompt", ""),
          fields.get("reference_image", ""), fields.get("first_frame_image", ""),
-         fields.get("last_frame_image", ""), json.dumps(fields.get("character_ids") or []),
+         fields.get("last_frame_image", ""), fields.get("reference_video", ""),
+         json.dumps(fields.get("character_ids") or []),
          fields.get("mode", "t2v"), fields.get("continue_from", ""),
          fields.get("order_index", max_order + 1),
          fields.get("motion_template_id", ""),
@@ -334,6 +335,8 @@ def update_shot(shot_id: str, **fields) -> Optional[dict]:
         "first_frame_image", "last_frame_image", "source_video_version_id",
         # PR-08 后半：多参考图（JSON 字符串数组，单槽 reference_image 兼容不变）
         "reference_images",
+        # v2v：白模替换（视频参考）的运动视频 URL
+        "reference_video",
         # PR-10 后半：动作模板 + 构图约束（composition 由 motion 归一后落库）
         "motion_template_id", "composition",
     }

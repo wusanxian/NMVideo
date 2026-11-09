@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from . import comfyui
-from .managed_paths import IMAGE_SUFFIXES, resolve_managed_asset
+from .managed_paths import IMAGE_SUFFIXES, VIDEO_SUFFIXES, resolve_managed_asset
 
 
 def upload_condition(params: dict, client, url: str, role: str, output_dir: Path) -> str:
@@ -29,6 +29,32 @@ def upload_condition(params: dict, client, url: str, role: str, output_dir: Path
     return remote
 
 
+def upload_condition_video(params: dict, client, url: str, role: str, output_dir: Path) -> str:
+    """白模替换（v2v）：参考视频（白模视频）固化 + 上传 ComfyUI（视频版）。
+
+    与 upload_condition 同一套内容寻址冻结 + 来源清单机制，仅扩展名白名单
+    与上传函数换成视频版。返回 ComfyUI input 目录引用名。
+    """
+    source = resolve_managed_asset(url, allowed_types=VIDEO_SUFFIXES, base_dir=output_dir)
+    record = {"source_url": url, "role": role}
+    upload_url = url
+    if source and source.is_file():
+        content = source.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        frozen = Path(output_dir) / "assets" / f"{digest}{source.suffix.lower()}"
+        frozen.parent.mkdir(parents=True, exist_ok=True)
+        if not frozen.exists() or hashlib.sha256(frozen.read_bytes()).hexdigest() != digest:
+            frozen.write_bytes(content)
+        upload_url = f"/outputs/assets/{frozen.name}"
+        record.update(sha256=digest, frozen_url=upload_url)
+    remote = comfyui.upload_reference_video(client, upload_url)
+    record["comfy_input"] = remote
+    manifest = json.loads(params.get("generation_inputs") or "[]")
+    manifest.append(record)
+    params["generation_inputs"] = json.dumps(manifest, ensure_ascii=False)
+    return remote
+
+
 def restore_conditions(params: dict, graph: dict, template: dict, output_dir: Path) -> None:
     """升级时重新上传冻结副本，避免依赖服务端尚未清理的 input 文件。"""
     records = json.loads(params.get("generation_inputs") or "[]")
@@ -45,7 +71,9 @@ def restore_conditions(params: dict, graph: dict, template: dict, output_dir: Pa
         for node in graph.values():
             if node.get("class_type") == "LoadImage" and node.get("inputs", {}).get("image") == old:
                 node["inputs"]["image"] = remote
-        for role in ("reference_image", "first_frame_image", "last_frame_image"):
+            elif node.get("class_type") == "VHS_LoadVideo" and node.get("inputs", {}).get("video") == old:
+                node["inputs"]["video"] = remote
+        for role in ("reference_image", "first_frame_image", "last_frame_image", "reference_video"):
             target = template.get("_aivideo_map", {}).get(role) or {}
             inputs = graph.get(str(target.get("node")), {}).get("inputs", {})
             if inputs.get(target.get("input")) == old:

@@ -89,6 +89,8 @@ class ShotCreate(BaseModel):
     reference_image: str = ""
     first_frame_image: str = ""
     last_frame_image: str = ""
+    # v2v：白模替换（视频参考）的运动视频 URL（白模视频）
+    reference_video: str = ""
     # PR-10 后半：动作模板 + 构图约束
     motion_template_id: str = ""
     composition: dict = Field(default_factory=dict)
@@ -106,6 +108,8 @@ class ShotUpdate(BaseModel):
     # PR-02：独立首/尾帧（first_last 模式分别注入工作流首/尾帧节点）
     first_frame_image: Optional[str] = None
     last_frame_image: Optional[str] = None
+    # v2v：白模替换（视频参考）的运动视频 URL（覆盖 shot 上的默认值）
+    reference_video: Optional[str] = None
     # PR-08 后半：多参考图（额外参考图 URL 数组，≤4 张；与单槽 reference_image 共存）
     reference_images: Optional[list] = None
     # PR-10 后半：动作模板 + 构图约束（composition: {character_positions, character_facing}）
@@ -127,8 +131,10 @@ class ShotGenerate(BaseModel):
     preview: bool = False
     use_character_images: bool = True
     use_character_lora: bool = True
-    mode: str = Field("t2v", pattern="^(t2v|i2v|first_last|continuation)$")
+    mode: str = Field("t2v", pattern="^(t2v|i2v|first_last|continuation|v2v)$")
     continue_from: str = ""
+    # v2v：白模替换（视频参考）的运动视频 URL（覆盖 shot 上的默认值）
+    reference_video: str = ""
 
 
 class ShotReview(BaseModel):
@@ -411,10 +417,12 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     if data.engine not in ENGINES:
         raise HTTPException(400, f"未知引擎: {data.engine}")
 
-    # ---- 参考图 / 首尾帧 / 续接处理（PR-02：独立首帧+尾帧）----
+    # ---- 参考图 / 首尾帧 / 续接 / 白模替换视频参考处理 ----
     reference_image = (shot.get("reference_image") or "").strip()
     first_frame = (shot.get("first_frame_image") or "").strip()
     last_frame = (shot.get("last_frame_image") or "").strip()
+    reference_video = (data.reference_video if "reference_video" in data.model_fields_set
+                       else (shot.get("reference_video") or "")).strip()
     continue_from = (data.continue_from if "continue_from" in data.model_fields_set else shot.get("continue_from") or "").strip()
     source_version_id = (shot.get("source_video_version_id") or "").strip()
     mode = data.mode if "mode" in data.model_fields_set else (shot.get("mode") or "t2v")
@@ -476,6 +484,21 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             raise HTTPException(
                 400, "首尾帧模式需要同时设置尾帧图片（PR-02：首帧与尾帧分别独立输入）"
             )
+    elif mode == "v2v":
+        # 白模替换（视频参考）：白模视频（运动参考）+ 角色参考图（外观参考）缺一不可。
+        # 白模视频取自 shot.reference_video（用户为该镜头设置的白模/运动视频）；
+        # 角色外观参考图复用 reference_image（与 i2v 同源——同一张角色外观图）。
+        # 该模式依赖 minimax_h3_v2v API 预设（B 包 MiniMax H3 Max Generate Video），
+        # 由「comfyui 引擎 + 应用该模板」执行；原生 h3 引擎无视频参考能力。
+        if not reference_video:
+            raise HTTPException(
+                400, "视频参考（白模替换）模式需要先设置白模视频（运动参考）："
+                "在分镜上填 reference_video，或本次请求携带 reference_video"
+            )
+        if not reference_image:
+            raise HTTPException(
+                400, "视频参考（白模替换）模式需要先设置角色参考图（外观参考，复用参考图字段）"
+            )
 
     # ---- 提示词：角色一致性拼装 ----
     prompt = shot["prompt"]
@@ -498,6 +521,8 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     params["negative_prompt"] = shot.get("negative_prompt") or ""
     params["shot_id"] = shot_id
     params["reference_image"] = reference_image
+    # v2v：白模替换（视频参考）的运动视频——入队即冻结（与首尾帧/参考图同语义）
+    params["reference_video"] = reference_video
     params["mode"] = mode
     params["continue_from"] = continue_from
     # PR-02：入队即冻结输入资产（首/尾帧与续接来源版本）——

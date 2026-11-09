@@ -834,6 +834,27 @@ class Database:
                     "ALTER TABLE exports ADD COLUMN warnings TEXT DEFAULT '[]'")
             self._conn.commit()
 
+        # ---------- 第十八批轻量迁移：白模替换视频参考（v2v 模式） ----------
+        # shots.reference_video：白模/运动参考视频 URL（v2v 模式的视频条件）。
+        # jobs.reference_video：入队冻结的视频参考（可复现：与首尾帧/参考图同源）。
+        # 纯新增列，旧数据回落空串。仅 v2v 模式消费，其它模式忽略该字段。
+        with self._lock:
+            shot_cols18 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(shots)").fetchall()
+            }
+            if "reference_video" not in shot_cols18:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN reference_video TEXT DEFAULT ''")
+            job_cols18 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(jobs)").fetchall()
+            }
+            if "reference_video" not in job_cols18:
+                self._conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN reference_video TEXT DEFAULT ''")
+            self._conn.commit()
+
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------
         try:
             self.last_orphan_audit = self.audit_orphans()

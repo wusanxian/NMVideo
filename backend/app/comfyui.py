@@ -26,7 +26,7 @@ from typing import Callable, Optional
 import requests
 
 from .config import OUTPUTS_DIR
-from .managed_paths import IMAGE_SUFFIXES, resolve_managed_asset
+from .managed_paths import IMAGE_SUFFIXES, VIDEO_SUFFIXES, resolve_managed_asset
 
 WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "comfy_workflows"
 DEFAULT_WORKFLOW = WORKFLOWS_DIR / "default.json"
@@ -607,6 +607,24 @@ def upload_reference_image(client: "ComfyUIClient", url: str) -> str:
     if not p or not p.is_file():
         raise ComfyUIError(f"参考图文件不存在或非受管路径: {url}")
     data = client.upload_image(p)
+    sub = (data.get("subfolder") or "").strip("/")
+    name = data.get("name") or ""
+    return f"{sub}/{name}" if sub else name
+
+
+def upload_reference_video(client: "ComfyUIClient", url: str, output_dir=None) -> str:
+    """参考视频 URL → ComfyUI input 目录里的引用名（白模替换 v2v）。
+
+    与 upload_reference_image 同理，但针对视频：经 ComfyUI ``/upload/image``
+    端点上传（该端点按扩展名落 input 目录，视频同样适用），VHS_LoadVideo
+    读该文件名即可。上传失败抛 ComfyUIError。
+    """
+    from .config import OUTPUTS_DIR
+    output_dir = Path(output_dir or OUTPUTS_DIR)
+    p = resolve_managed_asset(url, allowed_types=VIDEO_SUFFIXES, base_dir=output_dir)
+    if not p or not p.is_file():
+        raise ComfyUIError(f"白模视频文件不存在或非受管路径: {url}")
+    data = client.upload_image(p)  # /upload/image 端点按扩展名处理视频
     sub = (data.get("subfolder") or "").strip("/")
     name = data.get("name") or ""
     return f"{sub}/{name}" if sub else name

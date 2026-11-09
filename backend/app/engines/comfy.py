@@ -39,6 +39,7 @@ from ..comfyui import (
     extract_output_files,
     load_workflow_template,
     upload_reference_image,
+    upload_reference_video,
     verify_snapshot_payload,
 )
 from ..config import OUTPUTS_DIR
@@ -87,7 +88,7 @@ class ComfyEngine(BaseEngine):
         description="提交到本机/局域网 ComfyUI 服务器执行自定义工作流（进度实时推送）",
         status="ready",
         note="",
-        supported_modes=("t2v", "i2v", "first_last", "continuation"),
+        supported_modes=("t2v", "i2v", "first_last", "continuation", "v2v"),
         # 默认通道：ComfyUI 是唯一视频生成底座
         execution_channel="comfyui",
     )
@@ -145,6 +146,7 @@ class ComfyEngine(BaseEngine):
         reference_image: str = "",
         first_frame_image: str = "",
         last_frame_image: str = "",
+        reference_video: str = "",
         resume_prompt_id: str = "",
         workflow_snapshot: str = "",
         on_submitted: Callable[[str, str], None] = None,
@@ -180,6 +182,10 @@ class ComfyEngine(BaseEngine):
             # ComfyUI 引用名，兜底路径在 _resolve_workflow 里现场上传
             "first_frame_image": first_frame_image,
             "last_frame_image": last_frame_image,
+            # 白模替换（v2v）：视频参考（白模视频）引用名——模板映射了
+            # reference_video 才注入；值为 ComfyUI input 目录内的引用名
+            # （2C：入队时 router 已上传并写进快照，兜底路径在 _resolve_workflow 现场上传）
+            "reference_video": reference_video,
         }
 
         if resume_prompt_id:
@@ -307,6 +313,10 @@ class ComfyEngine(BaseEngine):
         for img_key in ("reference_image", "first_frame_image", "last_frame_image"):
             if inject.get(img_key) and template_map.get(img_key):
                 inject[img_key] = upload_reference_image(self.client, inject[img_key])
+        # 白模替换（v2v）：视频参考（白模视频）现场上传——模板映射了
+        # reference_video 才传；上传失败抛 ComfyUIError 让任务明确失败
+        if inject.get("reference_video") and template_map.get("reference_video"):
+            inject["reference_video"] = upload_reference_video(self.client, inject["reference_video"])
         graph = build_shot_workflow(inject, template=template)
         snap = OUTPUTS_DIR / "workflows" / f"{job_id}.json"
         try:
