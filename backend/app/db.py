@@ -73,6 +73,14 @@ _FK_TABLES = [
     # PR-N07：交接提交记录（随分镜计划删；项目被删时记录变为悬空引用，
     # 由 handoff 侧按 project_id 失效处理，不随项目级联——保留审计）
     ("novel_handoffs", "novel_shot_plans", "plan_id"),
+    # 第十九批：资产版本层（角色身份 / 服装 / 幕布）。
+    # 语义同 shot_versions——版本随池记录级联删；池随项目删。
+    # 注意：del_character 会级联删掉该角色的全部身份版本（版本属于角色，不跨角色）。
+    ("character_versions", "characters", "character_id"),
+    ("outfits", "projects", "project_id"),
+    ("outfit_versions", "outfits", "outfit_id"),
+    ("plates", "projects", "project_id"),
+    ("plate_versions", "plates", "plate_id"),
 ]
 
 
@@ -853,6 +861,136 @@ class Database:
             if "reference_video" not in job_cols18:
                 self._conn.execute(
                     "ALTER TABLE jobs ADD COLUMN reference_video TEXT DEFAULT ''")
+            self._conn.commit()
+
+        # ---------- 第十九批轻量迁移：资产版本层（角色身份 / 服装 / 幕布） ----------
+        # 背景：角色卡（characters）此前是就地编辑、scene.reference_image 是就地覆盖，
+        # 改一次就抹掉历史，已入队/已通过的任务失去可复现性。本批给三类资产补
+        # 「池 + 不可变版本」，引用方（shot/job）显式锁定版本。
+        #
+        # 兼容语义（关键）：
+        #   current_version = 0  →  未版本化，一律回落旧行为（就地编辑、就地引用）。
+        #   旧库升级后 current_version 全为 0，因此生成结果与改造前逐字一致。
+        # 只新增表与列，不改任何旧列的类型或语义，可整批回滚（DROP 新表 / 忽略新列）。
+        with self._lock:
+            # 角色身份版本：身份定稿快照，不可变。池在 characters。
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS character_versions (
+                    id TEXT PRIMARY KEY,
+                    character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    name TEXT DEFAULT '',
+                    appearance TEXT DEFAULT '',
+                    outfit TEXT DEFAULT '',
+                    lora TEXT DEFAULT '',
+                    expressions TEXT DEFAULT '[]',
+                    reference_images TEXT DEFAULT '[]',
+                    identity_assets TEXT DEFAULT '[]',
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                )""")
+            # 服装池：character_id 为空表示项目通用服装。
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS outfits (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    character_id TEXT DEFAULT '',
+                    name TEXT NOT NULL,
+                    current_version INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )""")
+            # 服装版本：不可变。mesh_asset_id 为可选的独立服装网格（三维严格换装用）。
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS outfit_versions (
+                    id TEXT PRIMARY KEY,
+                    outfit_id TEXT NOT NULL REFERENCES outfits(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    reference_assets TEXT DEFAULT '[]',
+                    palette TEXT DEFAULT '',
+                    mesh_asset_id TEXT DEFAULT '',
+                    material TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                )""")
+            # 幕布池：form=flat 平铺 / equirect 720°全景。
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS plates (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    form TEXT DEFAULT 'flat',
+                    current_version INTEGER NOT NULL DEFAULT 0,
+                    status TEXT DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )""")
+            # 幕布版本：不可变。sha256 供入队冻结后校验。
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS plate_versions (
+                    id TEXT PRIMARY KEY,
+                    plate_id TEXT NOT NULL REFERENCES plates(id) ON DELETE CASCADE,
+                    version INTEGER NOT NULL,
+                    image_url TEXT DEFAULT '',
+                    width INTEGER DEFAULT 0,
+                    height INTEGER DEFAULT 0,
+                    sha256 TEXT DEFAULT '',
+                    note TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                )""")
+
+            # 引用方与冻结字段（全部纯新增，默认值 = 未版本化 / 未引用）
+            char_cols19 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(characters)").fetchall()
+            }
+            if "current_version" not in char_cols19:
+                self._conn.execute(
+                    "ALTER TABLE characters ADD COLUMN current_version INTEGER NOT NULL DEFAULT 0")
+            # 结构化身份资产登记：[{role: front|side|back|expression|final, url, note}]
+            # 与 reference_images（纯 URL 列表）并存，不替换——旧字段照旧可用。
+            if "identity_assets" not in char_cols19:
+                self._conn.execute(
+                    "ALTER TABLE characters ADD COLUMN identity_assets TEXT DEFAULT '[]'")
+
+            shot_cols19 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(shots)").fetchall()
+            }
+            # 角色 id → 锁定版本号的映射；空 '{}' = 全部跟随角色 current_version
+            if "character_version_refs" not in shot_cols19:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN character_version_refs TEXT DEFAULT '{}'")
+            # 服装 id → 锁定版本号的映射；空 '{}' = 该镜头不使用服装资产
+            if "outfit_refs" not in shot_cols19:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN outfit_refs TEXT DEFAULT '{}'")
+            # 镜头级幕布引用（0 = 未绑定，跟随场景默认幕布）
+            if "plate_id" not in shot_cols19:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN plate_id TEXT DEFAULT ''")
+            if "plate_version" not in shot_cols19:
+                self._conn.execute(
+                    "ALTER TABLE shots ADD COLUMN plate_version INTEGER NOT NULL DEFAULT 0")
+
+            scene_cols19 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(scenes)").fetchall()
+            }
+            # 场景默认幕布绑定的具体版本 id；空 = 无默认幕布
+            if "plate_version_id" not in scene_cols19:
+                self._conn.execute(
+                    "ALTER TABLE scenes ADD COLUMN plate_version_id TEXT DEFAULT ''")
+
+            job_cols19 = {
+                r["name"] for r in self._conn.execute(
+                    "PRAGMA table_info(jobs)").fetchall()
+            }
+            # 入队冻结：本任务实际引用的资产版本快照（角色/服装/幕布）。
+            # 与 characters_snapshot 同语义——之后改资产不影响本任务的复现。
+            if "asset_versions_snapshot" not in job_cols19:
+                self._conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN asset_versions_snapshot TEXT DEFAULT '{}'")
             self._conn.commit()
 
         # ---------- 启动审计（只读）：旧库孤儿行只报告，不静默删除 ----------

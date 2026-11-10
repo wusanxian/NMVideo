@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .db import db
+from . import asset_versions as av
 
 
 def _utcnow() -> str:
@@ -76,6 +77,13 @@ def create_character(project_id: str, **fields) -> dict:
     character = db.insert_and_get(
         "characters", list(row.keys()), tuple(row.values()), cid
     )
+    # 第十九批：新角色自动落 v1。失败不影响创建（老行为可用），但会打日志——
+    # 不能静默吞掉，否则用户会以为"版本化开着其实没开"。
+    try:
+        av.create_version(av.KIND_CHARACTER, cid, note="初始版本")
+        character = get_character(cid)
+    except Exception as e:
+        print(f"[assets] 角色 {cid} 初始版本落库失败（角色本身已创建）: {e}")
     return character
 
 
@@ -97,21 +105,35 @@ def list_characters(project_id: str) -> list:
 
 
 def update_character(character_id: str, **fields) -> Optional[dict]:
+    before = get_character(character_id)
+    if not before:
+        return None
     allowed = {
         "name", "role", "appearance", "outfit", "voice_id", "voice_name",
-        "lora", "expressions", "reference_images", "notes",
+        "lora", "expressions", "reference_images", "notes", "identity_assets",
     }
     fields = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if not fields:
-        return get_character(character_id)
+        return before
     # 列表字段序列化为 JSON 存储
-    for key in ("expressions", "reference_images"):
+    for key in ("expressions", "reference_images", "identity_assets"):
         if key in fields and not isinstance(fields[key], str):
             fields[key] = json.dumps(fields[key], ensure_ascii=False)
     fields["updated_at"] = _utcnow()
     sql = f"UPDATE characters SET {','.join(f'{k} = ?' for k in fields)} WHERE id = ?"
     _write(sql, (*fields.values(), character_id))
-    return get_character(character_id)
+    after = get_character(character_id)
+    # 第十九批：已版本化的角色，身份字段真变了就落新版本——旧版本保持不可变。
+    # current_version == 0（未版本化的老数据）不打版本，行为与改造前完全一致。
+    if before.get("current_version", 0) > 0 and _identity_changed(before, after):
+        try:
+            av.create_version(av.KIND_CHARACTER, character_id, note="编辑后自动落版")
+            after = get_character(character_id)
+        except Exception as e:
+            # 落版失败不回滚编辑（用户的数据改了就是改了），但必须可见地报出来，
+            # 否则"改了却没版本"会静默丢失可复现性。
+            print(f"[assets] 角色 {character_id} 编辑后落版失败: {e}")
+    return after
 
 
 def delete_character(character_id: str) -> None:
@@ -221,8 +243,52 @@ def generate_scene_backdrop(scene: dict) -> str:
 
 
 def _decode(c: dict) -> None:
-    for key in ("expressions", "reference_images"):
+    for key in ("expressions", "reference_images", "identity_assets"):
         try:
             c[key] = json.loads(c.get(key) or "[]")
         except (ValueError, TypeError):
             c[key] = []
+
+
+# =====================================================================
+# 角色身份版本（第十九批：池 + 不可变版本 + 引用方冻结）
+# =====================================================================
+# 语义：
+#   - 新建角色自动落 v1，因此新数据天然版本化；
+#   - 老数据 current_version = 0（未版本化），一切回落旧行为，生成结果不变；
+#   - 已版本化的角色被编辑时，若身份字段真的变了，自动落一个新版本，
+#     **旧版本永不覆盖** —— 这是「已通过审核的镜头重跑为什么变了」能被回答的前提。
+_IDENTITY_FIELDS = ("name", "appearance", "outfit", "lora",
+                    "expressions", "reference_images", "identity_assets")
+
+
+def _identity_changed(before: dict, after: dict) -> bool:
+    """身份字段是否真的变了。逐字段 JSON 归一比较，避免顺序/类型噪声造出空版本。"""
+    for key in _IDENTITY_FIELDS:
+        a = before.get(key)
+        b = after.get(key)
+        if json.dumps(a, ensure_ascii=False, sort_keys=True) != \
+           json.dumps(b, ensure_ascii=False, sort_keys=True):
+            return True
+    return False
+
+
+def create_character_version(character_id: str, note: str = "") -> Optional[dict]:
+    """手动锁定一版身份（例如"这个造型定稿了"）。"""
+    if not get_character(character_id):
+        return None
+    return av.create_version(av.KIND_CHARACTER, character_id, note=note)
+
+
+def list_character_versions(character_id: str) -> list:
+    return av.list_versions(av.KIND_CHARACTER, character_id)
+
+
+def promote_character_version(character_id: str, version_no: int) -> Optional[dict]:
+    """把角色回滚到某个历史版本（只移动"当前"指针，不改版本内容）。"""
+    return av.promote(av.KIND_CHARACTER, character_id, version_no)
+
+
+def snapshot_character(character_id: str, ref_version: int = 0) -> Optional[dict]:
+    """解析角色在指定引用下实际生效的身份数据（0 = 跟随当前版本）。"""
+    return av.resolve_data(av.KIND_CHARACTER, character_id, ref_version)

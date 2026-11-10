@@ -24,11 +24,43 @@ from .. import db as db_module
 from .. import motion
 from .. import resource_guard
 from .. import assets
+from .. import asset_versions as av
 from .. import imagegen
 from ..export import start_export
 from ..queue_manager import job_queue
 
 router = APIRouter(prefix="/api", tags=["storyboard"])
+
+
+def _resolve_character_versions(shot: dict, characters: list) -> list:
+    """按镜头锁定的版本解析角色数据（第十九批）。
+
+    镜头没锁定（ref=0）或角色未版本化（current_version=0）时**原样返回**，
+    保证改造前行为逐字不变；锁定到具体版本时用该版本的不可变数据覆盖身份字段。
+
+    取不到的字段保留角色卡当前值，只覆盖版本里确实有内容的字段——避免某个
+    旧版本缺少新字段时把提示词拼成空的。
+    """
+    if not characters:
+        return characters
+    out = []
+    for c in characters:
+        cid = c.get("id")
+        if not cid:
+            out.append(c)
+            continue
+        ref = av.character_ref_version(shot, cid)
+        resolved = av.resolve_data(av.KIND_CHARACTER, cid, ref)
+        if not resolved or resolved.get("version", 0) <= 0:
+            out.append(c)
+            continue
+        merged = dict(c)
+        for key, value in (resolved.get("data") or {}).items():
+            if key in ("appearance", "outfit", "lora", "name") and value:
+                merged[key] = value
+        merged["_pinned_version"] = resolved["version"]
+        out.append(merged)
+    return out
 
 
 # =====================================================================
@@ -524,6 +556,9 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     # ---- 提示词：角色一致性拼装 ----
     prompt = shot["prompt"]
     characters = assets.characters_of_shot(shot)
+    # 第十九批：资产版本层 —— 镜头锁定版本时用**版本快照**拼提示词，
+    # 未版本化（current_version=0）时回落当前值，与改造前逐字一致。
+    characters = _resolve_character_versions(shot, characters)
     if characters:
         prompt = assets.compose_prompt_with_characters(shot, characters)
     # PR-10 后半：动作模板 + 构图约束（站位/朝向/镜头运动）拼进提示词——
@@ -567,6 +602,26 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
                                "voice_id", "voice_name")}
         for c in characters
     ], ensure_ascii=False)
+
+    # 第十九批：资产版本层 —— 入队冻结"本任务实际引用的资产版本"。
+    # 角色/服装/幕布各自解析到哪一版，全部记进本任务的快照；之后改资产不影响
+    # 本任务复现。快照失败不阻断生成（生成比审计重要），但会打日志。
+    try:
+        params["asset_versions_snapshot"] = json.dumps(
+            av.build_freeze_snapshot(shot, scene, characters), ensure_ascii=False
+        )
+    except Exception as e:
+        print(f"[storyboard] 分镜 {shot_id} 资产版本快照生成失败（不阻断生成）: {e}")
+
+    # 幕布基准图入队（第十九批）。是否真的进工作流由模板 `_aivideo_map` 决定——
+    # 映射了 scene_plate 才注入，与既有 reference_image 的"映射了才注入"同语义；
+    # 未映射的模板行为不变，不会因为多了这个参数而改变生成结果。
+    try:
+        plate_url = av.plate_image_for_shot(shot, scene)
+        if plate_url:
+            params["scene_plate"] = plate_url
+    except Exception as e:
+        print(f"[storyboard] 分镜 {shot_id} 幕布解析失败（不阻断生成）: {e}")
 
     # 资源守卫：入队前按「本任务要多少 vs 本机剩多少」定档；降档必须在固化
     # 工作流快照之前完成，保证快照里的分辨率与任务参数一致。
