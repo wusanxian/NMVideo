@@ -192,6 +192,61 @@
           </div>
         </section>
 
+        <!-- 资产版本冻结预览（第十九批）：回答"这次生成到底用了哪一版" -->
+        <section class="form-section">
+          <h3>资产版本（本次生成会冻结什么）</h3>
+          <p class="hint-text" style="margin-top: 0">
+            只读预览，显示<strong>此刻入队</strong>会锁定的资产版本。版本化的资产按版本号冻结；
+            未版本化的按入队那一刻的当前值冻结——所以之后改角色卡或幕布，都不会改变这个镜头已入队任务的结果。
+          </p>
+          <div v-if="assetSnap" class="freeze-box">
+            <div class="freeze-group">
+              <div class="freeze-label">角色</div>
+              <template v-if="(assetSnap.snapshot.characters || []).length">
+                <div v-for="c in assetSnap.snapshot.characters" :key="c.id" class="freeze-row">
+                  <span class="freeze-name">{{ c.name || c.id }}</span>
+                  <span class="ver-badge" :class="{ dim: !c.version }">
+                    {{ c.version ? `v${c.version}` : '未版本化' }}
+                  </span>
+                  <span v-if="c.ref_version" class="freeze-note">镜头锁定 v{{ c.ref_version }}</span>
+                  <span class="freeze-note">{{ c.data?.outfit || c.data?.appearance || '' }}</span>
+                  <span v-if="c.missing_version" class="freeze-warn">
+                    ⚠ 锁定的 v{{ c.missing_version }} 已不存在，已回落当前值
+                  </span>
+                </div>
+              </template>
+              <p v-else class="hint-text">本镜头未绑定角色</p>
+            </div>
+            <div v-if="(assetSnap.snapshot.outfits || []).length" class="freeze-group">
+              <div class="freeze-label">服装</div>
+              <div v-for="o in assetSnap.snapshot.outfits" :key="o.id" class="freeze-row">
+                <span class="freeze-name">{{ o.name || o.id }}</span>
+                <span class="ver-badge" :class="{ dim: !o.version }">
+                  {{ o.version ? `v${o.version}` : '未版本化' }}
+                </span>
+                <span v-if="o.ref_version" class="freeze-note">镜头锁定 v{{ o.ref_version }}</span>
+              </div>
+            </div>
+            <div class="freeze-group">
+              <div class="freeze-label">幕布</div>
+              <div v-if="assetSnap.snapshot.plate" class="freeze-row">
+                <img v-if="assetSnap.snapshot.plate.image_url"
+                     :src="assetSnap.snapshot.plate.image_url" class="freeze-thumb" alt="" />
+                <span class="freeze-name">{{ plateSourceLabel(assetSnap.snapshot.plate.source) }}</span>
+                <span class="ver-badge" :class="{ dim: !assetSnap.snapshot.plate.version }">
+                  {{ assetSnap.snapshot.plate.version ? `v${assetSnap.snapshot.plate.version}` : '未版本化' }}
+                </span>
+                <span v-if="assetSnap.scene_plate" class="freeze-note">
+                  将作为幕布基准图入队（工作流映射了才消费）
+                </span>
+              </div>
+              <p v-else class="hint-text">未绑定幕布（镜头级与场景默认都没有）</p>
+            </div>
+          </div>
+          <p v-else-if="assetSnapErr" class="form-msg">{{ assetSnapErr }}</p>
+          <p v-else class="hint-text">读取中…</p>
+        </section>
+
         <!-- 相邻镜头衔接预览（PR-04 导演工作台） -->
         <section class="form-section">
           <h3>相邻镜头衔接</h3>
@@ -558,6 +613,32 @@ function modeSupported(mode) {
 
 const canGenerate = computed(() => form.prompt.trim().length > 0 && modeSupported(form.mode))
 
+// ---- 第十九批：资产版本冻结预览（只读） ----
+// 三个问题一次答清：谁（角色哪一版）/ 穿什么（服装哪一版）/ 在哪（幕布哪一版）。
+// 不做这一步，用户永远不知道生成到底用了哪一版资产——"改了角色卡结果变了"就无从解释。
+const assetSnap = ref(null)
+const assetSnapErr = ref('')
+
+const PLATE_SOURCES = {
+  shot: '镜头级绑定',
+  scene: '场景默认',
+  scene_legacy: '场景旧幕布字段（未收编）',
+}
+
+function plateSourceLabel(src) {
+  return PLATE_SOURCES[src] || src || '幕布'
+}
+
+async function loadAssetVersions() {
+  if (!props.shot?.id) return
+  assetSnapErr.value = ''
+  try {
+    assetSnap.value = await api.shotAssetVersions(props.shot.id)
+  } catch (e) {
+    assetSnapErr.value = e.message
+  }
+}
+
 // ---- PR-04 导演工作台：相邻镜头衔接 + 候选版本对比 ----
 const adjacentShots = computed(() => {
   const list = props.siblingShots || []
@@ -645,6 +726,8 @@ onMounted(async () => {
   const bound = (props.characters || []).filter((c) => form.character_ids.includes(c.id))
   const withVoice = bound.find((c) => c.voice_id)
   if (withVoice) ttsVoice.value = withVoice.voice_id
+  // 第十九批：资产版本冻结预览（只读；失败不阻塞编辑）
+  loadAssetVersions()
 })
 
 function charColor(name) {
@@ -904,4 +987,32 @@ function generate() {
 }
 .badge.done { background: rgba(52, 211, 153, 0.15); color: var(--green); border-color: transparent; }
 .form-msg { color: var(--red); font-size: 12.5px; }
+/* ---------- 资产版本冻结预览（第十九批） ---------- */
+.freeze-box {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 12px;
+}
+.freeze-group { display: flex; flex-direction: column; gap: 6px; }
+.freeze-label {
+  font-size: 11.5px; color: var(--text-dim); letter-spacing: 0.04em;
+}
+.freeze-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px;
+}
+.freeze-name { color: var(--text); }
+.freeze-note {
+  color: var(--text-dim); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;
+}
+.freeze-thumb {
+  width: 64px; height: 36px; object-fit: cover; border-radius: 5px;
+  background: var(--bg-panel);
+}
+.freeze-warn { color: var(--yellow); font-size: 11.5px; }
+.ver-badge {
+  font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.18); color: var(--accent-soft);
+}
+/* 未版本化不是"坏"，只是还没开始版本化——用中性色，别吓用户 */
+.ver-badge.dim { background: var(--bg-hover); color: var(--text-dim); }
 </style>

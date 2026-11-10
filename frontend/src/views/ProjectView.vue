@@ -140,7 +140,16 @@
                       @click="generateBackdrop(scene)">
                 {{ backdropBusy === scene.id ? '生成中…' : '✨ AI 生成幕布' }}
               </button>
+              <button v-if="scene.reference_image" class="btn small"
+                      :disabled="plateBusy === scene.id"
+                      title="把这张图收编成带版本的幕布资产。只读旧字段，不改 reference_image 的值"
+                      @click="promoteBackdrop(scene)">
+                {{ plateBusy === scene.id ? '收编中…' : '📦 收编为幕布' }}
+              </button>
             </div>
+            <p v-if="scene.plate_version_id" class="hint-text" style="margin: 4px 0 0">
+              已收编为幕布资产：场景默认幕布锁定在那个具体版本，之后换图不会漂移影响已入队任务
+            </p>
             <div v-if="scene.reference_image" class="sa-bd-preview">
               <img :src="scene.reference_image" alt="幕布" />
               <button class="icon-btn danger" title="移除幕布" @click.stop="removeBackdrop(scene)">✕</button>
@@ -900,6 +909,29 @@ async function generateBackdrop(scene) {
 
 async function removeBackdrop(scene) {
   await store.saveScene(scene.id, { reference_image: '' })
+}
+
+// 第十九批：把既有幕布图收编成带版本的幕布资产。
+// 后端只读 scene.reference_image、只写新表——所以这一步不改旧字段，
+// 即便之后回滚代码，场景行为与收编前完全一致。
+const plateBusy = ref('')
+
+async function promoteBackdrop(scene) {
+  plateBusy.value = scene.id
+  try {
+    const plate = await api.promoteSceneBackdrop(scene.id, {
+      name: scene.title || '幕布',
+      form: 'flat',
+    })
+    await store.refresh()
+    message.value = `已收编为幕布资产「${plate.name}」v${plate.current_version}，`
+      + `场景默认幕布已锁定到该版本（之后换图不会影响它）`
+    setTimeout(() => (message.value = ''), 4000)
+  } catch (e) {
+    message.value = e.message
+  } finally {
+    plateBusy.value = ''
+  }
 }
 
 // ---------- 剧本 ----------

@@ -92,6 +92,38 @@
           </div>
           <button class="btn" @click="form.expressions.push({ name: '', prompt: '' })">＋ 添加表情</button>
         </section>
+
+        <section v-if="!isNew" class="form-section">
+          <h3>身份版本</h3>
+          <p class="hint-text" style="margin-top: 0">
+            版本不可变：改角色卡会<strong>自动落一个新版本</strong>，旧版本永不覆盖——
+            这样「已通过审核的镜头重跑为什么变了」才有答案。已入队的任务锁定它当时那一版，
+            之后改角色卡不影响它。
+          </p>
+          <div class="ver-list">
+            <div v-for="v in versions" :key="v.id" class="ver-row"
+                 :class="{ current: v.version === currentVersion }">
+              <span class="ver-no">v{{ v.version }}</span>
+              <span class="ver-note">{{ v.note || '—' }}</span>
+              <span class="ver-time">{{ fmtTime(v.created_at) }}</span>
+              <span v-if="v.version === currentVersion" class="ver-badge">当前</span>
+              <button v-else class="btn small" type="button" :disabled="verBusy"
+                      @click="promote(v.version)">回滚到这一版</button>
+            </div>
+            <p v-if="!versions.length" class="hint-text">
+              还没有版本。未版本化的老数据在下次编辑时会自动开始版本化。
+            </p>
+          </div>
+          <div class="ver-actions">
+            <button class="btn" type="button" :disabled="verBusy" @click="lockVersion">
+              {{ verBusy ? '处理中…' : '📌 锁定当前身份为版本' }}
+            </button>
+            <span v-if="usages.length" class="hint-text">
+              被 {{ usages.length }} 个镜头引用（删除角色会被阻断）
+            </span>
+          </div>
+          <p v-if="verMsg" class="form-msg">{{ verMsg }}</p>
+        </section>
       </div>
 
       <footer class="modal-foot">
@@ -145,7 +177,57 @@ onMounted(async () => {
     const r = await api.ttsVoices()
     voices.value = r.voices || []
   } catch { /* 音色加载失败不阻塞编辑 */ }
+  if (!isNew.value) loadVersions()
 })
+
+// ---------- 身份版本（第十九批资产版本层）----------
+const versions = ref([])
+const usages = ref([])
+const currentVersion = ref(props.character?.current_version || 0)
+const verBusy = ref(false)
+const verMsg = ref('')
+
+function fmtTime(iso) {
+  return (iso || '').slice(0, 16).replace('T', ' ')
+}
+
+async function loadVersions() {
+  try {
+    versions.value = await api.characterVersions(props.character.id)
+    usages.value = await api.characterUsages(props.character.id)
+  } catch (e) {
+    verMsg.value = e.message
+  }
+}
+
+async function lockVersion() {
+  verBusy.value = true
+  verMsg.value = ''
+  try {
+    const rec = await api.createCharacterVersion(props.character.id, '手动锁定')
+    currentVersion.value = rec.version
+    await loadVersions()
+  } catch (e) {
+    verMsg.value = e.message
+  } finally {
+    verBusy.value = false
+  }
+}
+
+// 回滚只移动"当前"指针，不改任何版本内容——所以这个操作永远可逆
+async function promote(versionNo) {
+  verBusy.value = true
+  verMsg.value = ''
+  try {
+    await api.promoteCharacterVersion(props.character.id, versionNo)
+    currentVersion.value = versionNo
+    await loadVersions()
+  } catch (e) {
+    verMsg.value = e.message
+  } finally {
+    verBusy.value = false
+  }
+}
 
 async function onRefUpload(e) {
   const file = e.target.files?.[0]
@@ -287,4 +369,21 @@ async function save() {
 .expr-row input:first-child { width: 120px; }
 .expr-row input:last-of-type { flex: 1; }
 .form-msg { color: var(--red); font-size: 12.5px; }
+/* ---------- 身份版本 ---------- */
+.ver-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.ver-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; font-size: 12.5px;
+}
+.ver-row.current { border-color: var(--accent); }
+.ver-no { font-weight: 600; color: var(--text); min-width: 34px; }
+.ver-note { flex: 1; min-width: 0; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ver-time { color: var(--text-dim); font-size: 11.5px; }
+.ver-badge {
+  font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.18); color: var(--accent-soft);
+}
+.ver-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn.small { padding: 4px 10px; font-size: 12px; }
 </style>

@@ -95,6 +95,49 @@ export const api = {
   deleteCharacter: (id) => request(`/characters/${id}`, { method: 'DELETE' }),
   setShotCharacters: (shotId, ids) => request(`/shots/${shotId}/characters`, { method: 'PUT', body: JSON.stringify({ character_ids: ids }) }),
 
+  // ---------- 资产版本层（第十九批：角色身份 / 服装 / 幕布）----------
+  // 语义：版本不可变——改内容只能落新版本；promote 只移动"当前"指针，不改历史。
+  // 被引用的资产在入队时冻结，之后改资产不影响已入队任务。
+  characterVersions: (id) => request(`/characters/${id}/versions`),
+  createCharacterVersion: (id, note = '') =>
+    request(`/characters/${id}/versions`, { method: 'POST', body: JSON.stringify({ note }) }),
+  promoteCharacterVersion: (id, versionNo) =>
+    request(`/characters/${id}/versions/promote`, { method: 'POST', body: JSON.stringify({ version_no: versionNo }) }),
+  characterUsages: (id) => request(`/characters/${id}/usages`),
+
+  outfits: (pid, characterId = '') =>
+    request(`/projects/${pid}/outfits${characterId ? `?character_id=${characterId}` : ''}`),
+  createOutfit: (pid, data) => request(`/projects/${pid}/outfits`, { method: 'POST', body: JSON.stringify(data) }),
+  updateOutfit: (id, data) => request(`/outfits/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteOutfit: (id) => request(`/outfits/${id}`, { method: 'DELETE' }),
+  outfitVersions: (id) => request(`/outfits/${id}/versions`),
+  createOutfitVersion: (id, data) => request(`/outfits/${id}/versions`, { method: 'POST', body: JSON.stringify(data) }),
+  promoteOutfitVersion: (id, versionNo) =>
+    request(`/outfits/${id}/versions/promote`, { method: 'POST', body: JSON.stringify({ version_no: versionNo }) }),
+
+  plates: (pid, status = '') => request(`/projects/${pid}/plates${status ? `?status=${status}` : ''}`),
+  createPlate: (pid, data) => request(`/projects/${pid}/plates`, { method: 'POST', body: JSON.stringify(data) }),
+  updatePlate: (id, data) => request(`/plates/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deletePlate: (id) => request(`/plates/${id}`, { method: 'DELETE' }),
+  plateVersions: (id) => request(`/plates/${id}/versions`),
+  createPlateVersion: (id, data) => request(`/plates/${id}/versions`, { method: 'POST', body: JSON.stringify(data) }),
+  promotePlateVersion: (id, versionNo) =>
+    request(`/plates/${id}/versions/promote`, { method: 'POST', body: JSON.stringify({ version_no: versionNo }) }),
+  plateUsages: (id) => request(`/plates/${id}/usages`),
+  // 把场景现有 reference_image 收编成幕布资产（只读旧字段、只写新表）
+  promoteSceneBackdrop: (sceneId, data = {}) =>
+    request(`/scenes/${sceneId}/promote-backdrop`, { method: 'POST', body: JSON.stringify(data) }),
+  bindScenePlate: (sceneId, versionId) =>
+    request(`/scenes/${sceneId}/plate`, { method: 'PUT', body: JSON.stringify({ version_id: versionId }) }),
+  bindShotPlate: (shotId, plateId, versionNo = 0) =>
+    request(`/shots/${shotId}/plate`, { method: 'PUT', body: JSON.stringify({ plate_id: plateId, version_no: versionNo }) }),
+  setShotCharacterVersions: (shotId, refs) =>
+    request(`/shots/${shotId}/character-versions`, { method: 'PUT', body: JSON.stringify({ refs }) }),
+  setShotOutfitRefs: (shotId, refs) =>
+    request(`/shots/${shotId}/outfit-refs`, { method: 'PUT', body: JSON.stringify({ refs }) }),
+  // 冻结预览：这个镜头现在入队会冻结出什么（只读，不写库）
+  shotAssetVersions: (id) => request(`/shots/${id}/asset-versions`),
+
   // ---------- 动作模板（PR-10 后半：对峙/追击/格挡/收招 + 项目自定义） ----------
   motionTemplates: (projectId = '') => request(`/motion-templates${projectId ? `?project_id=${projectId}` : ''}`),
   createMotionTemplate: (data) => request('/motion-templates', { method: 'POST', body: JSON.stringify(data) }),
