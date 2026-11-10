@@ -14,6 +14,7 @@ from .queue_manager import job_queue
 from .quality import list_presets
 from .routers import assets as assets_router
 from .routers import asset_versions as asset_versions_router
+from .routers import white_model as white_model_router
 from .routers import engines as engines_router
 from .routers import jobs as jobs_router
 from .routers import launch as launch_router
@@ -94,6 +95,7 @@ app.include_router(novel_submit_routers.sp_router)
 app.include_router(storyboard_router.router)
 app.include_router(assets_router.router)
 app.include_router(asset_versions_router.router)
+app.include_router(white_model_router.router)
 app.include_router(services_router.router)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 

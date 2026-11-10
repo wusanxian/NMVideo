@@ -25,6 +25,7 @@ from .. import motion
 from .. import resource_guard
 from .. import assets
 from .. import asset_versions as av
+from .. import white_model
 from .. import imagegen
 from ..export import start_export
 from ..queue_manager import job_queue
@@ -559,18 +560,35 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
     # 第十九批：资产版本层 —— 镜头锁定版本时用**版本快照**拼提示词，
     # 未版本化（current_version=0）时回落当前值，与改造前逐字一致。
     characters = _resolve_character_versions(shot, characters)
-    if characters:
-        prompt = assets.compose_prompt_with_characters(shot, characters)
-    # PR-10 后半：动作模板 + 构图约束（站位/朝向/镜头运动）拼进提示词——
-    # 随 params["prompt"] 入队冻结，之后改模板/构图不影响本任务可复现
-    motion_seg = motion.compose_motion_prompt(shot, characters)
-    if motion_seg:
-        prompt = f"{prompt} || {motion_seg}" if prompt.strip() else motion_seg
-    # 场景幕布：把环境/光照拼进提示词（跨镜头场景一致；角色管「谁」、场景管「在哪/什么光」）
     scene_id = shot.get("scene_id") or ""
     scene = sb.get_scene(scene_id) if scene_id else None
-    if scene:
-        prompt = assets.compose_prompt_with_scene({"prompt": prompt}, scene)
+
+    if mode == "v2v":
+        # 第二十批：白模替换改用**九段职责提示词**，替掉 角色‖动作‖场景 三段拼接。
+        # 只有 v2v 有"多份素材各有职责"的问题：白模的面容、原图的站姿、
+        # 场景参考图里的人物，都必须被显式排除——只写"参考什么"模型会连不想要的一起参考。
+        # has_identity / has_environment 按实际挂载情况传，缺素材时对应段会改写，
+        # 而不是留一句"见参考图"让模型去找一张不存在的图。
+        env_plate = av.plate_image_for_shot(shot, scene)
+        prompt = white_model.build_white_model_prompt(
+            has_identity=bool(reference_image),
+            has_environment=bool(env_plate or (scene and scene.get("reference_image"))),
+            identity_note=white_model.identity_note_from_character(
+                characters[0] if characters else None),
+            environment_note=white_model.environment_note_from_scene(scene),
+            extra=shot["prompt"],
+        )
+    else:
+        if characters:
+            prompt = assets.compose_prompt_with_characters(shot, characters)
+        # PR-10 后半：动作模板 + 构图约束（站位/朝向/镜头运动）拼进提示词——
+        # 随 params["prompt"] 入队冻结，之后改模板/构图不影响本任务可复现
+        motion_seg = motion.compose_motion_prompt(shot, characters)
+        if motion_seg:
+            prompt = f"{prompt} || {motion_seg}" if prompt.strip() else motion_seg
+        # 场景幕布：把环境/光照拼进提示词（跨镜头场景一致；角色管「谁」、场景管「在哪/什么光」）
+        if scene:
+            prompt = assets.compose_prompt_with_scene({"prompt": prompt}, scene)
     if mode == "continuation":
         prompt = (prompt + " || continuous shot, seamless continuation, "
                   "same character and scene as the previous shot").strip(" |")
