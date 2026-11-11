@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from .. import assets, storyboard as sb, tracks
+from .. import assets, storyboard as sb, tracks, upload_policy
 from ..config import OUTPUTS_DIR
 from ..shotcheck import check_design, check_shot, quality_score
 from ..tts import list_voices, synthesize, tts_available
@@ -15,7 +15,6 @@ router = APIRouter(prefix="/api", tags=["assets"])
 
 UPLOADS_DIR = OUTPUTS_DIR / "uploads"
 TTS_DIR = OUTPUTS_DIR / "tts"
-ALLOWED_UPLOAD = {".png", ".jpg", ".jpeg", ".webp", ".mp3", ".wav", ".ogg", ".m4a", ".flac"}
 
 
 # =====================================================================
@@ -104,8 +103,10 @@ class ReworkBody(BaseModel):
 @router.post("/uploads")
 async def upload_file(file: UploadFile = File(...)):
     suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in ALLOWED_UPLOAD:
-        raise HTTPException(400, f"不支持的文件类型 {suffix}（允许：图片/音频）")
+    kind = upload_policy.classify(suffix)
+    if not kind:
+        raise HTTPException(400, f"不支持的文件类型 {suffix}（允许：图片/音频/视频）")
+    limit_mb = upload_policy.limit_mb(kind)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     import uuid
 
@@ -113,11 +114,11 @@ async def upload_file(file: UploadFile = File(...)):
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
     size_mb = dest.stat().st_size / 1024 / 1024
-    if size_mb > 50:
+    if size_mb > limit_mb:
         dest.unlink(missing_ok=True)
-        raise HTTPException(400, f"文件过大（{size_mb:.1f}MB > 50MB）")
+        raise HTTPException(400, f"文件过大（{size_mb:.1f}MB > {limit_mb}MB）")
     return {"url": f"/outputs/uploads/{dest.name}", "name": file.filename,
-            "size": dest.stat().st_size}
+            "size": dest.stat().st_size, "kind": kind}
 
 
 # =====================================================================

@@ -80,11 +80,16 @@ ehthumbs.db
 # 工具/IDE 分析产物
 .brooks-lint-history.json
 
-# 测试文件（不入库，仅本地保留，避免误传）
-backend/tests/
+# 测试文件
+# backend/tests 入库：白模/资产版本这类「契约用例」是跨批次的安全网，
+# 不入库等于每批都在裸奔（改了 ComfyUI 节点契约没人拦）。
+# desktop/tests 仍是本地脚本，继续忽略。
 desktop/tests/
 test_*.py
 *_test.py
+backend/tests/__pycache__/
+# 上面的 test_*.py 会把目录里的用例也一起忽略，这里显式放行
+!backend/tests/*.py
 
 # 本地参考素材（toonflow 等工作流示例，仅本地保留，不入库）
 reference/

@@ -26,7 +26,13 @@ import json
 import re
 from typing import Optional
 
-SUPPORTED_MODES = ("t2v", "i2v", "first_last", "continuation", "v2v")
+SUPPORTED_MODES = ("t2v", "i2v", "first_last", "continuation", "v2v", "whitemodel")
+
+# 旧模板（声明了 _meta 但没写 supports）的回落集合。
+# 必须是**加 whitemodel 之前**那一组：老模板的图里没有参考视频槽位，
+# 回落到新的 SUPPORTED_MODES 会让它凭空宣称"支持白模生成"——这正是
+# 数据目录里 warned 过的假声明（提交时才失败，看起来像工作流的错）。
+LEGACY_MODES = ("t2v", "i2v", "first_last", "continuation", "v2v")
 
 EXECUTION_KINDS = ("local", "paid_api")
 
@@ -53,7 +59,7 @@ def capability_from_template(template: dict) -> Optional[dict]:
     kind = str(meta.get("execution_kind") or "local").strip()
     if kind not in EXECUTION_KINDS:
         kind = "local"
-    supports = _norm_str_list(meta.get("supports")) or list(SUPPORTED_MODES)
+    supports = _norm_str_list(meta.get("supports")) or list(LEGACY_MODES)
     try:
         min_vram = float(meta.get("min_vram_gb") or 0)
     except (TypeError, ValueError):
@@ -72,7 +78,9 @@ def capability_from_template(template: dict) -> Optional[dict]:
         "model_id": str(meta.get("model_id") or ""),
         "required_nodes": _norm_str_list(meta.get("required_nodes")),
         "required_models": _norm_str_list(meta.get("required_models")),
-        "supports": [m for m in supports if m in SUPPORTED_MODES] or list(SUPPORTED_MODES),
+        # 声明了 supports 却全是未知值 → 同样回落旧模式集合，不回落「全部」：
+        # 「全部」等于替模板撒谎（尤其会替它宣称支持白模生成）。
+        "supports": [m for m in supports if m in SUPPORTED_MODES] or list(LEGACY_MODES),
         "min_vram_gb": min_vram,
         "vram_hint": str(meta.get("vram_hint") or ""),
         "native_preview": bool(meta.get("native_preview")),
@@ -146,13 +154,51 @@ def _basename(value: str) -> str:
     return v.rsplit("/", 1)[-1].strip().lower()
 
 
+def combo_options(spec) -> list:
+    """从 /object_info 的单个输入 spec 里取 COMBO 选项。
+
+    ComfyUI 的同一个「下拉枚举」有四种返回形状，只认其中一种就会得出
+    「模型没装」的错误结论：
+
+        [["a.safetensors", "b.safetensors"]]      # 普通 COMBO（ComfyUI 真实返回）
+        ["a.safetensors", "b.safetensors"]        # 扁平 COMBO（老版本/手写 object_info）
+        ["COMBO", {"options": [...]}]             # 带元信息的 COMBO
+        ["COMFY_DYNAMICCOMBO_V3", {"options": [{"key": ..., "inputs": {...}}, ...]}]
+
+    动态组合的选项带嵌套子输入，这里只取 key（是否需要子参数由调用方另判）。
+    """
+    if not isinstance(spec, (list, tuple)) or not spec:
+        return []
+    first = spec[0]
+    if isinstance(first, (list, tuple)):
+        return [str(v) for v in first if str(v).strip()]
+    if not isinstance(first, str):
+        return []
+    if len(spec) > 1 and isinstance(spec[1], dict):
+        out = []
+        for item in spec[1].get("options") or []:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict) and item.get("key") is not None:
+                out.append(str(item["key"]))
+        return [v for v in out if str(v).strip()]
+    # 纯类型标签（COMBO / *_V3）后面没有 options 时不能把标签当成选项
+    if first.isupper() or first.startswith("COMFY_"):
+        return []
+    return [str(v) for v in spec if isinstance(v, str) and str(v).strip()]
+
+
 def _iter_loader_options(info: dict) -> set:
     """从 /object_info 全量响应收集所有 loader 选项列表。
 
     ComfyUI 对 CheckpointLoaderSimple / UNETLoader / VAELoader / LoraLoader
-    等模型选择输入，/object_info 里 spec[0] 是该输入的可选值清单
+    等模型选择输入，/object_info 里 spec 就是该输入的可选值清单
     （即已安装到对应 models/ 子目录的文件名列表）。全部收集后与
     required_models 做匹配，无需知道节点类型。
+
+    形状解析统一交给 combo_options——只认 `[[...]]` 一种时，
+    `["COMBO", {"options": [...]}]` 形式的权重（如 SAM3DBody_Loader）
+    会被当成"没装"，于是白模工作流在权重齐备的机器上被误拦。
     """
     options: set = set()
     for node in (info or {}).values():
@@ -166,10 +212,7 @@ def _iter_loader_options(info: dict) -> set:
             if not isinstance(sect, dict):
                 continue
             for spec in sect.values():
-                if isinstance(spec, (list, tuple)) and spec:
-                    first = spec[0]
-                    if isinstance(first, (list, tuple)):
-                        options.update(str(v) for v in first if str(v).strip())
+                options.update(combo_options(spec))
     return options
 
 

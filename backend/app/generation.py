@@ -54,7 +54,7 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         if not isinstance(target, dict) or str(target.get("node")) not in template["prompt"] or not target.get("input"):
             raise ValueError(f"工作流参数映射无效：{key}，请检查节点与输入字段")
     first_key = "first_frame_image" if mapping.get("first_frame_image") else "reference_image"
-    if mode not in ("t2v", "v2v") and not mapping.get(first_key):
+    if mode not in ("t2v", "v2v", "whitemodel") and not mapping.get(first_key):
         raise ValueError("当前工作流模板未映射首帧节点，无法执行图片条件模式")
     if mode == "first_last":
         if not mapping.get("last_frame_image"):
@@ -68,6 +68,12 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
             raise ValueError("当前工作流模板未映射参考视频节点，无法执行视频参考（白模替换）模式")
         if not mapping.get("reference_image"):
             raise ValueError("当前工作流模板未映射参考图节点，无法执行视频参考（白模替换）模式")
+    if mode == "whitemodel":
+        # 白模生成：输入只有「参考视频」，产物就是灰白素模视频本身。
+        # 这一步还没有最终的服装/外形，所以**不要**角色参考图——
+        # 套用 v2v 的校验（必须有角色图）在语义上是错的。
+        if not mapping.get("reference_video"):
+            raise ValueError("当前工作流模板未映射参考视频节点，无法执行白模生成模式")
 
     inject = dict(params)
     if native:
@@ -76,28 +82,36 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         for key in ("refine_steps", "upscale_factor", "step_cache"):
             if h3_available and key not in h3_available:
                 inject.pop(key, None)
-    if mode == "v2v":
-        # 白模替换：参考视频（白模运动）+ 角色参考图（外观），二者缺一不可。
+    if mode in ("v2v", "whitemodel"):
+        # 视频输入模式：
+        #   v2v（白模替换）—— 白模视频(运动) + 角色图(外观)，缺一不可；
+        #   whitemodel（白模生成）—— 只要一段原始视频，产物即灰白素模视频。
         rv = params.get("reference_video")
         if not rv:
-            raise ValueError("视频参考（白模替换）模式需要设置白模视频（运动参考）")
-        ri = params.get("reference_image")
-        if not ri:
+            raise ValueError(
+                "视频参考（白模替换）模式需要设置白模视频（运动参考）"
+                if mode == "v2v" else
+                "白模生成模式需要设置参考视频（要转成白模的原始视频）"
+            )
+        ri = params.get("reference_image") if mode == "v2v" else ""
+        if mode == "v2v" and not ri:
             raise ValueError("视频参考（白模替换）模式需要设置角色参考图（外观参考）")
         inject["reference_video"] = rv
-        inject["reference_image"] = ri
-        # 视频走视频专用上传分支（VHS_LoadVideo / ComfyUI input 目录）
+        if ri:
+            inject["reference_image"] = ri
+        # 视频走视频专用上传分支（VHS_LoadVideo / LoadVideo 读 ComfyUI input 目录）
         try:
             rv_remote = upload_condition_video(params, client, rv, "reference_video", output_dir)
         except Exception as exc:
             raise ValueError(f"白模视频上传 ComfyUI 失败: {exc}") from exc
         inject["reference_video"] = rv_remote
-        # 角色图走图片上传分支（LoadImage / ComfyUI input 目录）
-        try:
-            ri_remote = upload_condition(params, client, ri, "reference_image", output_dir)
-        except Exception as exc:
-            raise ValueError(f"角色参考图上传 ComfyUI 失败: {exc}") from exc
-        inject["reference_image"] = ri_remote
+        if ri:
+            # 角色图走图片上传分支（LoadImage / ComfyUI input 目录）
+            try:
+                inject["reference_image"] = upload_condition(
+                    params, client, ri, "reference_image", output_dir)
+            except Exception as exc:
+                raise ValueError(f"角色参考图上传 ComfyUI 失败: {exc}") from exc
     elif mode != "t2v":
         first = params.get("first_frame_image") or params.get("reference_image")
         if not first:
@@ -110,10 +124,11 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
         if mode == "first_last" and not params.get("last_frame_image"):
             raise ValueError("首尾帧模式需要同时设置尾帧图片")
     uploaded = {}
-    if mode != "v2v":
+    if mode not in ("v2v", "whitemodel"):
         # 图片条件模式（i2v / first_last / continuation）上传首/尾帧参考图。
-        # 多参考图（reference_image_2+）在下方单独处理；v2v 的参考图/视频已
-        # 在上方的 v2v 分支上传，不在此重复。
+        # 多参考图（reference_image_2+）在下方单独处理；视频输入模式的
+        # 参考图/视频已在上方分支上传，不在此重复（whitemodel 本就没有角色图，
+        # 若这里不加排除，镜头残留的 reference_image 会被白传一遍）。
         for key in ("reference_image", "first_frame_image", "last_frame_image"):
             if inject.get(key) and mapping.get(key):
                 url = inject[key]
@@ -133,6 +148,11 @@ def prepare_comfy_workflow(params: dict, *, client=None, template=None, output_d
             extra_refs = json.loads(extra_refs)
         except (TypeError, ValueError):
             raise ValueError("reference_images 存档格式无效（应为 JSON 数组）")
+    if extra_refs and mode == "whitemodel":
+        # 白模生成不消费任何外观参考图：镜头上前序模式遗留的额外参考图
+        # 不该让这一步报「模板不支持多参考图」。这里明确跳过而不是报错，
+        # 因为它们对白模链路没有语义（白模的产物本来就丢掉外观）。
+        extra_refs = []
     if extra_refs:
         extra_slots = [k for k in mapping if re.fullmatch(r"reference_image_\d+", k)]
         if not extra_slots:

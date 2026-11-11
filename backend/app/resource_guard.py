@@ -47,6 +47,13 @@ ENGINE_PROFILES = {
     "h3_native": (8.0, 4.0, 32.0, 4.0),
     "anime": (2.5, 2.0, 5.0, 2.0),
     "wan22": (5.0, 2.5, 22.0, 4.0),
+    # 白模生成（SAM3DBody 3D 人体重建 → 素模渲染）：没有扩散模型的 latent
+    # 激活，显存主要吃权重 + 单帧前向，**不随输出像素帧数增长**（变量显存给 0）。
+    # 用 comfyui 的通用档（3.0/3.5）会把一段 1080p 素材估成 17GB，在 8GB 卡上
+    # 被误拒——这是「按扩散模型经验套非扩散链路」的典型错。
+    # 但内存会涨：GetVideoComponents 把整段视频解成 IMAGE 批次常驻内存，
+    # 帧数越多占用越大，所以变量内存照旧随像素帧数走。
+    "whitemodel": (3.0, 0.0, 4.0, 1.5),
 }
 DEFAULT_PROFILE = (4.0, 3.0, 12.0, 4.0)
 
@@ -105,7 +112,14 @@ def _is_comfy(engine_id: str) -> bool:
         return str(engine_id or "") in ("comfyui", "h3")
 
 
-def _profile(engine_id: str) -> tuple:
+def _profile(engine_id: str, mode: str = "") -> tuple:
+    """按「引擎 + 模式」取需求档位。
+
+    模式优先于引擎：whitemodel 走的是同一个 comfyui 引擎，但链路是 3D 重建
+    而不是扩散采样，需求曲线完全不同（见 ENGINE_PROFILES 里的说明）。
+    """
+    if str(mode or "").strip() == "whitemodel":
+        return ENGINE_PROFILES["whitemodel"]
     return ENGINE_PROFILES.get(str(engine_id or ""), DEFAULT_PROFILE)
 
 
@@ -123,7 +137,7 @@ def pixel_frames(params: dict) -> int:
 
 def estimate(engine_id: str, params: dict) -> dict:
     """估算峰值需求（GB）。返回 {vram, ram, scale}；min_vram 由 `_with_min_vram` 补。"""
-    fixed_v, var_v, fixed_r, var_r = _profile(engine_id)
+    fixed_v, var_v, fixed_r, var_r = _profile(engine_id, params.get("mode") or "")
     scale = pixel_frames(params) / REF_PIXEL_FRAMES
     # 变量部分随像素帧数线性走；限制在 0.1~4 之间，避免极端参数把估算推到离谱值。
     scale = min(max(scale, 0.1), 4.0)
@@ -398,7 +412,11 @@ def plan(
             available=avail, need=need,
         )
 
-    if allow_downgrade:
+    white = str(params.get("mode") or "").strip() == "whitemodel"
+    # 白模生成的输出规格由源视频决定（读取→重建→按源尺寸渲染），
+    # 我们注入的分辨率/帧数与产物无关；降档只会让存档与实际输出不一致，
+    # 所以这里不降，直接按「装不下就明说」处理。
+    if allow_downgrade and not white:
         got = _downgrade(engine_id, params, avail, min_vram)
         if got:
             changed = _describe_change(params, got)
@@ -419,11 +437,17 @@ def plan(
                 available=avail, need=got["need"],
             )
 
-    reason = (
-        f"{why}。已降到最低可用档（宽 {MIN_RESULT_WIDTH}px / {MIN_RESULT_FRAMES} 帧）仍不够——"
-        "再降下去产物就没法用了，所以停在这里。"
-        "请关闭其他程序（浏览器/游戏/其他 AI 工具）后重试，或换用更轻的引擎/画质档位。"
-    )
+    if white:
+        reason = (
+            f"{why}。白模生成的输出规格跟着源视频走，降分辨率/降帧数都不能省资源——"
+            "请关闭其他程序（浏览器/游戏/其他 AI 工具）后重试，或换一段更短/更小的源视频。"
+        )
+    else:
+        reason = (
+            f"{why}。已降到最低可用档（宽 {MIN_RESULT_WIDTH}px / {MIN_RESULT_FRAMES} 帧）仍不够——"
+            "再降下去产物就没法用了，所以停在这里。"
+            "请关闭其他程序（浏览器/游戏/其他 AI 工具）后重试，或换用更轻的引擎/画质档位。"
+        )
     return Decision(ok=False, params=params, reason=reason, available=avail, need=need)
 
 

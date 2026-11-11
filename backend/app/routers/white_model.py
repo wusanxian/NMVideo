@@ -15,10 +15,17 @@
 """
 from fastapi import APIRouter
 
+from pathlib import Path
+import json
+
 from .. import comfyui, white_model
 from ..comfyui import ComfyUIClient, ComfyUIError
+from ..workflow_capabilities import combo_options
 
 router = APIRouter(prefix="/api/white-model", tags=["white-model"])
+
+# 白模生成用的内置工作流预设 id（与 engines/comfy.py 的 workflow_presets 一致）
+WHITEMODEL_PRESET_ID = "nmvideo_whitemodel"
 
 # 两条可选路径的节点依赖。
 # 真白模：3D 人体重建 → 素模渲染 → 灰白视频（外观信息在重建时就被丢掉）
@@ -52,7 +59,10 @@ PATH_NOTES = {
 }
 
 
-_NEEDED_CLASSES = sorted({n for v in PATH_NODES.values() for n in v})
+# 白模生成模式额外需要的「视频进出」节点（预设里除了 SAM3DBody_* 还要它们）
+WHITEMODEL_VIDEO_NODES = ["LoadVideo", "GetVideoComponents", "CreateVideo", "SaveVideo"]
+
+_NEEDED_CLASSES = sorted({n for v in PATH_NODES.values() for n in v} | set(WHITEMODEL_VIDEO_NODES))
 
 
 def _probe() -> tuple:
@@ -75,45 +85,64 @@ def _model_files_in(info: dict, class_name: str, input_name: str) -> list:
     """从 /object_info 里读某个节点某输入的枚举（例如权重清单）。
 
     枚举为空 = 节点壳空转（与 ControlNet 那次同一个陷阱）。
-    `/object_info` 里这个形状**不止一种**，三种都要认，否则会把"有权重"误判成"没权重"：
-
-        ["a.safetensors", "b.safetensors"]          # 普通 COMBO
-        ["COMBO", {"options": [...]}]               # 带元信息的 COMBO（SAM3DBody_Loader 就是这种）
-        ["COMFY_DYNAMICCOMBO_V3", {"options": [{key, inputs}, ...]}]   # 动态组合
-
-    这是实测踩过的坑：只认第一种时，`SAM3DBody_Loader.model_file`
-    明明有 `sam_3d_body_dinov3_bf16.safetensors`，却被报成空。
+    形状解析统一走 `workflow_capabilities.combo_options`（四种形状都要认，
+    只认一种会把"有权重"误判成"没权重"——实测踩过）。
     """
     node = (info or {}).get(class_name) or {}
     spec = ((node.get("input") or {}).get("required") or {}).get(input_name)
-    if not isinstance(spec, list) or not spec:
-        return []
-
-    def _opts(value) -> list:
-        if not isinstance(value, list):
-            return []
-        out = []
-        for item in value:
-            if isinstance(item, str):
-                out.append(item)
-            elif isinstance(item, dict) and item.get("key") is not None:
-                out.append(str(item["key"]))
-        return out
-
-    first = spec[0]
-    # 形状一：直接是字符串列表
-    if isinstance(first, str) and not _looks_like_combo_tag(first):
-        return [str(x) for x in spec if isinstance(x, str)]
-    # 形状二 / 三：["TAG", {"options": [...]}]
-    if isinstance(first, str) and len(spec) > 1 and isinstance(spec[1], dict):
-        return _opts(spec[1].get("options") or [])
-    # 兜底：整体就是选项列表
-    return _opts(spec)
+    return combo_options(spec)
 
 
-def _looks_like_combo_tag(value: str) -> bool:
-    """COMBO / COMFY_DYNAMICCOMBO_V3 这类类型标签（全大写或带下划线+数字）。"""
-    return value.isupper() or value.startswith("COMFY_")
+def _combo_detail(info: dict, class_name: str, input_name: str) -> tuple:
+    """读某输入的 (选项列表, 各选项的嵌套子参数)。
+
+    动态 COMBO（`COMFY_DYNAMICCOMBO_V3`）的每个选项可以自带一组子输入——
+    选中它就必须一起提交，否则节点校验直接报缺参。所以「有哪些选项」和
+    「哪些选项能单独提交」是两件事，必须分开报，不能只给一个字符串列表。
+
+    这对白模链路很关键：`SAM3DBody_Render.render_style` 就是动态 COMBO，
+    `mesh`（真白模）带嵌套子参数，`silhouette` 不带。预设默认值只能选
+    后者，前者要等实跑确认子参数形态。
+
+    选项解析复用 combo_options，避免两处各写一套形状判断（必有一处落后）。
+    """
+    node = (info or {}).get(class_name) or {}
+    spec = ((node.get("input") or {}).get("required") or {}).get(input_name)
+    if not isinstance(spec, (list, tuple)) or not spec:
+        return [], {}
+
+    options = combo_options(spec)
+    nested: dict = {}
+    if len(spec) > 1 and isinstance(spec[1], dict):
+        for item in spec[1].get("options") or []:
+            if isinstance(item, dict) and item.get("key") is not None:
+                sub = item.get("inputs")
+                if isinstance(sub, dict) and sub:
+                    nested[str(item["key"])] = sorted(str(k) for k in sub)
+    return options, nested
+
+
+def _preset_status() -> dict:
+    """本仓库内置的白模工作流预设是否在位（读的是我们自己的 JSON，不是服务端）。"""
+    from ..config import BASE_DIR
+
+    preset_id = WHITEMODEL_PRESET_ID
+    path = Path(BASE_DIR) / "comfy_workflows" / "presets" / f"{preset_id}.json"
+    if not path.is_file():
+        return {"preset": preset_id, "present": False, "mode": "", "error": "预设文件缺失"}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {"preset": preset_id, "present": False, "mode": "", "error": f"预设读取失败: {e}"}
+    meta = data.get("_meta") or {}
+    return {
+        "preset": preset_id,
+        "present": bool((data.get("prompt") or {})),
+        "mode": str(meta.get("mode") or ""),
+        "verified": bool(meta.get("verified")),
+        "unverified_params": list(meta.get("unverified_params") or []),
+        "render_style_default": str(meta.get("render_style_default") or ""),
+    }
 
 
 @router.get("/sections")
@@ -136,17 +165,20 @@ def sections():
 @router.get("/capability")
 def capability():
     """本机白模生成能力探测。**节点在位 ≠ 链路已验证**。"""
+    preset = _preset_status()
     info, err = _probe()
     if info is None:
         return {
             "probe_ok": False,
             "error": err,
             "paths": [],
+            "generation": {"mode": "whitemodel", **preset},
             "verified": False,
             "note": "探测失败时不猜结论、也不阻断生成；节点是否齐全需要 ComfyUI 起来后再看。",
         }
 
     names = set(info.keys())
+    missing_video_io = [n for n in WHITEMODEL_VIDEO_NODES if n not in names]
     paths = []
     for key, required in PATH_NODES.items():
         missing = [n for n in required if n not in names]
@@ -166,12 +198,30 @@ def capability():
             if not missing and not files:
                 entry["available"] = False
                 entry["blocked_by"] = "节点在位但 SAM3DBody 权重为空 —— 无法实际推理"
+            # render_style 是动态 COMBO：哪些选项能单独提交，必须分开报。
+            styles, nested = _combo_detail(info, "SAM3DBody_Render", "render_style")
+            entry["render_style"] = {
+                "options": styles,
+                "nested_inputs": nested,
+                "safe_defaults": [s for s in styles if not nested.get(s)],
+                "preset_default": preset.get("render_style_default", ""),
+            }
+            entry["preset_style_is_safe"] = (
+                not styles or not preset.get("render_style_default")
+                or not nested.get(preset.get("render_style_default", ""))
+            )
         paths.append(entry)
 
     return {
         "probe_ok": True,
         "probed_classes": _NEEDED_CLASSES,
         "paths": paths,
+        "generation": {
+            "mode": "whitemodel",
+            **preset,
+            "video_io_nodes": WHITEMODEL_VIDEO_NODES,
+            "missing_video_io_nodes": missing_video_io,
+        },
         "any_available": any(p["available"] for p in paths),
         "verified": False,
         "note": "以上只反映节点与权重是否在位；本机**尚未跑通**白模生成链路，"

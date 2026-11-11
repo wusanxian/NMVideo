@@ -190,6 +190,49 @@
               请使用支持图片条件的 ComfyUI 工作流；本地文生视频引擎不支持此模式。
             </p>
           </div>
+
+          <!-- 白模生成 / 白模替换：参考视频（运动参考） -->
+          <div v-if="form.mode === 'v2v' || form.mode === 'whitemodel'" class="field" style="margin-top: 12px">
+            <label>
+              {{ form.mode === 'whitemodel'
+                ? '参考视频（要转成白模的原始视频）'
+                : '白模视频（运动参考；先用「白模生成」把原片转成灰白素模）' }}
+            </label>
+            <div class="ref-input-row">
+              <input type="text" v-model="form.reference_video" placeholder="/outputs/xxx.mp4 或 http://..." />
+              <label class="btn upload-btn">
+                上传视频
+                <input type="file" accept="video/*" hidden @change="onFrameUpload($event, 'reference_video')" />
+              </label>
+            </div>
+            <p class="hint-text">
+              <template v-if="form.mode === 'whitemodel'">
+                白模生成的产物是<b>去掉外观</b>的灰白素模视频：保留动作、表情、镜头与节奏，丢掉面容/服装/背景。
+                这一步不需要角色图和提示词；输出分辨率与帧率跟随源视频。
+                本机需 ComfyUI 带 SAM3DBody 节点与权重，链路尚未实跑验证，首次使用请留意 ComfyUI 端报错。
+              </template>
+              <template v-else>
+                白模替换 = 白模视频（动作/镜头）<b>＋</b> 角色图（外观）。两份素材缺一不可：
+                没有白模视频会连原片外观一起继承，没有角色图则没有要替换成的人。
+              </template>
+            </p>
+          </div>
+
+          <!-- 白模替换：角色外观参考图（复用 reference_image，独立于 i2v 的多图槽） -->
+          <div v-if="form.mode === 'v2v'" class="field" style="margin-top: 12px">
+            <label>角色参考图（外观参考：面容/发型/服装）</label>
+            <div class="ref-input-row">
+              <input type="text" v-model="form.reference_image" placeholder="/outputs/xxx.png 或 http://..." />
+              <label class="btn upload-btn">
+                上传
+                <input type="file" accept="image/*" hidden @change="onFrameUpload($event, 'reference_image')" />
+              </label>
+            </div>
+            <p class="hint-text">
+              图中的<b>静态站姿与原图背景不采用</b>——动作与镜头由白模视频决定。
+              当前内置 v2v 预设走 H3 云端 API（需 VHS_LoadVideo 节点），本机缺该节点时会如实报错而不是静默跳过。
+            </p>
+          </div>
         </section>
 
         <!-- 资产版本冻结预览（第十九批）：回答"这次生成到底用了哪一版" -->
@@ -482,6 +525,8 @@ const MODES = [
   { id: 'i2v', name: '图生视频', desc: '以参考图为首帧生成' },
   { id: 'first_last', name: '首尾帧', desc: '指定首帧与末帧生成中间过程' },
   { id: 'continuation', name: '视频续接', desc: '接上一镜头末帧继续生成' },
+  { id: 'whitemodel', name: '白模生成', desc: '原始视频 → 灰白素模（只留动作与镜头）' },
+  { id: 'v2v', name: '白模替换', desc: '白模视频定动作，角色图定外观' },
 ]
 const RATES = [
   { v: '-20%', label: '慢速 -20%' }, { v: '-10%', label: '稍慢 -10%' },
@@ -516,6 +561,8 @@ const form = reactive({
   first_frame_image: props.shot.first_frame_image
     || (props.shot.mode === 'first_last' ? (props.shot.reference_image || '') : ''),
   last_frame_image: props.shot.last_frame_image || '',
+  // 白模两种模式的运动参考视频（whitemodel=原始视频，v2v=白模视频）
+  reference_video: props.shot.reference_video || '',
   prompt: props.shot.prompt || '',
   negative_prompt: props.shot.negative_prompt || '',
   character_ids: [...(props.shot.character_ids || [])],
@@ -606,12 +653,17 @@ watch(() => props.engines, (list) => {
 
 function modeSupported(mode) {
   const engine = props.engines.find((item) => item.id === genForm.engine)
-  const modes = engine?.supported_modes || (genForm.engine === 'comfyui'
-    ? ['t2v', 'i2v', 'first_last', 'continuation'] : ['t2v'])
+  const modes = engine?.supported_modes
+    || (genForm.engine === 'comfyui'
+      ? ['t2v', 'i2v', 'first_last', 'continuation', 'v2v', 'whitemodel'] : ['t2v'])
   return modes.includes(mode)
 }
 
-const canGenerate = computed(() => form.prompt.trim().length > 0 && modeSupported(form.mode))
+// 白模生成的产物来自源视频重建，不消费提示词——卡提示词会让用户被迫编一句话。
+const needsPrompt = computed(() => form.mode !== 'whitemodel')
+
+const canGenerate = computed(
+  () => (!needsPrompt.value || form.prompt.trim().length > 0) && modeSupported(form.mode))
 
 // ---- 第十九批：资产版本冻结预览（只读） ----
 // 三个问题一次答清：谁（角色哪一版）/ 穿什么（服装哪一版）/ 在哪（幕布哪一版）。
@@ -798,14 +850,23 @@ function save() {
 }
 
 function generate() {
-  if (!form.prompt.trim()) {
+  if (needsPrompt.value && !form.prompt.trim()) {
     errMsg.value = '请先填写提示词'
     return
   }
   errMsg.value = ''
   syncComposition()
-  // 先落编辑内容，再发起生成（带模式与续接来源）
-  emit('saved', { ...form }, { then: 'generate', params: { ...genForm, mode: form.mode, continue_from: form.continue_from } })
+  // 先落编辑内容，再发起生成（带模式与续接来源；参考视频显式带上，
+  // 避免依赖"保存已生效"这一隐含时序）
+  emit('saved', { ...form }, {
+    then: 'generate',
+    params: {
+      ...genForm,
+      mode: form.mode,
+      continue_from: form.continue_from,
+      reference_video: form.reference_video || '',
+    },
+  })
 }
 </script>
 

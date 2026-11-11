@@ -88,7 +88,11 @@ class ComfyEngine(BaseEngine):
         description="提交到本机/局域网 ComfyUI 服务器执行自定义工作流（进度实时推送）",
         status="ready",
         note="",
-        supported_modes=("t2v", "i2v", "first_last", "continuation", "v2v"),
+        supported_modes=("t2v", "i2v", "first_last", "continuation", "v2v", "whitemodel"),
+        # 白模生成走专用内置图（视频→灰白素模），与用户当前模板解耦：
+        # 当前模板多半是 t2v/i2v 的扩散图，拿它跑白模只会缺节点报错。
+        # 其它模式不在这里声明，仍沿用用户在设置里 apply 的当前模板（行为不变）。
+        workflow_presets={"whitemodel": "nmvideo_whitemodel"},
         # 默认通道：ComfyUI 是唯一视频生成底座
         execution_channel="comfyui",
     )

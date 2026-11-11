@@ -1,0 +1,88 @@
+{
+  "_comment": "白模生成：原始视频 → 灰白素模视频（丢弃面容/服装/背景，只留动作与镜头）。节点与权重按 2026-11-10 的 /object_info 实测在位（LoadVideo / GetVideoComponents / SAM3DBody_Loader / Predict / Render / CreateVideo / SaveVideo，权重 sam_3d_body_dinov3_bf16.safetensors）。**链路尚未实跑**，见 _meta.unverified_params。render_style 默认用 silhouette：它是唯一没有嵌套子参数的选项，能保证提交形态正确；mesh 需要嵌套 shader 子参数，提交形态未验证，验证通过后把 render_style 改成 mesh 即可。",
+  "_meta": {
+    "name": "白模生成 · 视频 → 灰白素模（本地）",
+    "description": "把一段真人视频重建成 3D 人体后重新渲染，丢掉面容/服装/背景，只保留动作与镜头。产物可直接作为白模替换（v2v）的运动参考。",
+    "requires": "ComfyUI 自带 LoadVideo / GetVideoComponents / CreateVideo / SaveVideo + SAM3DBody 节点族 + 权重 sam_3d_body_dinov3_bf16.safetensors",
+    "mode": "whitemodel",
+    "execution_kind": "local",
+    "required_nodes": [
+      "LoadVideo",
+      "GetVideoComponents",
+      "SAM3DBody_Loader",
+      "SAM3DBody_Predict",
+      "SAM3DBody_Render",
+      "CreateVideo",
+      "SaveVideo"
+    ],
+    "required_models": ["sam_3d_body_dinov3_bf16.safetensors"],
+    "supports": ["whitemodel"],
+    "min_vram_gb": 0,
+    "vram_hint": "SAM3DBody 是逐帧/分块前向推理，不吃扩散 latent；显存紧时把 Predict 的 batch_size 从 64 降到 4-8",
+    "max_reference_videos": 1,
+    "constraint": "输出分辨率跟随源视频（Render 的 width/height 传 0 = 用 pose data 原生尺寸），因此任务参数里的宽高/帧数由源视频实测值决定，不做降档。",
+    "render_style_default": "silhouette",
+    "render_style_options": {
+      "mesh": "真白模网格（最接近白模语义），但需要嵌套 shader 子参数，提交形态未验证",
+      "silhouette": "剪影，无嵌套子参数（默认）",
+      "openpose_2d": "二维骨架",
+      "openpose_3d": "三维骨架",
+      "scail": "SCAIL 着色"
+    },
+    "unverified_params": [
+      "render_style 动态 COMBO 的提交形态（mesh 下的 shader 子参数名与取值）",
+      "SAM3DBody_Predict 对 GetVideoComponents 输出的帧批次是否逐帧处理",
+      "CreateVideo 对帧序列的 fps 对齐行为"
+    ],
+    "verified": false
+  },
+  "prompt": {
+    "1": {
+      "class_type": "LoadVideo",
+      "inputs": {"file": ""}
+    },
+    "2": {
+      "class_type": "GetVideoComponents",
+      "inputs": {"video": ["1", 0]}
+    },
+    "3": {
+      "class_type": "SAM3DBody_Loader",
+      "inputs": {"model_file": "sam_3d_body_dinov3_bf16.safetensors"}
+    },
+    "4": {
+      "class_type": "SAM3DBody_Predict",
+      "inputs": {
+        "sam3d_body_model": ["3", 0],
+        "image": ["2", 0],
+        "run_hand_refinement": false,
+        "fov": 0,
+        "batch_size": 64
+      }
+    },
+    "5": {
+      "class_type": "SAM3DBody_Render",
+      "inputs": {
+        "pose_data": ["4", 0],
+        "width": 0,
+        "height": 0,
+        "render_style": "silhouette"
+      }
+    },
+    "6": {
+      "class_type": "CreateVideo",
+      "inputs": {"images": ["5", 0], "fps": 24}
+    },
+    "7": {
+      "class_type": "SaveVideo",
+      "inputs": {
+        "video": ["6", 0],
+        "filename_prefix": "whitemodel/shot",
+        "format": "mp4"
+      }
+    }
+  },
+  "_aivideo_map": {
+    "reference_video": {"node": "1", "input": "file"},
+    "fps": {"node": "6", "input": "fps"}
+  }
+}

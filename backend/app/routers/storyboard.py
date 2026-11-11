@@ -64,9 +64,45 @@ def _resolve_character_versions(shot: dict, characters: list) -> list:
     return out
 
 
+def _probe_whitemodel_source(url: str) -> dict:
+    """白模生成：按源视频实测尺寸/帧率/时长，作为本任务的归档参数。
+
+    为什么要覆盖：白模产物是「源视频逐帧重建 → 按原生尺寸渲染 → 按源帧率合成」，
+    输出规格跟着源视频走。如果把 UI 上与本模式无关的 832×480 / 81 帧写进存档，
+    就变成"记录参数 ≠ 实际输出"，复现和排障都会对不上。
+
+    只有 fps 会真正注入工作流（CreateVideo）；宽高/帧数在本模板里不映射，
+    仅作存档口径。探测失败（外链视频/无 ffmpeg）时**保留原值不猜**。
+    """
+    from ..managed_paths import VIDEO_SUFFIXES, resolve_managed_asset
+    from ..video import probe_duration, probe_fps, probe_resolution
+
+    try:
+        path = resolve_managed_asset(url, allowed_types=VIDEO_SUFFIXES,
+                                     base_dir=OUTPUTS_DIR)
+        if not path or not path.is_file():
+            return {}
+        width, height = probe_resolution(path)
+        fps = probe_fps(path)
+        duration = probe_duration(path)
+    except Exception as e:  # noqa: BLE001 - 探测失败不该阻断生成
+        print(f"[storyboard] 白模源视频探测失败（保留原参数）: {e}")
+        return {}
+    out = {}
+    if width and height:
+        out["width"], out["height"] = int(width), int(height)
+    if fps > 0:
+        out["fps"] = int(round(fps))
+    if fps > 0 and duration > 0:
+        out["num_frames"] = max(8, int(round(duration * fps)))
+    return out
+
+
 # =====================================================================
 # 模型
 # =====================================================================
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     description: str = ""
@@ -466,7 +502,10 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
         raise HTTPException(404, "分镜不存在")
     if shot["status"] in ("queued", "generating"):
         raise HTTPException(409, "该分镜正在生成中，请稍候")
-    if not shot["prompt"].strip():
+    # 模式先解析：白模生成不需要提示词（工作流里没有文本节点），
+    # 卡在"请先填写分镜提示词"会让用户被迫编一句话才能把视频转成白模。
+    mode = data.mode if "mode" in data.model_fields_set else (shot.get("mode") or "t2v")
+    if mode != "whitemodel" and not shot["prompt"].strip():
         raise HTTPException(400, "请先填写分镜提示词")
     if data.engine not in ENGINES:
         raise HTTPException(400, f"未知引擎: {data.engine}")
@@ -479,7 +518,6 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
                        else (shot.get("reference_video") or "")).strip()
     continue_from = (data.continue_from if "continue_from" in data.model_fields_set else shot.get("continue_from") or "").strip()
     source_version_id = (shot.get("source_video_version_id") or "").strip()
-    mode = data.mode if "mode" in data.model_fields_set else (shot.get("mode") or "t2v")
     try:
         validate_engine_mode(data.engine, mode)
         params = normalize_generation(data.model_dump(), data.model_dump(exclude_unset=True))
@@ -553,6 +591,14 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             raise HTTPException(
                 400, "视频参考（白模替换）模式需要先设置角色参考图（外观参考，复用参考图字段）"
             )
+    elif mode == "whitemodel":
+        # 白模生成（视频 → 灰白素模）：只需要一段原始视频。
+        # 这一步**不要**角色图：产物就是去掉外观的白模本身，喂外观参考是自相矛盾。
+        if not reference_video:
+            raise HTTPException(
+                400, "白模生成模式需要先设置参考视频（要转成白模的原始视频）："
+                "在分镜上填「参考视频」，或本次请求携带 reference_video"
+            )
 
     # ---- 提示词：角色一致性拼装 ----
     prompt = shot["prompt"]
@@ -578,6 +624,10 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             environment_note=white_model.environment_note_from_scene(scene),
             extra=shot["prompt"],
         )
+    elif mode == "whitemodel":
+        # 白模生成不消费提示词：工作流里没有文本节点。保持镜头原文，不拼
+        # 角色/动作/场景——拼了也不会被用到，反而让存档看起来像参与过生成。
+        prompt = shot["prompt"]
     else:
         if characters:
             prompt = assets.compose_prompt_with_characters(shot, characters)
@@ -640,6 +690,17 @@ async def generate_shot(shot_id: str, data: ShotGenerate):
             params["scene_plate"] = plate_url
     except Exception as e:
         print(f"[storyboard] 分镜 {shot_id} 幕布解析失败（不阻断生成）: {e}")
+
+    # 白模生成：输出规格由源视频决定（见 _probe_whitemodel_source）。
+    # 必须在资源守卫之前完成——守卫按 width/height/num_frames 估算，
+    # 且白模模式不降档，规格错了会让"够不够跑"判错。
+    if mode == "whitemodel":
+        probed = _probe_whitemodel_source(reference_video)
+        if probed:
+            params.update(probed)
+            params["resource_note"] = "白模输出规格取自源视频：" + \
+                f"{probed.get('width', params['width'])}×{probed.get('height', params['height'])}" + \
+                f" / {probed.get('fps', params['fps'])}fps"
 
     # 资源守卫：入队前按「本任务要多少 vs 本机剩多少」定档；降档必须在固化
     # 工作流快照之前完成，保证快照里的分辨率与任务参数一致。

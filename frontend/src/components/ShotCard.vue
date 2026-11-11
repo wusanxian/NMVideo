@@ -84,7 +84,10 @@ const props = defineProps({
 
 const emit = defineEmits(['edit', 'generate', 'review', 'review-design', 'rework', 'delete', 'versions', 'move-up', 'move-down', 'drag-start', 'drag-end', 'drop'])
 
-const MODE_LABELS = { i2v: '图生视频', first_last: '首尾帧', continuation: '视频续接' }
+const MODE_LABELS = {
+  i2v: '图生视频', first_last: '首尾帧', continuation: '视频续接',
+  whitemodel: '白模生成', v2v: '白模替换',
+}
 
 const STATUS_LABELS = {
   draft: '草稿', queued: '排队中', generating: '生成中',

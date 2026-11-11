@@ -133,6 +133,27 @@ def probe_resolution(video_path: Path) -> tuple:
     return (int(m.group(1)), int(m.group(2)))
 
 
+def probe_fps(video_path: Path) -> float:
+    """读取视频帧率；失败返回 0。
+
+    白模生成要按源视频帧率出片——fps 会被真正注入工作流（CreateVideo），
+    猜一个 24 会让 30fps 的素材变慢/变快，也会让存档参数与实际产物不符。
+    ffmpeg 的 stderr 里有两种写法（``24 fps`` / ``29.97 fps``），都认。
+    """
+    ffmpeg = get_ffmpeg()
+    proc = subprocess.run(
+        [ffmpeg, "-i", str(video_path), "-f", "ffmetadata", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    m = re.search(r"(\d+(?:\.\d+)?)\s*fps", proc.stderr)
+    if not m:
+        return 0.0
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return 0.0
+
+
 def has_audio_stream(media_path: Path) -> bool:
     """检测视频是否包含原声音轨，供导出混音使用（静音片段不创建无效输入）。"""
     proc = subprocess.run(
