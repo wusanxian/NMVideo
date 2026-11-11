@@ -68,6 +68,40 @@ class ModeWhitelistTest(unittest.TestCase):
         self.assertEqual(cap["supports"], ["whitemodel"])
         self.assertEqual(cap["execution_kind"], "local")
 
+    def test_generate_request_accepts_every_supported_mode(self):
+        """生成请求体的模式校验必须放行 SUPPORTED_MODES 全集。
+
+        这是真机才暴露的一类事故：引擎能力、生成链路都接好了白模，
+        但分镜生成请求的 `mode` 还写着手工的 5 模式正则，界面上选「白模生成」
+        提交直接 422 —— 功能做完了，入口是死的。所以这里不列举模式名，
+        直接遍历单一真源，加模式时自动跟上。
+        """
+        from pydantic import ValidationError
+        from app.routers.storyboard import ShotGenerate
+
+        for m in workflow_capabilities.SUPPORTED_MODES:
+            req = ShotGenerate(engine="comfyui", mode=m)
+            self.assertEqual(req.mode, m)
+        # 不在白名单的仍要拒，别把正则放宽成「什么都收」
+        with self.assertRaises(ValidationError):
+            ShotGenerate(engine="comfyui", mode="whitemodel_typo")
+
+    def test_shot_update_can_persist_mode(self):
+        """镜头更新必须能存 mode 与 continue_from。
+
+        前端模式卡写在表单里，保存走 PATCH /api/shots/{id}。模型里没这两个字段
+        时 pydantic 会静默丢弃，接口返回 200、看起来保存成功，重开弹窗却回到
+        t2v —— 属于「不报错但功能不成立」，只能靠契约测试盯住。
+        """
+        from app.routers.storyboard import ShotUpdate
+
+        upd = ShotUpdate(mode="whitemodel", continue_from="sht_prev")
+        dumped = upd.model_dump(exclude_unset=True)
+        self.assertEqual(dumped.get("mode"), "whitemodel")
+        self.assertEqual(dumped.get("continue_from"), "sht_prev")
+        # 只传标题时不得顺手把 mode 写进 update（否则每次编辑都会覆盖模式）
+        self.assertNotIn("mode", ShotUpdate(title="改标题").model_dump(exclude_unset=True))
+
 
 class PresetContractTest(unittest.TestCase):
     def test_preset_is_self_consistent(self):
@@ -261,6 +295,56 @@ class ResourceProfileTest(unittest.TestCase):
         t2v = dict(big, mode="t2v")
         self.assertGreater(resource_guard.estimate("comfyui", t2v)["vram"],
                            need_big["vram"])
+
+
+class OutputExtractTest(unittest.TestCase):
+    """产物提取必须滤掉输入节点回显。"""
+
+    def _entry(self, extra=None):
+        """真实踩到的 history 形状：LoadVideo(节点1) 与 SaveVideo(节点7) 都有输出。"""
+        outputs = {
+            "1": {
+                "images": [{"filename": "e2cd51552df9_abc.mp4", "subfolder": "",
+                            "type": "input"}],
+                "animated": [True],
+            },
+            "7": {
+                "images": [{"filename": "shot_00001_.mp4", "subfolder": "whitemodel",
+                            "type": "output"}],
+                "animated": [True],
+            },
+        }
+        if extra:
+            outputs.update(extra)
+        return {"outputs": outputs}
+
+    def test_input_echo_is_not_a_product(self):
+        from app.comfyui import extract_output_files
+
+        files = extract_output_files(self._entry())
+        names = [f["filename"] for f in files]
+        self.assertEqual(names, ["shot_00001_.mp4"])
+        self.assertEqual(files[0]["kind"], "videos")
+        self.assertEqual(files[0]["subfolder"], "whitemodel")
+
+    def test_temp_sorts_after_output(self):
+        from app.comfyui import extract_output_files
+
+        entry = self._entry({"9": {"images": [{"filename": "preview.mp4",
+                                              "subfolder": "", "type": "temp"}]}})
+        files = extract_output_files(entry)
+        self.assertEqual([f["type"] for f in files], ["output", "temp"])
+
+    def test_png_sequence_still_works(self):
+        from app.comfyui import extract_output_files
+
+        entry = {"outputs": {"5": {"images": [
+            {"filename": "frame_00001_.png", "subfolder": "", "type": "output"},
+            {"filename": "frame_00002_.png", "subfolder": "", "type": "output"},
+        ]}}}
+        files = extract_output_files(entry)
+        self.assertEqual(len(files), 2)
+        self.assertTrue(all(f["kind"] == "images" for f in files))
 
 
 class UploadWhitelistTest(unittest.TestCase):

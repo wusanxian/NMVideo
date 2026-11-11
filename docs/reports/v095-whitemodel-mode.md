@@ -150,6 +150,11 @@ v094 只修了**探测端点**的 COMBO 解析，但生成侧的 `_iter_loader_o
 
 ## 6. 验证矩阵（明天照这个复核）
 
+> **2026-11-11 更新**：下表「未执行/未验证」项已在本地安装目录实跑，见
+> `v096-local-runtime-verification.md`。实跑撞出 4 个缺陷（请求体正则漏改、
+> `ShotUpdate` 缺 mode、产物提取把原片当产物、ComfyUI 徽标恒显示未连接），
+> 均已修复。白模链路当前状态：**silhouette 路径实测出片；mesh 仍未验证**。
+
 | 项 | 结果 |
 |---|---|
 | 后端全套测试 | **191 通过 / 0 失败**（`./.venv/Scripts/python.exe tests/run_all.py`） |

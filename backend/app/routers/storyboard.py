@@ -18,6 +18,7 @@ from ..comfyui import (
 )
 from ..config import OUTPUTS_DIR
 from ..engines import DEFAULT_ENGINE_ID, ENGINES, is_comfy_engine, validate_engine_mode
+from ..workflow_capabilities import SUPPORTED_MODES
 from ..quality import normalize_generation
 from ..generation import prepare_comfy_workflow, persist_prepared_job
 from .. import db as db_module
@@ -102,6 +103,10 @@ def _probe_whitemodel_source(url: str) -> dict:
 # 模型
 # =====================================================================
 
+# 生成模式的请求体校验正则。取值必须来自 workflow_capabilities.SUPPORTED_MODES，
+# 不手写第二份——写过一次就漏过一次（白模加进引擎能力后，这里仍只认 5 模式）。
+_MODE_PATTERN = "^(?:" + "|".join(SUPPORTED_MODES) + ")$"
+
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
@@ -183,6 +188,10 @@ class ShotUpdate(BaseModel):
     # PR-02：独立首/尾帧（first_last 模式分别注入工作流首/尾帧节点）
     first_frame_image: Optional[str] = None
     last_frame_image: Optional[str] = None
+    # 生成模式与续接来源必须能落库：前端模式卡就在表单里，选完保存却写不回去，
+    # 重开弹窗一律回落 t2v，用户会以为「平台记住了」其实每次都重置。
+    mode: Optional[str] = Field(None, pattern=_MODE_PATTERN)
+    continue_from: Optional[str] = None
     # v2v：白模替换（视频参考）的运动视频 URL（覆盖 shot 上的默认值）
     reference_video: Optional[str] = None
     # PR-08 后半：多参考图（额外参考图 URL 数组，≤4 张；与单槽 reference_image 共存）
@@ -206,7 +215,10 @@ class ShotGenerate(BaseModel):
     preview: bool = False
     use_character_images: bool = True
     use_character_lora: bool = True
-    mode: str = Field("t2v", pattern="^(t2v|i2v|first_last|continuation|v2v)$")
+    # 模式白名单从 workflow_capabilities.SUPPORTED_MODES 派生，别无第二份清单。
+    # 上一批白模只改了引擎能力与生成链路，这里漏改，结果 whitemodel 在 pydantic
+    # 层就被 422 挡掉——「功能做完了但入口是死的」，只有真机跑才暴露。
+    mode: str = Field("t2v", pattern=_MODE_PATTERN)
     continue_from: str = ""
     # v2v：白模替换（视频参考）的运动视频 URL（覆盖 shot 上的默认值）
     reference_video: str = ""

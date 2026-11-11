@@ -723,7 +723,14 @@ def verify_snapshot_payload(data: dict, path) -> dict:
 
 
 def extract_output_files(entry: dict) -> list:
-    """从 history 条目提取产物文件（兼容 SaveImage / VHS_VideoCombine / AnimateDiff）"""
+    """从 history 条目提取产物文件（兼容 SaveImage / VHS_VideoCombine / AnimateDiff）
+
+    必须滤掉 `type == "input"` 的回显：LoadVideo / LoadImage 这类输入节点执行完
+    也会把「自己读的文件」塞进 outputs，且节点 id 通常排在输出节点之前。
+    不过滤时取到的第一个文件就是**上传的原始素材**——白模实跑踩过：ComfyUI 侧
+    确实生成了剪影（21KB），NMVideo 存下来的却是原片（260KB），画面一模一样，
+    只有比对 ComfyUI 自己的 output 目录才能发现。
+    """
     files = []
     for node_out in (entry.get("outputs") or {}).values():
         if not isinstance(node_out, dict):
@@ -731,6 +738,10 @@ def extract_output_files(entry: dict) -> list:
         for kind in ("videos", "gifs", "images"):
             for f in node_out.get(kind) or []:
                 if isinstance(f, dict) and f.get("filename"):
+                    file_type = f.get("type", "output")
+                    # input = 输入节点回显的已上传素材，不是产物
+                    if file_type == "input":
+                        continue
                     # ComfyUI V3 PreviewVideo（H3 插件使用）把 MP4 放在 images 字段。
                     # 按真实扩展名分类，不能把原生视频当成 PNG 帧序列处理。
                     suffix = Path(f["filename"]).suffix.lower()
@@ -740,10 +751,12 @@ def extract_output_files(entry: dict) -> list:
                         {
                             "filename": f["filename"],
                             "subfolder": f.get("subfolder", ""),
-                            "type": f.get("type", "output"),
+                            "type": file_type,
                             "kind": actual_kind,
                         }
                     )
+    # temp 是预览缓存（可能被 ComfyUI 清理），排到 output 之后
+    files.sort(key=lambda x: 0 if x.get("type") == "output" else 1)
     return files
 
 

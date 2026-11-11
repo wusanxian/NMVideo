@@ -646,7 +646,12 @@ onMounted(async () => {
   if (project.value) scriptText.value = project.value.script || ''
   try { engines.value = await api.engines() } catch { /* ignore */ }
   try { presets.value = await api.presets() } catch { /* ignore */ }
-  try { comfy.value = await api.comfyStatus() } catch { /* ignore */ }
+  // /api/comfy/status 返回的字段是 available（引擎探测口径），模板读的是 online。
+  // 直接赋值会让徽标永远显示「未连接」——哪怕 ComfyUI 就在跑（真机截图踩到）。
+  try {
+    const s = await api.comfyStatus()
+    comfy.value = { ...(s || {}), online: !!(s && (s.available ?? s.online)) }
+  } catch { /* ignore */ }
   await loadCharacters()
   pollTimer = setInterval(pollActive, 3000)
 
