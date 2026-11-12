@@ -128,60 +128,25 @@ VDN-H3 那一套 —— 和我们本机 FreeVideo 装的是同一族。
 A 路径尚需一次真机验证（加载是否被 ComfyUI 认、8GB 卡能不能跑 1024²），
 没验之前别在界面上写「已支持」。
 
-### 4.2 如果确定要走 H3 Image：唯一可用的入口是 FreeVideo 的 Agent API
+### 4.2 H3 Image 走 FreeVideo Agent API —— **已否决**（2026-11-12）
 
-2026-11-12 追加核实：H3 Image 不是完全没入口 —— FreeVideo 插件在 ComfyUI 进程里注册了一套
-**REST API**（`/freevideo/agent/v1/*`，自带 `/schema`、`/guide`、`/openapi.json`），
-图片是其中的 `kind: "image"` 任务，`model` 可选 `minimax-h3-image`。
+本节原记录「H3 Image 唯一入口是 FreeVideo 的 `/freevideo/agent/v1/*`」。按新边界
+**该路径作废，不做**：它要调第三方 REST 服务、读它的 token 文件、依赖它的进程，
+三者都在「只走 ComfyUI」之外。
 
-这是**它自己的 API，不是 ComfyUI 官方接口**，用之前要认这条边界变更。除此之外没有别的门：
-没有 ComfyUI 节点、ComfyUI 本体也不支持该架构。
+保留三条技术事实作为判断依据（它们不因这条决定改变）：
 
-**调用契约（读 `agent/schema.py` + `agent/jobs.py` 得到）**
+1. FreeVideo 没有把生图做成 ComfyUI 节点（只有 `FreeVideoGenerate` 视频+音频等 6 个）；
+2. 生图跑在它自己的 image worker 里，不是 ComfyUI 工作流；
+3. ComfyUI 0.34.0 没有 H3-Image 的 supported_model，原生 `UNETLoader` 也加载不了。
 
-```
-POST http://127.0.0.1:8188/freevideo/agent/v1/jobs
-X-Agent-Token: <token>            # 或 Authorization，见 /freevideo/agent/connect
-{
-  "kind": "image",
-  "prompt": "...",
-  "model": "minimax-h3-image",
-  "aspect": "16:9",
-  "tier": "standard",             # standard≈4MP / high≈16MP，仅 H3 Image 用
-  "width": 2048, "height": 1152,  # 与 aspect 二选一
-  "seed": 12345,
-  "images": [{"file": "<上一步产物>"}]   # 可选，最多 4 张，作参考/改图
-}
-→ GET  /freevideo/agent/v1/jobs/{id}       任务状态
-→ GET  /freevideo/agent/v1/media/{kind}/{file}/file   取图
-```
+结论：**H3 Image 在界内没有入口，不做。** 静图需求走 Qwen-Image 2.1（A 路径），
+它是 ComfyUI 格式、走原生节点，在界内。
 
-**前置条件**
+将来若要重新评估，唯一的前提是**插件或 ComfyUI 本体补上了节点** —— 那时它才变成
+「ComfyUI 工作流里的一张图」，而不是「另一个服务的 API」。
 
-1. 权重：`h3-image-dit-int8`（19.54 GiB）+ `h3-image-core`（1.11 GiB），
-   文本编码器复用本机已有的 14.61 GiB → **增量 ≈20.65 GiB**（G 盘余 64GB）。
-2. ComfyUI 起着（插件加载后 API 才挂上 8188，和视频通道同一个端口）。
-3. Token：`<FreeVideo 安装根>/agent/token`，或调 `GET /freevideo/agent/connect` 让它把
-   `token_file` 路径告诉你。**这是它自己文档的配对方式**，但客观上要读它的一个凭证文件 ——
-   与「不读服务端文件系统」那条边界有摩擦，需要明确同意。
-
-**两个预期要提前说清**
-
-- **H3 Image 的尺寸下限是 4MP**（`at_least_four_megapixels`），不像 Qwen 可以 1024²。
-  16:9 standard 大约 2667×1500；8GB 卡靠全流式跑，单图可能到分钟级。
-- 画质风格与视频那条 H3 一致（同一个家族、同一个文本编码器），对「出片前后风格统一」是加分项。
-
-**落地顺序（建议）**
-
-1. 权重下完 → 起 ComfyUI → 查 `/object_info` 确认**没有** H3-Image 节点（预计没有）。
-2. 拿 token，`GET /freevideo/agent/v1/schema` 核对 `minimax-h3-image` 是否在 enum 里。
-3. 先 `POST /plan` 干跑一次，确认参数校验通过，再 `POST /jobs` 真跑。
-4. 8GB 卡先试 `standard`，记录耗时/显存；慢了再评估要不要降尺寸或放弃。
-5. 跑通后才把 NMVideo 的 `imagegen` 加一个 `backend=freevideo_agent` 分支；
-   没跑通就保持在线 API，别写死。
-
-**风险**：这条 API 是 FreeVideo 的内部契约，版本升级可能改字段（插件版本 2026.11.11 的
-`image` schema 我核对过，字段如上）。接入时要把 `/schema` 当运行时真值，别把字段写死在代码里。
+完整边界定义与能力分配见 `20261112-comfy-only-boundary-and-capacity.md`。
 
 ## 5. 差距结论
 
