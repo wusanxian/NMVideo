@@ -50,6 +50,22 @@ AUTO_CANDIDATES = tuple(
 
 ENV_DIR_KEY = "AIVIDEO_COMFY_DIR"
 
+#: 本产品自己的 ComfyUI 运行环境（`<runtime>/comfy-venv`）。
+#: 与 `<runtime>/venv`（后端自身依赖）刻意分开：ComfyUI 的依赖面（torch +
+#: einops/scipy/kornia/spandrel/av/comfyui-frontend-package…）跟后端不是一套，
+#: 混装会互相拽版本。分开后升级任一侧都不动另一侧。
+#: 为什么不直接用 `runtime/venv` 跑 ComfyUI：ComfyUI 缺的包它没有，
+#: 补装又会让后端跟着变动，等于把两个产品的依赖绑死。
+RUNTIME_DIR = BASE_DIR.parent
+OWN_COMFY_VENV = Path(
+    os.environ.get("AIVIDEO_COMFY_VENV") or (RUNTIME_DIR / "comfy-venv"))
+OWN_COMFY_PYTHON = OWN_COMFY_VENV / "Scripts" / "python.exe"
+
+
+def own_python() -> Path:
+    """本产品自备的 ComfyUI 解释器路径（未必存在，调用方自行判断）"""
+    return OWN_COMFY_PYTHON
+
 
 def _configured_dir() -> str | None:
     """用户显式指定的 ComfyUI 目录（settings.json，空串视为未设置）"""
@@ -72,59 +88,94 @@ def _dir_has_main(comfy_dir: Path) -> bool:
         return False
 
 
-def _find_python(comfy_dir: Path) -> str | None:
-    """给 ComfyUI 目录配解释器，按可靠性排序：
+def _venv_has_torch(venv_dir: Path) -> bool:
+    """轻量判断一个 venv 是否装好了 ComfyUI 的地基（不 import torch，太慢）。
 
-    1. ComfyUI 自带 venv（常见 git clone 安装布局）
-    2. 上级/旁支目录的 envs/comfyui-*/（安装器布局：envs 与 ComfyUI 可能
-       平级放在同一安装根下，也可能在兄弟子树里——FreeVideo 实测是
-       ``安装根/FreeVideo-engine/envs/comfyui-*/``，两级都要扫）
-    3. 便携版自带的 python_embeded/（Windows 免安装包布局）
-    4. 系统 PATH 上的 python —— 兜底，依赖用户环境装好了依赖
+    只看 ``site-packages/torch/__init__.py`` 是否存在：装到一半、被清空的
+    venv 会被判为未就绪，从而回落到下一个候选，而不是让启动必然失败。
     """
+    try:
+        for sp in (venv_dir / "Lib" / "site-packages").glob("torch/__init__.py"):
+            if sp.is_file():
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _find_python(comfy_dir: Path) -> tuple[str | None, str]:
+    """给 ComfyUI 配解释器，返回 ``(路径, 来源)``。
+
+    排序原则：**本产品自己的环境优先于一切外部安装**。之前这里没把自家
+    venv 列进去，结果在装了 FreeVideo 的机器上必然命中它 ``envs/comfyui-*``
+    里的 Python —— 那是别人的运行时，升级/卸载都不由我们控制。
+
+    1. ``<runtime>/comfy-venv``（本产品自带，装好 torch 才算数）
+    2. ComfyUI 目录自带 venv（git clone 布局）
+    3. 上级/旁支目录的 ``envs/comfyui-*``（第三方安装器布局，最后一档外部环境）
+    4. 便携版 ``python_embeded/``
+    5. 系统 PATH —— 仅兜底，依赖用户自己装好了依赖
+    """
+    candidates: list[tuple[Path, str]] = [(OWN_COMFY_PYTHON, "own")]
+
     envs_patterns = [comfy_dir.parent / "envs"]
     if comfy_dir.parent.is_dir():
         envs_patterns.extend(
             p / "envs" for p in comfy_dir.parent.iterdir() if p.is_dir())
-    candidates = [
-        comfy_dir / "venv" / "Scripts" / "python.exe",
-        *(py for base in envs_patterns
+
+    candidates += [
+        (comfy_dir / "venv" / "Scripts" / "python.exe", "comfy-venv"),
+        *((py, "envs") for base in envs_patterns
           for py in sorted(base.glob("comfyui-*/Scripts/python.exe"))),
-        comfy_dir / "python_embeded" / "python.exe",
+        (comfy_dir / "python_embeded" / "python.exe", "portable"),
     ]
-    for p in candidates:
+    for p, source in candidates:
         try:
-            if p.is_file():
-                return str(p)
+            if not p.is_file():
+                continue
         except OSError:
             continue
+        # 自家环境和 ComfyUI 自带 venv 都要求装好 torch；envs/portable 是
+        # 别人的环境，跑不起来的责任不在我们，不做二次校验。
+        if source in ("own", "comfy-venv") and not _venv_has_torch(p.parent.parent):
+            continue
+        return str(p), source
+
     found = shutil.which("python.exe") or shutil.which("python")
-    return found
+    return (found, "path") if found else (None, "none")
 
 
 def discover() -> dict:
-    """定位本机可托管的 ComfyUI。返回 {dir, source, python, valid}，找不到 dir=None。
+    """定位本机可托管的 ComfyUI。
 
-    source: settings（用户指定）> env（AIVIDEO_COMFY_DIR）> auto（常见路径探测）
-    valid: 目录里有没有 main.py——settings 指向了坏目录时如实带出来，
-    前端能显示「目录无效」，而不是装作没配置。
+    返回 ``{dir, source, python, python_source, valid, own_runtime}``：
+    - ``source``：目录来源 settings > env > auto
+    - ``python_source``：解释器来源 own（本产品自带）/ comfy-venv（ComfyUI 自带）
+      / envs（第三方安装器）/ portable / path
+    - ``own_runtime``：解释器是否为本产品自带 —— 界面据此说明「运行环境自持」
+      还是「借用外部安装」
+    - ``valid``：目录里有没有 main.py；settings 指向坏目录时如实带出，
+      前端能显示「目录无效」，而不是装作没配置
     """
+    def pack(d: Path, src: str) -> dict:
+        py, py_src = _find_python(d)
+        return {"dir": str(d), "source": src, "python": py,
+                "python_source": py_src, "own_runtime": py_src == "own",
+                "valid": _dir_has_main(d)}
+
     configured = _configured_dir()
     if configured:
-        d = Path(configured)
-        return {"dir": str(d), "source": "settings",
-                "python": _find_python(d), "valid": _dir_has_main(d)}
+        return pack(Path(configured), "settings")
     env_val = os.environ.get(ENV_DIR_KEY, "").strip()
     if env_val:
         d = Path(env_val)
         if _dir_has_main(d):
-            return {"dir": str(d), "source": "env",
-                    "python": _find_python(d), "valid": True}
+            return pack(d, "env")
     for d in AUTO_CANDIDATES:
         if _dir_has_main(d):
-            return {"dir": str(d), "source": "auto",
-                    "python": _find_python(d), "valid": True}
-    return {"dir": None, "source": "none", "python": None, "valid": False}
+            return pack(d, "auto")
+    return {"dir": None, "source": "none", "python": None,
+            "python_source": "none", "own_runtime": False, "valid": False}
 
 
 def is_local_url() -> bool:
@@ -275,6 +326,11 @@ def state() -> dict:
         note = "ComfyUI 在远程机器上，由服务方管理"
     elif found["dir"] and not found.get("valid"):
         note = f"配置的 ComfyUI 目录无效（缺 main.py）：{found['dir']}"
+    elif found["dir"] and found.get("python_source") not in (None, "", "own"):
+        # 有 ComfyUI 但解释器来自外部安装：能跑，但升级/卸载不由我们控制，
+        # 如实说出来，别让用户以为运行环境是自己管的。
+        note = ("本机 ComfyUI 未运行；将借用外部安装的 Python 启动"
+                f"（来源 {found.get('python_source')}）")
     elif found["dir"]:
         note = "本机 ComfyUI 未运行，可一键启动"
     else:

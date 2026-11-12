@@ -83,6 +83,26 @@ TORCH_INDEX = {
 DEFAULT_PORT = 8000
 MIN_PY_VER = (3, 10)
 
+#: 本产品自带的 ComfyUI 运行环境。与 `runtime/venv`（后端自身依赖）分开：
+#: ComfyUI 要 torch + einops/scipy/kornia/spandrel/av/comfyui-frontend-package，
+#: 后端要 fastapi/diffusers/edge-tts，混装会互相拽版本，升级一侧就会弄坏另一侧。
+#: 解释器自持之后，启动 ComfyUI 不再借用第三方安装器 (`envs/comfyui-*`) 的 Python。
+COMFY_VENV_NAME = "comfy-venv"
+#: ComfyUI 侧 PyTorch：**不能用后端那套 cu124**。
+#: ComfyUI 0.34 的 comfy_kitchen 用 PEP585 注解（list[int]）调
+#: torch.library.infer_schema，torch 2.6 直接报 "unsupported type list[int]"
+#: 启动即崩。下面这套组合来自 FreeVideo 实测可跑（Python 3.10–3.12 都有轮子）。
+COMFY_TORCH_PINS = ("torch==2.13.0+cu130",
+                    "torchvision==0.28.0+cu130",
+                    "torchaudio==2.11.0+cu130")
+COMFY_TORCH_INDEX = "https://download.pytorch.org/whl/cu130/"
+COMFY_TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu/"
+#: ComfyUI 目录探测：与 backend/app/comfy_manager.AUTO_CANDIDATES 同序（C→G 盘）
+COMFY_AUTO_CANDIDATES = tuple(
+    Path(f"{drive}:/") / "AI" / "FreeVideo" / "ComfyUI"
+    for drive in ("C", "D", "E", "F", "G")
+)
+
 # H3 有两条通道，门槛差三倍，千万不能混算（数字与 backend/app/h3_freevideo.py、
 # backend/app/engines/h3_quant.py 同口径，改一处要三处同步）：
 #   - 插件通道（正路，引擎 h3）：ComfyUI + FreeVideo 节点，权重按 50 个 transformer
@@ -600,6 +620,37 @@ def setup_embed_python(rt: Path) -> Path:
     return py_exe
 
 
+def _find_comfy_base_python() -> str | None:
+    """给 ComfyUI 环境挑基座解释器：**优先 3.10–3.12**。
+
+    ComfyUI 的依赖面比后端宽（av / kornia / spandrel / comfy-kitchen…），
+    这些包对 3.13 的 wheel 覆盖不全，落到源码编译在用户机器上基本必败。
+    3.10–3.12 是上游 CI 覆盖最完整的区间，选它就少一类「装到一半炸」。
+    三段都试过还没有，才退回通用的 ``find_system_python()``。
+    """
+    probes: list[list[str]] = [["py", "-3.12"], ["py", "-3.11"], ["py", "-3.10"],
+                               ["python"], ["python3"]]
+    for argv in probes:
+        exe = argv[0]
+        if not shutil.which(exe):
+            continue
+        try:
+            out = subprocess.run([*argv, "-c", "import sys;print('%d.%d' % sys.version_info[:2])"],
+                                 capture_output=True, text=True, timeout=15).stdout.strip()
+        except Exception:
+            continue
+        if out in ("3.10", "3.11", "3.12"):
+            # py 启动器要给完整 argv 才能定位解释器；用 -c 反查可执行文件路径
+            try:
+                real = subprocess.run([*argv, "-c", "import sys;print(sys.executable)"],
+                                      capture_output=True, text=True, timeout=15).stdout.strip()
+                if real and Path(real).is_file():
+                    return real
+            except Exception:
+                pass
+    return find_system_python()
+
+
 def ensure_python_env(rt: Path, reinstall: bool = False):
     """返回 (venv_python, pip_cmd_prefix)"""
     venv_dir = rt / "venv"
@@ -644,6 +695,108 @@ def pip_install(py: Path, args: list, desc: str):
     proc = subprocess.run(cmd)
     if proc.returncode != 0:
         ui.fatal(f"安装失败: {' '.join(args)}\n请检查网络后重新运行 exe（已装部分会保留）")
+
+
+# ---------------- ComfyUI 自有运行环境 ----------------
+def find_comfy_dir(rt: Path) -> Path | None:
+    """定位本机 ComfyUI 目录：settings.json 的 comfy_dir > 环境变量 > 常见布局。
+
+    只认「有 main.py」的目录——猜别的结构没意义，启动时也要用这个文件。
+    """
+    try:
+        cfg = json.loads((rt / "backend" / "settings.json").read_text(encoding="utf-8"))
+        val = str(cfg.get("comfy_dir") or "").strip()
+        if val and (Path(val) / "main.py").is_file():
+            return Path(val)
+    except Exception:
+        pass
+    env_val = os.environ.get("AIVIDEO_COMFY_DIR", "").strip()
+    if env_val and (Path(env_val) / "main.py").is_file():
+        return Path(env_val)
+    for d in COMFY_AUTO_CANDIDATES:
+        if (d / "main.py").is_file():
+            return d
+    return None
+
+
+def _comfy_deps_stamp(comfy_dir: Path, torch_ver: str) -> str:
+    """ComfyUI 依赖指纹：requirements.txt 内容 + torch 档位。
+
+    ComfyUI 升版会改 requirements，那时必须重装；只看目录存在会把旧环境
+    一直用下去，最后表现为「插件导入报缺包」。
+    """
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        h.update((comfy_dir / "requirements.txt").read_bytes())
+    except Exception:
+        h.update(b"<no-requirements>")
+    h.update(torch_ver.encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def ensure_comfy_env(rt: Path, torch_ver: str) -> Path | None:
+    """准备**本产品自有**的 ComfyUI 运行环境，返回解释器路径（失败/不需要时 None）。
+
+    为什么要单独一套：以前 `_find_python` 只认 ComfyUI 自带 venv 和第三方
+    安装器的 `envs/comfyui-*`，在装了别人的整合包的机器上必然借用人家的
+    Python——升级、卸载、换源全不由我们控制，用户也没法单独重装。
+    自持之后：解释器在 ``<runtime>/comfy-venv``，ComfyUI 目录可以指向任意位置。
+    """
+    comfy_dir = find_comfy_dir(rt)
+    if not comfy_dir:
+        ui.info("本机没找到 ComfyUI 目录：跳过运行环境准备（可在设置里填远程地址）")
+        return None
+
+    venv = rt / COMFY_VENV_NAME
+    py = venv / "Scripts" / "python.exe"
+    if not py.exists():
+        sys_py = _find_comfy_base_python()
+        if not sys_py:
+            ui.warn("没有可用的系统 Python，无法创建 ComfyUI 运行环境")
+            ui.info("装一个 Python 3.10+ 后重新运行本程序，或在设置里连远程 ComfyUI")
+            return None
+        ui.step(f"创建 ComfyUI 运行环境（{COMFY_VENV_NAME}）")
+        subprocess.run([sys_py, "-m", "venv", str(venv)], check=True)
+        subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip",
+                        "--no-warn-script-location", "-i", PIP_INDEX])
+        ui.ok("ComfyUI 运行环境已创建")
+
+    stamp = py.parent / ".comfy-deps-ok"
+    want = _comfy_deps_stamp(comfy_dir, torch_ver)
+    ready = False
+    try:
+        ready = stamp.read_text(encoding="utf-8").strip() == want
+    except Exception:
+        ready = False
+    if ready:
+        ui.ok("ComfyUI 依赖已就绪，跳过安装")
+        return py
+
+    if torch_ver == "cpu":
+        torch_args = ["torch", "torchvision", "torchaudio",
+                      "--index-url", COMFY_TORCH_CPU_INDEX]
+        desc = "安装 ComfyUI 用 PyTorch（CPU 版，约 300MB）"
+    else:
+        torch_args = [*COMFY_TORCH_PINS,
+                      "--index-url", COMFY_TORCH_INDEX,
+                      "--extra-index-url", PIP_INDEX]
+        desc = "安装 ComfyUI 用 PyTorch（CUDA 13 版，约 3.5GB）"
+    pip_install(py, torch_args, desc)
+    pip_install(py, ["-r", str(comfy_dir / "requirements.txt")],
+                f"安装 ComfyUI 依赖（{comfy_dir.name}，约 1.5GB）")
+    # H3 视频节点的宿主插件要 diffusers / omegaconf，ComfyUI 自己的
+    # requirements 不含这两项；不装的话插件 import 就炸，表现为「节点列表没它」。
+    if (comfy_dir / "custom_nodes" / "FreeVideo").is_dir():
+        pip_install(py, ["diffusers", "omegaconf"],
+                    "安装视频工作流节点依赖（diffusers / omegaconf）")
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(want, encoding="utf-8")
+    except Exception:
+        pass
+    ui.ok("ComfyUI 运行环境就绪（本产品自带）")
+    return py
 
 
 # ---------------- 模型下载 ----------------
@@ -843,6 +996,12 @@ def main():
             stamp.write_text(want, encoding="utf-8")
         except Exception:
             pass
+
+    # ComfyUI 运行环境自持：只有走插件通道（h3）才需要。放在依赖之后、
+    # 模型之前——它跟后端依赖是两套东西，进度上归入「安装依赖」一步。
+    if plan.model == "h3":
+        emit_state("deps")
+        ensure_comfy_env(rt, torch_ver)
 
     if not args.no_download:
         emit_state("models")

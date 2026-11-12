@@ -36,6 +36,10 @@ def _make_comfy_dir(root: Path) -> Path:
     (d / "venv" / "Scripts").mkdir(parents=True)
     (d / "main.py").write_text("# stub", encoding="utf-8")
     (d / "venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    # ComfyUI 自带 venv 也要求装好 torch 才算数（与 _find_python 的判定一致）
+    torch_init = d / "venv" / "Lib" / "site-packages" / "torch" / "__init__.py"
+    torch_init.parent.mkdir(parents=True)
+    torch_init.write_text("", encoding="utf-8")
     return d
 
 
@@ -89,6 +93,9 @@ def test_find_python_priority(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         d = _make_comfy_dir(root)  # 自带 venv
+        # 本机没有自持环境：别让真实 runtime 干扰用例
+        monkeypatch.setattr(comfy_manager, "OWN_COMFY_PYTHON",
+                            root / "nowhere" / "python.exe")
         # 上级 envs 与 python_embeded 也都在：venv 优先
         envs_py = root / "envs" / "comfyui-abc" / "Scripts" / "python.exe"
         envs_py.parent.mkdir(parents=True)
@@ -96,16 +103,80 @@ def test_find_python_priority(monkeypatch):
         embed_py = d / "python_embeded" / "python.exe"
         embed_py.parent.mkdir()
         embed_py.write_text("", encoding="utf-8")
-        got = comfy_manager._find_python(d)
-        assert Path(got) == d / "venv" / "Scripts" / "python.exe"
+
+        py, source = comfy_manager._find_python(d)
+        assert Path(py) == d / "venv" / "Scripts" / "python.exe"
+        assert source == "comfy-venv"
         # 没了 venv：envs 次之
         (d / "venv").rename(d / "venv_bak")
-        got = comfy_manager._find_python(d)
-        assert Path(got) == envs_py
+        py, source = comfy_manager._find_python(d)
+        assert Path(py) == envs_py
+        assert source == "envs"
         # 连 envs 也没有：python_embeded 兜底
         (root / "envs").rename(root / "envs_bak")
-        got = comfy_manager._find_python(d)
-        assert Path(got) == embed_py
+        py, source = comfy_manager._find_python(d)
+        assert Path(py) == embed_py
+        assert source == "portable"
+
+
+def _make_own_venv(root: Path, with_torch: bool = True) -> Path:
+    """造一个「本产品自带」的 comfy-venv 目录（含/不含 torch）"""
+    venv = root / "comfy-venv"
+    py = venv / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    if with_torch:
+        torch_init = venv / "Lib" / "site-packages" / "torch" / "__init__.py"
+        torch_init.parent.mkdir(parents=True)
+        torch_init.write_text("", encoding="utf-8")
+    return py
+
+
+def test_find_python_prefers_own_runtime(monkeypatch):
+    """自家的 comfy-venv 优先于第三方安装器的 envs——这是本轮的核心约束"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        own_py = _make_own_venv(root)
+        d = _make_comfy_dir(root)
+        envs_py = root / "envs" / "comfyui-abc" / "Scripts" / "python.exe"
+        envs_py.parent.mkdir(parents=True)
+        envs_py.write_text("", encoding="utf-8")
+        monkeypatch.setattr(comfy_manager, "OWN_COMFY_PYTHON", own_py)
+
+        py, source = comfy_manager._find_python(d)
+        assert Path(py) == own_py
+        assert source == "own"
+
+
+def test_find_python_own_without_torch_falls_back(monkeypatch):
+    """自带 venv 建了但没装 torch：视为未就绪，回落，而不是让启动必然失败"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        own_py = _make_own_venv(root, with_torch=False)
+        d = _make_comfy_dir(root)
+        monkeypatch.setattr(comfy_manager, "OWN_COMFY_PYTHON", own_py)
+        py, source = comfy_manager._find_python(d)
+        assert Path(py) == d / "venv" / "Scripts" / "python.exe"
+        assert source == "comfy-venv"
+
+
+def test_discover_reports_own_runtime(monkeypatch):
+    """discover 要把解释器来源如实带出来，界面才能区分「自持 / 借用外部」"""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        own_py = _make_own_venv(root)
+        d = _make_comfy_dir(root)
+        monkeypatch.setattr(comfy_manager, "OWN_COMFY_PYTHON", own_py)
+        monkeypatch.setattr(comfy_manager, "_configured_dir", lambda: str(d))
+        got = comfy_manager.discover()
+        assert got["python_source"] == "own"
+        assert got["own_runtime"] is True
+
+        monkeypatch.setattr(comfy_manager, "OWN_COMFY_PYTHON",
+                            root / "nowhere" / "python.exe")
+        got = comfy_manager.discover()
+        assert got["python_source"] == "comfy-venv"
+        assert got["own_runtime"] is False
 
 
 # ---------------------------------------------------------------- is_local
