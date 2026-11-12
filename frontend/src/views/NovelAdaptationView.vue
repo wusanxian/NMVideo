@@ -5,18 +5,22 @@
         <h1>小说改编</h1>
         <div class="page-sub">导入小说 → 管理章节 →（后续批次）AI 故事分析 / 分集剧本 / 自动分镜</div>
       </div>
-      <button class="btn btn-primary" @click="showImport = true">＋ 导入小说</button>
+      <button class="btn btn-primary" @click="showImport = true">
+        <Icon name="plus" :size="15" />导入小说
+      </button>
     </header>
 
-    <div class="stage-hint">
-      <b>前期制作流水线已交付：</b>PR-N01 小说导入（TXT / Markdown，UTF-8 / GBK / BIG5）、中文章节自动识别、
-      章节查看 / 重命名 / 拆分 / 合并 / 重新识别、原文位置保留；
-      <b>PR-N02 故事圣经</b>：AI 分章节理解（人物 / 场景 / 事件 / 关系）、结构化设定可编辑、审核版本、定位原小说；
-      <b>PR-N03 分集与剧本</b>：AI 分集大纲（可编辑 / 审核 / 版本）、动漫剧本生成（工作台剧本格式）、
-      审核后一键交接为项目进入分镜工作台；
-      <b>PR-N04 结构化分镜</b>：逐镜头草案（景别 / 机位 / 动作 / 对白 / 人物 / 走位 / 情绪 / 时长 / 生成模式）、
-      可编辑 / 重排 / 审核 / 版本，审核后交接为项目分镜（角色卡自动建档，不自动启动生成）。
-    </div>
+    <!-- 流程说明：原来是一整块带 PR 编号的内部交付清单，读起来像发布日志。
+         这里只留「用户要做什么 + 下一步在哪」，细节收进折叠。 -->
+    <details class="flow-hint">
+      <summary>这条流水线怎么走？</summary>
+      <div class="flow-body">
+        <div class="flow-step"><b>1 · 导入</b>TXT / Markdown（UTF-8 / GBK / BIG5），自动识别中文章节，可查看、重命名、拆分、合并。</div>
+        <div class="flow-step"><b>2 · 故事圣经</b>AI 分章理解人物 / 场景 / 事件 / 关系，结果可编辑、可审核，并保留原文定位。</div>
+        <div class="flow-step"><b>3 · 分集与剧本</b>AI 出分集大纲与剧本，审核通过后一键交接成项目。</div>
+        <div class="flow-step"><b>4 · 结构化分镜</b>逐镜头草案（景别 / 机位 / 动作 / 对白 / 情绪 / 时长），审核后进入分镜工作台。</div>
+      </div>
+    </details>
 
     <div v-if="loading" class="empty">加载中…</div>
     <div v-else-if="!novels.length" class="empty">
@@ -158,6 +162,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import Icon from '../components/Icon.vue'
 import { api } from '../api'
 import NovelBiblePanel from './NovelBiblePanel.vue'
 import NovelEpisodePanel from './NovelEpisodePanel.vue'
@@ -360,6 +365,48 @@ function fmtTime(iso) {
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
+.flow-hint {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  margin-bottom: var(--sp-4);
+  padding: 0 16px;
+}
+.flow-hint summary {
+  cursor: pointer;
+  padding: 11px 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  list-style: none;
+}
+.flow-hint summary::-webkit-details-marker { display: none; }
+.flow-hint summary::before {
+  content: '?';
+  display: inline-grid;
+  place-items: center;
+  width: 16px; height: 16px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: rgba(var(--accent-rgb), .18);
+  color: var(--accent-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+.flow-hint[open] summary { border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.flow-body { padding-bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
+.flow-step {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.6;
+  max-width: 82ch;
+}
+.flow-step b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
 .stage-hint {
   padding: 12px 16px;
   margin-bottom: 16px;

@@ -1,34 +1,35 @@
 <template>
   <aside class="sidebar">
-    <div class="logo">🎬 NMVideo</div>
-    <nav>
-      <a v-for="item in navItems" :key="item.label" class="nav-item"
-         :class="{ active: isActive(item) }"
-         :href="itemHref(item)" @click.prevent="onNav(item)">
-        <span class="nav-ico">{{ item.icon }}</span>
-        <span class="nav-text">{{ item.label }}</span>
-        <span v-if="item.label === '视频生成' && activeCount" class="nav-badge">{{ activeCount }}</span>
-      </a>
-    </nav>
-    <div class="nav-extra">
-      <router-link to="/queue">
-        📋 任务队列
-        <span v-if="activeCount" class="nav-badge">{{ activeCount }}</span>
-      </router-link>
-      <router-link to="/gallery">🖼 作品画廊</router-link>
+    <div class="brand">
+      <span class="brand-mark"><Icon name="film" :size="17" /></span>
+      <span class="brand-text">NMVideo</span>
     </div>
+
+    <nav>
+      <div v-for="g in navGroups" :key="g.label" class="nav-group">
+        <div class="nav-group-label">{{ g.label }}</div>
+        <a v-for="item in g.items" :key="item.label" class="nav-item"
+           :class="{ active: isActive(item) }"
+           :href="itemHref(item)" @click.prevent="onNav(item)">
+          <Icon :name="item.icon" :size="16" />
+          <span class="nav-text">{{ item.label }}</span>
+          <span v-if="item.badge && activeCount" class="nav-badge">{{ activeCount }}</span>
+        </a>
+      </div>
+    </nav>
+
     <transition name="fade">
       <div v-if="navToast" class="nav-toast">{{ navToast }}</div>
     </transition>
-    <div class="sidebar-footer">
-      <div class="engine-status" v-for="e in engines" :key="e.id">
-        <span class="dot" :class="e.status"></span>
-        <span>{{ e.name }}</span>
-      </div>
-      <div class="engine-status" v-if="!engines.length" :class="{ warn: !backendOnline }">
-        <span class="dot" :style="{ background: backendOnline ? 'var(--text-dim)' : 'var(--red)' }"></span>
-        <span>{{ backendOnline ? '后端启动中…' : '后端未连接' }}</span>
-      </div>
+
+    <!-- 引擎总览只占一行：以前把 5 条引擎状态常驻在侧栏底部，
+         等于把调试信息当导航，视觉上把栏底压垮了。详情进设置页看。 -->
+    <div class="sidebar-foot">
+      <router-link to="/settings" class="engine-summary" :title="engineSummaryTip">
+        <span class="dot" :class="engineDotClass"></span>
+        <span class="engine-summary-text">{{ engineSummary }}</span>
+        <Icon name="chevron" :size="14" />
+      </router-link>
     </div>
   </aside>
   <main class="main">
@@ -60,6 +61,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import Icon from './components/Icon.vue'
 import { api } from './api'
 import { useJobsStore } from './store/jobs'
 import { useProjectStore } from './store/project'
@@ -80,19 +82,59 @@ let waitTimer = null
 
 const showOfflineCard = computed(() => !backendOnline.value)
 
-// ---------- 侧栏导航（按创作流：作品 → 剧本 → 资产 → 生成 → 剪辑 → 声音 → 设置） ----------
+// ---------- 侧栏导航（按创作流分组：开始 → 项目 → 生产 → 系统） ----------
 const pid = computed(() => projectStore.currentProjectId)
-const navItems = computed(() => [
-  { icon: '🚀', label: '环境准备', to: '/launch', route: '/launch' },
-  { icon: '📚', label: '小说改编', to: '/novel', route: '/novel' },
-  { icon: '🗂', label: '我的作品', to: '/projects', route: '/projects' },
-  { icon: '📖', label: '剧本与分镜', tab: 'shots', needsProject: true },
-  { icon: '🎭', label: '角色与场景', tab: 'assets', needsProject: true },
-  { icon: '🎬', label: '视频生成', to: '/generate', route: '/generate' },
-  { icon: '✂️', label: '剪辑工作台', tab: 'timeline', needsProject: true },
-  { icon: '🎧', label: '声音制作', tab: 'timeline', needsProject: true },
-  { icon: '⚙️', label: '模型与设置', to: '/settings', route: '/settings' },
+const navGroups = computed(() => [
+  {
+    label: '开始',
+    items: [
+      { icon: 'bolt', label: '环境准备', to: '/launch', route: '/launch' },
+      { icon: 'book', label: '小说改编', to: '/novel', route: '/novel' },
+    ],
+  },
+  {
+    label: '项目',
+    items: [
+      { icon: 'folder', label: '我的作品', to: '/projects', route: '/projects' },
+      { icon: 'film', label: '剧本与分镜', tab: 'shots', needsProject: true },
+      { icon: 'users', label: '角色与场景', tab: 'assets', needsProject: true },
+    ],
+  },
+  {
+    label: '生产',
+    items: [
+      { icon: 'spark', label: '视频生成', to: '/generate', route: '/generate' },
+      { icon: 'scissors', label: '剪辑工作台', tab: 'timeline', needsProject: true },
+      { icon: 'mic', label: '声音制作', tab: 'timeline', needsProject: true },
+      { icon: 'queue', label: '任务队列', to: '/queue', route: '/queue', badge: true },
+    ],
+  },
+  {
+    label: '系统',
+    items: [
+      { icon: 'image', label: '作品画廊', to: '/gallery', route: '/gallery' },
+      { icon: 'sliders', label: '模型与设置', to: '/settings', route: '/settings' },
+    ],
+  },
 ])
+
+const comfyEngine = computed(() => engines.value.find((e) => e.id === 'comfyui'))
+const engineDotClass = computed(() => {
+  if (!backendOnline.value) return 'unavailable'
+  if (comfyEngine.value?.status === 'ready') return 'ready'
+  return engines.value.length ? 'unavailable' : ''
+})
+const engineSummary = computed(() => {
+  if (!backendOnline.value) return '后端未连接'
+  const ready = engines.value.filter((e) => e.status === 'ready').length
+  if (!engines.value.length) return '引擎加载中…'
+  return ready ? `引擎就绪 ${ready}/${engines.value.length}` : '引擎待配置'
+})
+const engineSummaryTip = computed(() =>
+  engines.value.length
+    ? engines.value.map((e) => `${e.name}：${e.status === 'ready' ? '可用' : '未就绪'}`).join('\n')
+    : '尚未读取到引擎信息'
+)
 
 function itemHref(item) {
   if (item.needsProject && !pid.value) return '/projects'

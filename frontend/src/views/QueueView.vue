@@ -13,12 +13,33 @@
     </div>
 
     <div v-for="job in store.jobs" :key="job.id" class="job-card">
+      <!-- 左：产物缩略（没有产物就给状态占位，保持行高一致） -->
+      <div class="job-media" :class="{ flat: !(job.status === 'done' && job.video_url) }">
+        <video v-if="job.status === 'done' && job.video_url"
+               :src="job.video_url + '#t=0.1'" :poster="job.poster_url" controls preload="metadata"></video>
+        <div v-else class="job-media-empty">
+          <Icon :name="job.status === 'running' || job.status === 'pending' ? 'clock' : 'film'" :size="18" />
+          <span>{{ statusText[job.status] || job.status }}</span>
+        </div>
+      </div>
+
       <div class="job-main">
         <div class="job-title">
           <span class="badge" :class="job.status">{{ statusText[job.status] || job.status }}</span>
-          <span class="job-id">#{{ job.id }}</span>
           <span class="job-engine">{{ engineName(job.engine) }}</span>
+          <span class="job-id">#{{ job.id }}</span>
           <span class="job-time">{{ formatTime(job.created_at) }}</span>
+          <div class="job-actions">
+            <button v-if="job.status === 'pending' || job.status === 'running'" class="btn btn-ghost btn-sm"
+                    @click="store.cancel(job.id)">取消</button>
+            <button v-if="job.status === 'needs_attention'" class="btn btn-ghost btn-sm"
+                    @click="store.retry(job.id)">重试</button>
+            <button v-if="job.status === 'needs_attention'" class="btn btn-ghost btn-sm"
+                    @click="store.cancel(job.id)">取消</button>
+            <button class="icon-btn danger" title="删除任务" @click="store.remove(job.id)">
+              <Icon name="trash" :size="15" />
+            </button>
+          </div>
         </div>
         <div class="job-prompt">{{ job.prompt }}</div>
         <div class="job-params">
@@ -39,21 +60,45 @@
           <span class="res-tag">{{ noteTag(job.resource_note) }}</span>
           <span class="res-text">{{ job.resource_note }}</span>
         </div>
-        <div v-if="job.error" class="job-error">⚠ {{ job.error }}</div>
-        <video v-if="job.status === 'done'" class="job-video" :src="job.video_url" :poster="job.poster_url" controls preload="metadata"></video>
-      </div>
-      <div class="job-actions">
-        <button v-if="job.status === 'pending' || job.status === 'running'" class="btn" @click="store.cancel(job.id)">取消</button>
-        <button v-if="job.status === 'needs_attention'" class="btn" @click="store.retry(job.id)">重试</button>
-        <button v-if="job.status === 'needs_attention'" class="btn" @click="store.cancel(job.id)">取消</button>
-        <button class="btn btn-danger" @click="store.remove(job.id)">删除</button>
+        <div v-if="job.error" class="job-error">{{ job.error }}</div>
       </div>
     </div>
   </div>
 </template>
 
+<style scoped>
+.job-card { align-items: flex-start; gap: 14px; }
+
+.job-media {
+  width: 224px; flex: none;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: linear-gradient(160deg, #0a1220, #060a12);
+  border: 1px solid var(--border);
+}
+.job-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.job-media.flat { display: grid; place-items: center; border-style: dashed; background: transparent; }
+.job-media-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  color: #4c5f7a; font-size: var(--fs-xs);
+}
+
+.job-title .job-engine {
+  font-size: var(--fs-sm); color: var(--text-dim);
+  padding: 1px 7px; border-radius: 5px; background: var(--bg-card);
+}
+.job-title .job-time { margin-left: auto; }
+.job-actions { display: flex; align-items: center; gap: 2px; }
+
+@media (max-width: 900px) {
+  .job-media { width: 150px; }
+}
+</style>
+
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
+import Icon from '../components/Icon.vue'
 import { api } from '../api'
 import { useJobsStore } from '../store/jobs'
 

@@ -9,7 +9,7 @@
 
     <!-- 硬件横幅：推荐结论由后端按显存 × 内存 × 磁盘算，不写死 -->
     <section class="hw-banner" :class="{ muted: !hwLine }">
-      <div class="hw-ico">🖥</div>
+      <div class="hw-ico"><Icon name="layers" :size="17" /></div>
       <div class="hw-text">
         <b>{{ hwLine || '正在检测本机配置…' }}</b>
         <span v-if="rec.summary">→ {{ rec.summary }}</span>
@@ -24,7 +24,7 @@
     <!-- ① ComfyUI：引擎宿主。已装则填地址直接对接 -->
     <section class="tool-card">
       <div class="tc-top">
-        <div class="tc-ico">🎬</div>
+        <div class="tc-ico"><Icon name="film" :size="17" /></div>
         <div class="tc-main">
           <div class="tc-title">
             ComfyUI
@@ -69,7 +69,7 @@
          所以这里按「通道」展示要求，不按单一内存数字一刀切。 -->
     <section class="tool-card">
       <div class="tc-top">
-        <div class="tc-ico">🧠</div>
+        <div class="tc-ico"><Icon name="spark" :size="17" /></div>
         <div class="tc-main">
           <div class="tc-title">
             视频生成引擎
@@ -178,7 +178,7 @@
     <!-- ③ 配音 TTS -->
     <section class="tool-card">
       <div class="tc-top">
-        <div class="tc-ico">🎙</div>
+        <div class="tc-ico"><Icon name="mic" :size="17" /></div>
         <div class="tc-main">
           <div class="tc-title">
             配音 · 语音合成 (TTS)
@@ -205,7 +205,7 @@
     <!-- ④ 运行依赖：只报在不在，不编进度 -->
     <section class="tool-card">
       <div class="tc-top">
-        <div class="tc-ico">🧩</div>
+        <div class="tc-ico"><Icon name="grid" :size="17" /></div>
         <div class="tc-main">
           <div class="tc-title">
             运行依赖
@@ -230,7 +230,7 @@
     <!-- ⑤ 存储目录：点击直接在文件管理器打开 -->
     <section class="tool-card">
       <div class="tc-top">
-        <div class="tc-ico">📁</div>
+        <div class="tc-ico"><Icon name="folder" :size="17" /></div>
         <div class="tc-main">
           <div class="tc-title">
             生成视频存储目录
@@ -275,6 +275,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import Icon from '../components/Icon.vue'
 import { api } from '../api'
 import { getEnginePref, setEnginePref } from '../enginePref'
 
@@ -556,7 +557,7 @@ onUnmounted(() => {
   background: rgba(var(--accent-rgb), .09);
 }
 .hw-banner.muted { border-color: var(--border); background: var(--bg-panel); }
-.hw-ico { font-size: 18px; flex: none; }
+.hw-ico { flex: none; display: grid; place-items: center; color: var(--accent-soft); }
 .hw-text { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.7; color: var(--accent-soft); }
 .hw-text b { color: var(--text); font-weight: 600; }
 .hw-text span { display: block; color: var(--accent-soft); }
@@ -576,10 +577,10 @@ onUnmounted(() => {
 
 .tc-top { display: flex; align-items: flex-start; gap: 12px; }
 .tc-ico {
-  width: 32px; height: 32px; flex: none;
+  width: 30px; height: 30px; flex: none;
   display: grid; place-items: center;
-  font-size: 16px;
-  border-radius: 9px;
+  border-radius: 8px;
+  color: var(--accent-soft);
   background: rgba(var(--accent-rgb), .16);
 }
 .tc-main { flex: 1; min-width: 0; }

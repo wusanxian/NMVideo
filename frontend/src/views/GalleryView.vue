@@ -15,17 +15,24 @@
 
     <div class="gallery-grid">
       <div v-for="job in store.done" :key="job.id" class="gallery-card">
-        <video :src="job.video_url" :poster="job.poster_url" controls loop preload="metadata"></video>
+        <div class="g-media">
+          <video :src="job.video_url + '#t=0.1'" :poster="job.poster_url" controls loop preload="metadata"></video>
+        </div>
         <div class="gallery-info">
-          <div class="g-prompt">{{ job.prompt }}</div>
+          <div class="g-prompt" :title="job.prompt">{{ job.prompt }}</div>
           <div class="g-params">
             {{ job.preview_kind === 'native' ? '目标 ' : '' }}{{ job.width }}×{{ job.height }} · {{ job.num_frames }} 帧 · {{ job.fps }}fps · {{ job.steps }} 步 · seed {{ job.seed }}
+          </div>
+          <div v-if="job.preset || job.preview || job.elapsed_s || job.upgrade_clamped || job.parent_job_id" class="g-tags">
             <span v-if="job.preset" class="g-tag">{{ presetName(job.preset) }}</span>
             <span v-if="job.preview" class="g-tag g-tag-preview">预览</span>
             <span v-if="job.elapsed_s" class="g-tag">耗时 {{ formatElapsed(job.elapsed_s) }}</span>
+            <span v-if="job.upgrade_clamped" class="g-tag g-tag-clamp" :title="job.upgrade_clamped">引擎护栏钳制</span>
+            <span v-if="job.parent_job_id" class="g-tag">来源预览 {{ job.parent_job_id }}</span>
           </div>
           <div class="gallery-actions">
-            <button class="btn" @click="reuse(job)">复用参数</button>
+            <button class="btn btn-ghost btn-sm" @click="reuse(job)">复用参数</button>
+            <a class="btn btn-ghost btn-sm" :href="job.video_url" download>下载</a>
             <template v-if="job.preview">
               <select v-model="upgradePreset" class="sel" :title="upgradeHint">
                 <option value="">沿用原目标</option>
@@ -33,14 +40,13 @@
                   {{ p.name }}（{{ p.width }}×{{ p.height }}）
                 </option>
               </select>
-              <button class="btn btn-primary" :disabled="upgrading === job.id" @click="upgrade(job)">
-                {{ upgrading === job.id ? '提交中…' : (job.preview_kind === 'native' ? '继续二采' : '⬆ 生成高清候选') }}
+              <button class="btn btn-primary btn-sm" :disabled="upgrading === job.id" @click="upgrade(job)">
+                {{ upgrading === job.id ? '提交中…' : (job.preview_kind === 'native' ? '继续二采' : '生成高清候选') }}
               </button>
             </template>
-            <span v-if="job.upgrade_clamped" class="g-tag g-tag-clamp" :title="job.upgrade_clamped">引擎护栏钳制</span>
-            <span v-if="job.parent_job_id" class="g-tag">来源预览 {{ job.parent_job_id }}</span>
-            <a class="btn" :href="job.video_url" download>下载</a>
-            <button class="btn btn-danger" @click="store.remove(job.id)">删除</button>
+            <button class="btn btn-ghost btn-sm btn-danger g-del" title="删除" @click="store.remove(job.id)">
+              <Icon name="trash" :size="14" />
+            </button>
           </div>
         </div>
       </div>
@@ -51,6 +57,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import Icon from '../components/Icon.vue'
 import { api } from '../api'
 import { useJobsStore } from '../store/jobs'
 
@@ -122,18 +129,88 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 卡片结构统一：媒体固定 16:9 → 信息区 → 操作区。
+   以前 video 直接当卡片首元素、没有固定高度，加载前后行高参差不齐。 */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-4);
+}
+.gallery-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease);
+}
+.gallery-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+
+.g-media {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  /* 未加载出首帧时不是死黑：给一层极暗的底色，跟深色主题同族 */
+  background: linear-gradient(160deg, #0a1220, #060a12);
+}
+.g-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.gallery-info {
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.g-prompt {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 39px;
+}
+.g-params {
+  font-size: var(--fs-xs);
+  color: #5d6f8c;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.g-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.g-tag {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: var(--bg-card);
+  border-radius: 5px;
+  padding: 1px 7px;
+}
+.g-tag-preview { color: var(--accent-soft); background: rgba(var(--accent-rgb), .16); }
+
+.gallery-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.g-del { margin-left: auto; }
+
 .sel {
-  background: var(--bg-input, #1f2430);
-  color: var(--text, #e5e7eb);
-  border: 1px solid var(--border, #374151);
-  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
 }
 .g-tag-clamp {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: var(--yellow);
+  background: rgba(251, 191, 36, .12);
   cursor: help;
 }
 </style>

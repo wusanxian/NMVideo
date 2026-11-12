@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <div class="crumb">
-          <router-link to="/projects">← 分镜工作台</router-link>
+          <router-link to="/projects">← 我的作品</router-link>
           <input class="proj-name" :value="project.name" @change="renameProject" />
         </div>
         <div class="page-sub">
@@ -16,17 +16,29 @@
           <span class="dot" :class="comfy.online ? 'ready' : 'unavailable'"></span>
           ComfyUI {{ comfy.online ? '已连接' : '未连接' }}
         </span>
-        <router-link to="/comfy" class="btn">⚙ ComfyUI 设置</router-link>
+        <router-link to="/comfy" class="btn btn-sm">
+          <Icon name="sliders" :size="14" />ComfyUI 设置
+        </router-link>
       </div>
     </header>
 
     <!-- 标签页 -->
     <div class="tabs">
-      <button :class="{ active: tab === 'shots' }" @click="tab = 'shots'">🎬 分镜</button>
-      <button :class="{ active: tab === 'assets' }" @click="tab = 'assets'">🎭 资产库</button>
-      <button :class="{ active: tab === 'script' }" @click="tab = 'script'">📜 剧本</button>
-      <button :class="{ active: tab === 'timeline' }" @click="tab = 'timeline'">⏱ 时间线</button>
-      <button :class="{ active: tab === 'history' }" @click="tab = 'history'">📋 历史</button>
+      <button :class="{ active: tab === 'shots' }" @click="tab = 'shots'">
+        <Icon name="film" :size="15" />分镜
+      </button>
+      <button :class="{ active: tab === 'assets' }" @click="tab = 'assets'">
+        <Icon name="users" :size="15" />资产库
+      </button>
+      <button :class="{ active: tab === 'script' }" @click="tab = 'script'">
+        <Icon name="book" :size="15" />剧本
+      </button>
+      <button :class="{ active: tab === 'timeline' }" @click="tab = 'timeline'">
+        <Icon name="scissors" :size="15" />时间线
+      </button>
+      <button :class="{ active: tab === 'history' }" @click="tab = 'history'">
+        <Icon name="clock" :size="15" />历史
+      </button>
     </div>
 
     <p v-if="message" class="form-msg banner">{{ message }}</p>
@@ -38,9 +50,13 @@
           <input class="scene-title-input" :value="scene.title"
                  @change="store.saveScene(scene.id, { title: $event.target.value })" />
           <span class="scene-count">{{ scene.shots.length }} 镜</span>
-          <div style="margin-left: auto; display: flex; gap: 8px">
-            <button class="btn" @click="addShot(scene.id)">＋ 添加分镜</button>
-            <button class="btn danger" @click="removeScene(scene.id)">删除场景</button>
+          <div class="scene-actions">
+            <button class="btn btn-sm" @click="addShot(scene.id)">
+              <Icon name="plus" :size="14" />添加分镜
+            </button>
+            <button class="btn btn-ghost btn-sm btn-danger" title="删除整个场景" @click="removeScene(scene.id)">
+              <Icon name="trash" :size="14" />
+            </button>
           </div>
         </div>
         <div v-if="scene.description || scene.environment || scene.lighting" class="scene-desc">
@@ -74,7 +90,9 @@
         </div>
       </div>
 
-      <button class="btn add-scene" @click="store.addScene()">＋ 新建场景</button>
+      <button class="btn add-scene" @click="store.addScene()">
+        <Icon name="plus" :size="15" />新建场景
+      </button>
     </template>
 
     <!-- ============ 资产库页 ============ -->
@@ -95,8 +113,8 @@
               <b>{{ c.name }}</b>
               <span class="badge">{{ c.role }}</span>
               <div class="cc-actions">
-                <button class="icon-btn" title="编辑" @click="editingCharacter = c">✏️</button>
-                <button class="icon-btn danger" title="删除" @click="removeCharacter(c)">✕</button>
+                <button class="icon-btn" title="编辑" @click="editingCharacter = c"><Icon name="pencil" :size="14" /></button>
+                <button class="icon-btn danger" title="删除" @click="removeCharacter(c)"><Icon name="close" :size="14" /></button>
               </div>
             </div>
             <div class="cc-refs">
@@ -106,7 +124,7 @@
             <div class="cc-body">
               <div v-if="c.appearance" class="cc-line" :title="c.appearance">外貌：{{ c.appearance }}</div>
               <div v-if="c.outfit" class="cc-line">服装：{{ c.outfit }}</div>
-              <div v-if="c.voice_name" class="cc-line">🎙 {{ c.voice_name }}</div>
+              <div v-if="c.voice_name" class="cc-line"><Icon name="mic" :size="12" /> {{ c.voice_name }}</div>
               <div v-if="c.lora" class="cc-line">LoRA：{{ c.lora }}</div>
               <div v-if="c.expressions && c.expressions.length" class="cc-line">
                 表情：{{ c.expressions.map((e) => e.name).filter(Boolean).join('、') }}
@@ -121,7 +139,7 @@
         <h3>场景资产</h3>
         <p class="hint">保存环境、光照、布局与风格，并可为场景设置一张幕布（背景）图（拖图 / 选图 / AI 生成）。该场景下的镜头生成时会自动把「环境 + 光照」拼入提示词，保证跨镜头场景一致。</p>
         <div v-for="scene in project.scenes" :key="scene.id" class="scene-asset">
-          <div class="sa-title">🎬 {{ scene.title }}</div>
+          <div class="sa-title"><Icon name="film" :size="14" /> {{ scene.title }}</div>
           <div class="sa-grid">
             <input :value="scene.environment" placeholder="环境，如：霓虹雨夜街道"
                    @change="store.saveScene(scene.id, { environment: $event.target.value })" />
@@ -138,13 +156,13 @@
               <span class="sa-bd-label">幕布图（拖图片到此 / 点击选择）</span>
               <button class="btn small" :disabled="backdropBusy === scene.id"
                       @click="generateBackdrop(scene)">
-                {{ backdropBusy === scene.id ? '生成中…' : '✨ AI 生成幕布' }}
+                {{ backdropBusy === scene.id ? '生成中…' : 'AI 生成幕布' }}
               </button>
               <button v-if="scene.reference_image" class="btn small"
                       :disabled="plateBusy === scene.id"
                       title="把这张图收编成带版本的幕布资产。只读旧字段，不改 reference_image 的值"
                       @click="promoteBackdrop(scene)">
-                {{ plateBusy === scene.id ? '收编中…' : '📦 收编为幕布' }}
+                {{ plateBusy === scene.id ? '收编中…' : '收编为幕布' }}
               </button>
             </div>
             <p v-if="scene.plate_version_id" class="hint-text" style="margin: 4px 0 0">
@@ -152,10 +170,10 @@
             </p>
             <div v-if="scene.reference_image" class="sa-bd-preview">
               <img :src="scene.reference_image" alt="幕布" />
-              <button class="icon-btn danger" title="移除幕布" @click.stop="removeBackdrop(scene)">✕</button>
+              <button class="icon-btn danger" title="移除幕布" @click.stop="removeBackdrop(scene)"><Icon name="close" :size="14" /></button>
             </div>
             <label v-else class="sa-bd-drop">
-              <span class="sa-bd-icon">🖼</span>
+              <span class="sa-bd-icon"><Icon name="image" :size="14" /></span>
               <span>拖拽图片到此处，或<span class="link">点击选择</span></span>
               <input type="file" accept="image/*" hidden @change="onBackdropPick(scene, $event)" />
             </label>
@@ -179,13 +197,13 @@
         <textarea v-model="scriptText" rows="16" class="script-area"
                   placeholder="场景一：雨夜街道&#10;主角独自走在霓虹灯下的长街，雨水打湿肩头 (全景, 移, 4秒)&#10;主角：这天要变了。&#10;&#10;场景二：密室&#10;烛光摇曳，主角推开木门 (远景, 推, 3秒)"></textarea>
         <div class="script-actions">
-          <button class="btn" :disabled="savingScript" @click="saveScript">💾 保存剧本</button>
-          <button class="btn" @click="aiWriterOpen = true">🧠 AI 编剧</button>
+          <button class="btn" :disabled="savingScript" @click="saveScript">保存剧本</button>
+          <button class="btn" @click="aiWriterOpen = true"><Icon name="spark" :size="14" />AI 编剧</button>
           <button class="btn btn-primary" :disabled="importing" @click="doImport('rebuild')">
             ✨ AI 拆分（覆盖重建）
           </button>
           <button class="btn" :disabled="importing" @click="doImport('append')">
-            ➕ 追加导入（保留已有）
+            追加导入（保留已有）
           </button>
         </div>
       </div>
@@ -194,8 +212,8 @@
       <div v-if="aiWriterOpen" class="modal-mask" @click.self="aiWriterOpen = false">
         <div class="modal">
           <header class="modal-head">
-            <h3>🧠 AI 编剧</h3>
-            <button class="btn" @click="aiWriterOpen = false">✕</button>
+            <h3><Icon name="spark" :size="15" /> AI 编剧</h3>
+            <button class="btn" @click="aiWriterOpen = false"><Icon name="close" :size="15" /></button>
           </header>
           <p class="hint">
             用 LLM 按标准剧本格式生成初稿（场景 / 镜头 / 对白 / 景别 / 运动 / 时长），
@@ -243,7 +261,7 @@
         <div class="tl-head">
           <h3 style="margin: 0">多轨时间线</h3>
           <div style="display: flex; gap: 8px; flex-wrap: wrap">
-            <button class="btn" @click="syncTimeline">🔄 同步已通过镜头</button>
+            <button class="btn" @click="syncTimeline"><Icon name="refresh" :size="14" />同步已通过镜头</button>
             <select v-model="exportCanvas" aria-label="导出画布" style="width: auto">
               <option value="source">跟随首镜头</option>
               <option value="portrait">竖屏 1080×1920</option>
@@ -260,7 +278,7 @@
               <option :value="30">30 fps</option>
             </select>
             <button class="btn btn-primary" :disabled="!timeline.length || exporting" @click="startExport">
-              🎞 导出 MP4（混音+字幕）
+              导出 MP4（混音 + 字幕）
             </button>
           </div>
         </div>
@@ -286,7 +304,7 @@
         <!-- 视频轨 -->
         <div v-if="timeline.length" class="track">
           <div class="track-head video">
-            <span class="tr-name">🎬 视频轨</span>
+            <span class="tr-name"><Icon name="film" :size="13" />视频轨</span>
             <span class="tr-hint">拖动排序 · 出入点裁剪 · 转场</span>
           </div>
           <div class="tl-list" @dragover.prevent>
@@ -321,7 +339,7 @@
                   </select>
                 </div>
               </div>
-              <button class="icon-btn danger" @click.stop="removeItem(item.id)">✕</button>
+              <button class="icon-btn danger" @click.stop="removeItem(item.id)"><Icon name="close" :size="13" /></button>
             </div>
           </div>
         </div>
@@ -329,7 +347,7 @@
         <!-- 对白轨（TTS 配音） -->
         <div v-if="timeline.length" class="track">
           <div class="track-head dialogue">
-            <span class="tr-name">💬 对白轨（TTS 配音）</span>
+            <span class="tr-name"><Icon name="mic" :size="13" />对白轨（TTS 配音）</span>
             <span class="tr-hint">在分镜编辑弹窗里生成；导出时按镜头位置自动混音</span>
           </div>
           <div class="track-body">
@@ -344,7 +362,7 @@
                     <span v-for="(p, i) in waveforms[v.audio_url]" :key="i" class="wave-bar"
                           :style="{ height: Math.max(p * 100, 8) + '%' }"></span>
                   </div>
-                  <button class="icon-btn danger" @click="deleteVoice(v.id)">✕</button>
+                  <button class="icon-btn danger" @click="deleteVoice(v.id)"><Icon name="close" :size="13" /></button>
                 </div>
               </template>
               <span v-else-if="item.dialogue" class="tr-empty">有对白未配音</span>
@@ -356,7 +374,7 @@
         <!-- 音乐 / 音效轨 -->
         <div class="track">
           <div class="track-head music">
-            <span class="tr-name">🎵 音乐轨</span>
+            <span class="tr-name"><Icon name="music" :size="13" />音乐轨</span>
             <label class="btn small upload-btn">
               ＋ 上传音乐
               <input type="file" accept="audio/*" hidden @change="onAudioUpload($event, 'music')" />
@@ -374,7 +392,7 @@
                 <span v-for="(p, i) in waveforms[t.audio_url]" :key="i" class="wave-bar"
                       :style="{ height: Math.max(p * 100, 8) + '%' }"></span>
               </div>
-              <button class="icon-btn danger" @click="deleteTrack(t.id)">✕</button>
+              <button class="icon-btn danger" @click="deleteTrack(t.id)"><Icon name="close" :size="13" /></button>
             </div>
             <div v-if="!musicTracks.length" class="tr-empty">还没有音乐，上传后自动混入导出</div>
           </div>
@@ -382,7 +400,7 @@
 
         <div class="track">
           <div class="track-head sfx">
-            <span class="tr-name">🔔 音效轨</span>
+            <span class="tr-name"><Icon name="bolt" :size="13" />音效轨</span>
             <label class="btn small upload-btn">
               ＋ 上传音效
               <input type="file" accept="audio/*" hidden @change="onAudioUpload($event, 'sfx')" />
@@ -399,7 +417,7 @@
                 <span v-for="(p, i) in waveforms[t.audio_url]" :key="i" class="wave-bar"
                       :style="{ height: Math.max(p * 100, 8) + '%' }"></span>
               </div>
-              <button class="icon-btn danger" @click="deleteTrack(t.id)">✕</button>
+              <button class="icon-btn danger" @click="deleteTrack(t.id)"><Icon name="close" :size="13" /></button>
             </div>
             <div v-if="!sfxTracks.length" class="tr-empty">还没有音效</div>
           </div>
@@ -408,7 +426,7 @@
         <!-- 字幕轨 -->
         <div class="track">
           <div class="track-head subtitle">
-            <span class="tr-name">📝 字幕轨（{{ subtitles.length }}）</span>
+            <span class="tr-name"><Icon name="text" :size="13" />字幕轨（{{ subtitles.length }}）</span>
             <div style="display: flex; gap: 8px">
               <button class="btn small" @click="autoSubtitles">✨ 从对白自动生成</button>
               <button class="btn small" :disabled="!subtitles.length" @click="downloadSrt">⬇ SRT</button>
@@ -422,7 +440,7 @@
                      @change="updateSubtitle(s, { start_s: +$event.target.value || 0 })" /></label>
               <label class="tr-field">止 <input type="number" min="0" step="0.1" :value="s.end_s"
                      @change="updateSubtitle(s, { end_s: +$event.target.value || 0 })" /></label>
-              <button class="icon-btn danger" @click="deleteSubtitle(s.id)">✕</button>
+              <button class="icon-btn danger" @click="deleteSubtitle(s.id)"><Icon name="close" :size="13" /></button>
             </div>
             <div v-if="!subtitles.length" class="tr-empty">还没有字幕，点「从对白自动生成」</div>
           </div>
@@ -453,7 +471,7 @@
       <div class="panel">
         <div class="tl-head">
           <h3 style="margin: 0">审核与操作历史（{{ history.length }}）</h3>
-          <button class="btn" @click="loadHistory">🔄 刷新</button>
+          <button class="btn" @click="loadHistory"><Icon name="refresh" :size="14" />刷新</button>
         </div>
         <div v-if="history.length" class="history-list">
           <div v-for="h in history" :key="h.id" class="history-item">
@@ -510,7 +528,7 @@
       <div class="modal mini">
         <header class="modal-head">
           <h2>镜头返工</h2>
-          <button class="icon-btn" @click="reworkingShot = null">✕</button>
+          <button class="icon-btn" @click="reworkingShot = null"><Icon name="close" :size="15" /></button>
         </header>
         <div class="modal-body">
           <p class="rework-intro">
@@ -522,8 +540,8 @@
         <footer class="modal-foot">
           <div style="margin-left: auto; display: flex; gap: 10px; flex-wrap: wrap">
             <button class="btn" @click="reworkingShot = null">取消</button>
-            <button class="btn" @click="doRework(false)">↺ 仅重做本镜头</button>
-            <button class="btn warn" @click="doRework(true)">↺↺ 连同后续一起返工</button>
+            <button class="btn" @click="doRework(false)">仅重做本镜头</button>
+            <button class="btn warn" @click="doRework(true)">连同后续一起返工</button>
           </div>
         </footer>
       </div>
@@ -565,6 +583,7 @@ import { getEnginePref, engineName, resolveEngine } from '../enginePref'
 import { useJobsStore } from '../store/jobs'
 import { useProjectStore } from '../store/project'
 import ShotCard from '../components/ShotCard.vue'
+import Icon from '../components/Icon.vue'
 import ShotEditorDialog from '../components/ShotEditorDialog.vue'
 import ReviewDialog from '../components/ReviewDialog.vue'
 import CharacterEditorDialog from '../components/CharacterEditorDialog.vue'
@@ -975,7 +994,7 @@ async function runAiWriter() {
   } catch (e) {
     aiMsgIsError.value = true
     aiMsg.value = e.message.includes('未配置')
-      ? 'LLM 未配置：请到左侧「🧩 模型服务」页填写 Base URL 和模型名'
+      ? 'LLM 未配置：请到左侧「模型服务」页填写 Base URL 和模型名'
       : e.message
   } finally {
     aiBusy.value = false
@@ -1209,53 +1228,59 @@ async function loadHistory() {
 </script>
 
 <style scoped>
-.crumb { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
-.crumb a { color: var(--text-dim); text-decoration: none; font-size: 13px; }
+.crumb { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+.crumb a { color: var(--text-dim); text-decoration: none; font-size: var(--fs-sm); transition: color .14s var(--ease); }
 .crumb a:hover { color: var(--accent); }
 .proj-name {
-  background: transparent; border: 1px solid transparent; border-radius: 8px;
-  color: var(--text); font-size: 20px; font-weight: 700; padding: 4px 10px;
-  width: 320px; font-family: inherit;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  color: var(--text); font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.2px;
+  padding: 2px 8px; margin-left: -8px; width: 340px; font-family: inherit;
+  transition: background .14s var(--ease), border-color .14s var(--ease);
 }
 .proj-name:hover, .proj-name:focus { border-color: var(--border); background: var(--bg-card); }
 
-.head-actions { display: flex; align-items: center; gap: 10px; }
 .comfy-pill {
-  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  display: flex; align-items: center; gap: 7px; font-size: var(--fs-sm);
   border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px;
+  background: var(--bg-panel);
 }
 .comfy-pill.on { color: var(--green); }
 .comfy-pill.off { color: var(--text-dim); }
 
-.tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
-.tabs button {
-  background: none; border: none; color: var(--text-dim); font-size: 14px;
-  padding: 10px 18px; cursor: pointer; border-bottom: 2px solid transparent;
-  font-family: inherit;
+/* .tabs 用全局样式（槽 + 选中块），此处不再覆盖 */
+
+.banner { margin-bottom: var(--sp-4); }
+
+.scene-block { padding: 16px 18px 18px; }
+.scene-head {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--border);
 }
-.tabs button:hover { color: var(--text); }
-.tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-
-.banner { margin-bottom: 14px; }
-
-.scene-block { padding: 16px 18px; }
-.scene-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .scene-title-input {
-  background: transparent; border: 1px solid transparent; border-radius: 8px;
-  font-size: 16px; font-weight: 700; color: var(--text); padding: 4px 10px;
-  width: 300px; font-family: inherit;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  font-size: var(--fs-md); font-weight: 600; color: var(--text); padding: 3px 8px;
+  margin-left: -8px; width: 320px; font-family: inherit;
+  transition: background .14s var(--ease), border-color .14s var(--ease);
 }
 .scene-title-input:hover, .scene-title-input:focus { border-color: var(--border); background: var(--bg-card); }
-.scene-count { font-size: 12px; color: var(--text-dim); }
+.scene-count {
+  font-size: var(--fs-xs); color: var(--text-dim); background: var(--bg-card);
+  border-radius: 999px; padding: 2px 9px;
+}
 .scene-desc {
-  display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px;
-  color: var(--text-dim); margin-bottom: 12px;
+  display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--fs-sm);
+  color: var(--text-dim); margin: -4px 0 14px;
 }
 
+.scene-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .shot-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(292px, 1fr)); gap: 14px;
 }
-.add-scene { width: 100%; padding: 14px; border-style: dashed; }
+.add-scene {
+  width: 100%; padding: 12px; border-style: dashed; color: var(--text-dim);
+  background: transparent;
+}
+.add-scene:hover { color: var(--text); }
 
 .hint {
   font-size: 13px; color: var(--text-dim); line-height: 1.8;
@@ -1286,14 +1311,19 @@ async function loadHistory() {
 .cc-noref { font-size: 11.5px; color: var(--text-dim); }
 .cc-body { display: flex; flex-direction: column; gap: 4px; }
 .cc-line {
-  font-size: 12px; color: var(--text-dim);
+  font-size: var(--fs-sm); color: var(--text-dim);
+  display: flex; align-items: center; gap: 4px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .scene-asset {
   border: 1px solid var(--border); border-radius: 10px;
   padding: 12px 14px; margin-bottom: 10px; background: var(--bg-card);
 }
-.sa-title { font-size: 13.5px; font-weight: 600; margin-bottom: 8px; }
+.sa-title {
+  font-size: var(--fs-base); font-weight: 600; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sa-title .ico { color: var(--text-dim); }
 .sa-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .sa-grid input {
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 7px;
@@ -1345,7 +1375,12 @@ async function loadHistory() {
 .track-head.music { border-left: 3px solid var(--accent-soft); }
 .track-head.sfx { border-left: 3px solid var(--yellow); }
 .track-head.subtitle { border-left: 3px solid #38bdf8; }
-.tr-name { font-size: 13px; font-weight: 700; }
+.tr-name {
+  font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text);
+}
+.tr-name .ico { color: var(--text-dim); }
 .tr-hint { font-size: 11.5px; color: var(--text-dim); margin-left: auto; }
 .track-body { padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 .tr-row {

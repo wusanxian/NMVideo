@@ -2,8 +2,13 @@
   <div class="modal-mask" @click.self="$emit('close')">
     <div class="modal">
       <header class="modal-head">
-        <h2>分镜编辑</h2>
-        <button class="icon-btn" @click="$emit('close')">✕</button>
+        <div>
+          <h2>分镜编辑</h2>
+          <p class="modal-sub">
+            {{ shot.title || '未命名镜头' }} · {{ shot.duration_s || 3 }} 秒 · 保存后可用于生成
+          </p>
+        </div>
+        <button class="icon-btn" @click="$emit('close')"><Icon name="close" :size="15" /></button>
       </header>
 
       <div class="modal-body">
@@ -15,19 +20,27 @@
             <input type="text" v-model="form.title" placeholder="如：主角推门进入密室" />
           </div>
           <div class="field">
-            <label>人物对白（TTS 配音的文本来源）</label>
+            <label>人物对白</label>
             <input type="text" v-model="form.dialogue" placeholder="如：主角：谁在那里？" />
+            <span class="field-hint">TTS 配音的文本来源</span>
           </div>
           <div class="param-grid">
             <div class="field">
               <label>景别</label>
               <select v-model="form.shot_size">
+                <option v-if="form.shot_size && !SHOT_SIZES.includes(form.shot_size)" :value="form.shot_size">
+                  {{ form.shot_size }}（原值）
+                </option>
                 <option v-for="s in SHOT_SIZES" :key="s" :value="s">{{ s }}</option>
               </select>
             </div>
             <div class="field">
               <label>镜头运动</label>
               <select v-model="form.camera_movement">
+                <option v-if="form.camera_movement && !CAMERA_MOVES.includes(form.camera_movement)"
+                        :value="form.camera_movement">
+                  {{ form.camera_movement }}（原值）
+                </option>
                 <option v-for="m in CAMERA_MOVES" :key="m" :value="m">{{ m }}</option>
               </select>
             </div>
@@ -40,22 +53,24 @@
 
         <!-- 角色绑定 -->
         <section class="form-section">
-          <h3>关联角色（生成时自动拼入外貌/服装描述）</h3>
+          <h3>关联角色</h3>
+          <p class="sec-hint">生成时自动拼入角色的外貌与服装描述，跨镜头保持一致。</p>
           <div v-if="characters.length" class="char-chips">
             <span v-for="c in characters" :key="c.id" class="char-chip"
                   :class="{ on: form.character_ids.includes(c.id) }"
                   @click="toggleCharacter(c.id)">
               <i class="char-dot" :style="{ background: charColor(c.name) }"></i>
               {{ c.name }}
-              <em v-if="c.voice_name">🎙 {{ c.voice_name }}</em>
+              <em v-if="c.voice_name">{{ c.voice_name }}</em>
             </span>
           </div>
-          <p v-else class="hint-text">还没有角色卡。去项目里「🎭 资产库」标签页创建，跨镜头人物外观才能保持一致。</p>
+          <p v-else class="hint-text">还没有角色卡。去项目里的「资产库」标签页创建。</p>
         </section>
 
         <!-- 动作与构图（PR-10 后半：跨镜头连续性约束，生成时拼入提示词） -->
         <section class="form-section">
-          <h3>动作与构图（生成时自动拼入提示词）</h3>
+          <h3>动作与构图</h3>
+          <p class="sec-hint">选定动作模板与人物站位后，生成时会拼进提示词。</p>
           <div class="field">
             <label>动作模板</label>
             <select v-model="form.motion_template_id" @change="onTemplateChange">
@@ -95,13 +110,13 @@
         <section class="form-section">
           <h3>提示词</h3>
           <div class="field">
-            <label>
-              画面提示词 Prompt
-              <button class="btn mini" :disabled="polishing || !form.prompt.trim()"
-                      style="margin-left: 8px" @click="polishPrompt">
-                {{ polishing ? '优化中…' : '✨ AI 优化' }}
+            <div class="field-row">
+              <label>画面提示词</label>
+              <button class="btn btn-ghost btn-sm" :disabled="polishing || !form.prompt.trim()"
+                      @click="polishPrompt">
+                {{ polishing ? '优化中…' : 'AI 优化' }}
               </button>
-            </label>
+            </div>
             <textarea v-model="form.prompt" rows="3"
                       placeholder="描述这个镜头要出现的画面，如：young swordsman pushing open a wooden door, candlelight flickering, secret chamber"></textarea>
             <span v-if="polishMsg" class="form-msg" :class="{ error: polishMsgIsError }">{{ polishMsg }}</span>
@@ -492,11 +507,11 @@
 
       <footer class="modal-foot">
         <span v-if="errMsg" class="form-msg">{{ errMsg }}</span>
-        <div style="margin-left: auto; display: flex; gap: 10px">
+        <div class="foot-actions">
           <button class="btn" @click="$emit('close')">取消</button>
-          <button class="btn" :disabled="saving" @click="save">💾 保存修改</button>
+          <button class="btn" :disabled="saving" @click="save">保存修改</button>
           <button class="btn btn-primary" :disabled="!canGenerate || saving" @click="generate">
-            🎬 {{ shot.status === 'approved' || shot.status === 'rework' ? '重新制作' : '生成' }}
+            {{ shot.status === 'approved' || shot.status === 'rework' ? '重新制作' : '保存并生成' }}
           </button>
         </div>
       </footer>
@@ -506,6 +521,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import Icon from './Icon.vue'
 import { api } from '../api'
 import { engineName, getEnginePref, resolveEngine, setEnginePref } from '../enginePref'
 
@@ -878,26 +894,35 @@ function generate() {
   z-index: 200; padding: 24px; backdrop-filter: blur(3px);
 }
 .modal {
-  width: min(860px, 100%); max-height: 92vh; display: flex; flex-direction: column;
-  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  width: min(880px, 100%); max-height: 92vh; display: flex; flex-direction: column;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
 }
 .modal-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 22px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 16px 22px 14px; border-bottom: 1px solid var(--border);
 }
-.modal-head h2 { margin: 0; font-size: 17px; }
+.modal-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 650; }
+.modal-sub { margin: 3px 0 0; font-size: var(--fs-sm); color: var(--text-dim); }
 .modal-body { overflow-y: auto; padding: 20px 22px; }
 .modal-foot {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 22px; border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, .012);
 }
-.form-section { margin-bottom: 26px; }
+.foot-actions { margin-left: auto; display: flex; gap: 8px; }
+.form-section { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #24344d; }
+.form-section:last-of-type { border-bottom: none; padding-bottom: 0; margin-bottom: 6px; }
 .form-section h3 {
-  font-size: 14px; margin: 0 0 14px; color: var(--text);
-  padding-left: 10px; border-left: 3px solid var(--accent);
-  display: flex; align-items: center; gap: 8px;
+  font-size: var(--fs-md); font-weight: 600; margin: 0 0 8px; color: var(--text);
+  letter-spacing: -.1px;
 }
+.sec-hint {
+  margin: 0 0 12px; font-size: var(--fs-sm); color: #6a7d99; line-height: 1.55;
+}
+.field-hint { display: block; margin-top: 5px; font-size: var(--fs-xs); color: #5d6f8c; }
+.field-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.field-row label { margin-bottom: 0; }
 .field { margin-bottom: 12px; }
 .field label { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 5px; }
 .btn.mini {

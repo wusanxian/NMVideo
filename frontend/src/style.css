@@ -19,6 +19,28 @@
   --yellow: #fbbf24;
   --red: #f87171;
   --radius: 10px;
+
+  /* ---- 版式标尺（2026-11-11 统一） ----
+     之前各页各写 padding/字号，才会出现「同一层级的东西大小都不一样」。
+     间距只走这 6 档，字号只走这 6 档，需要新值时先问是不是这 6 档不够用。 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-base: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .28);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .34);
+  --ease: cubic-bezier(.32, .72, .4, 1);
 }
 
 * { box-sizing: border-box; }
@@ -39,75 +61,91 @@ body {
 
 /* ---------- 侧边栏 ---------- */
 .sidebar {
-  width: 220px;
+  width: 208px;
   flex-shrink: 0;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 20px 14px;
+  padding: 18px 12px 14px;
   position: sticky;
   top: 0;
   height: 100vh;
 }
 
-.logo {
-  font-size: 17px;
-  font-weight: 700;
-  padding: 0 10px 18px;
+/* 品牌区：方块标记 + 文字，不用 emoji（emoji 字形随系统变，颜色也不受控） */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px 16px;
+  margin-bottom: 6px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 14px;
 }
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), .35);
+}
+.brand-text { font-size: var(--fs-md); font-weight: 650; letter-spacing: .2px; }
 
-.sidebar nav { display: flex; flex-direction: column; gap: 4px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-group-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .09em;
+  color: #5d6f8c;
+  padding: 0 10px 5px;
+  text-transform: uppercase;
+}
 
 .sidebar nav a {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   text-decoration: none;
-  transition: all .15s;
+  font-size: var(--fs-base);
+  transition: background .14s var(--ease), color .14s var(--ease);
 }
 
 .sidebar nav a:hover { background: var(--bg-hover); color: var(--text); }
 
 .sidebar nav a.nav-item.active,
 .sidebar nav a.router-link-active {
-  background: linear-gradient(135deg, rgba(var(--accent-rgb), .18), rgba(var(--accent-2-rgb), .18));
+  background: rgba(var(--accent-rgb), .14);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .35);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .28);
 }
 
 .sidebar nav a.nav-item { display: flex; align-items: center; gap: 9px; cursor: pointer; }
-.nav-ico { width: 18px; text-align: center; flex: none; }
 .nav-text { flex: 1; }
 
-.nav-extra {
+/* 底部只留一条引擎总览，点进设置页看细则 */
+.sidebar-foot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
+.engine-summary {
   display: flex;
-  /* 侧栏只有 150px 宽：两个入口竖排，避免「任务队列 / 作品画廊」被挤成断字换行 */
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 10px 12px 4px;
-  border-top: 1px solid var(--border);
-  margin-top: 8px;
-}
-.nav-extra a {
-  white-space: nowrap;
-  font-size: 11.5px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   text-decoration: none;
-  padding: 4px 8px;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  font-size: var(--fs-sm);
+  transition: background .14s var(--ease), color .14s var(--ease);
 }
-.nav-extra a:hover { background: var(--bg-hover); color: var(--text); }
-.nav-extra .nav-badge { margin-left: 2px; padding: 0 6px; }
+.engine-summary:hover { background: var(--bg-hover); color: var(--text); }
+.engine-summary-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.engine-summary .ico { opacity: .5; }
 
 .nav-badge {
   margin-left: auto;
@@ -116,6 +154,7 @@ body {
   font-size: 11px;
   border-radius: 10px;
   padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebar-footer {
@@ -132,19 +171,42 @@ body {
 .dot.ready { background: var(--green); box-shadow: 0 0 6px rgba(52, 211, 153, .6); }
 .dot.unavailable { background: var(--yellow); }
 
-/* ---------- 主区域 ---------- */
-.main { flex: 1; padding: 28px 36px; max-width: 1180px; }
+/* ---------- 主区域 ----------
+   以前 max-width 写死 1180px 且不居中：窗口一大，内容就贴在左上角、
+   右边留一大块死白。改成占满可用宽度 + 上限 1440 并居中。 */
+.main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-6) var(--sp-6) var(--sp-6);
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+}
 
-.page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.page-head h1 { font-size: 20px; margin: 0; }
-.page-sub { color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  margin-bottom: var(--sp-5);
+}
+.page-head h1 {
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: -.2px;
+  margin: 0;
+  line-height: 1.25;
+}
+.page-sub { color: var(--text-dim); font-size: var(--fs-sm); margin-top: 6px; line-height: 1.5; }
+.head-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
 
 .panel {
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  margin-bottom: 18px;
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  margin-bottom: var(--sp-4);
+  box-shadow: var(--shadow-1);
 }
 
 /* ---------- 表单 ---------- */
@@ -173,38 +235,68 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .range-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-dim); margin-bottom: 4px; }
 .range-label b { color: var(--text); font-weight: 600; }
 
-/* ---------- 按钮 ---------- */
+/* ---------- 按钮 ----------
+   三级：primary（实心，一屏只有一个是它）→ 默认（描边）→ ghost（无边框，次级操作）。
+   以前所有按钮都是描边，主操作只靠渐变区分，卡片里四个按钮糊成一片。 */
 .btn {
-  /* 按钮文字不换行：页头按钮被长描述挤压时会变成两行（如「← 返回工作台」） */
   white-space: nowrap;
   flex-shrink: 0;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  background: transparent;
   color: var(--text);
-  border-radius: 8px;
-  padding: 8px 16px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  font-size: var(--fs-base);
+  font-weight: 500;
   cursor: pointer;
-  transition: all .15s;
+  transition: background .14s var(--ease), border-color .14s var(--ease), color .14s var(--ease);
   font-family: inherit;
   text-decoration: none;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1.35;
 }
 
-.btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:hover { background: var(--bg-hover); border-color: rgba(var(--accent-rgb), .5); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border: none;
+  background: var(--accent);
+  border: 1px solid var(--accent);
   color: #fff;
   font-weight: 600;
-  padding: 10px 26px;
-  font-size: 14px;
 }
+.btn-primary:hover:not(:disabled) { background: #4b8ef8; border-color: #4b8ef8; }
+.btn-primary:disabled { background: rgba(var(--accent-rgb), .35); border-color: transparent; }
 
-.btn-primary:hover:not(:disabled) { filter: brightness(1.12); }
-.btn-danger:hover { border-color: var(--red); color: var(--red); }
+.btn-ghost {
+  border-color: transparent;
+  color: var(--text-dim);
+  padding: 6px 10px;
+}
+.btn-ghost:hover { background: var(--bg-hover); color: var(--text); border-color: transparent; }
+
+.btn-sm { padding: 5px 11px; font-size: var(--fs-sm); border-radius: 7px; }
+.btn-danger:hover { border-color: var(--red); color: var(--red); background: rgba(248, 113, 113, .08); }
+
+/* 图标按钮（列表项上的上移/下移/删除） */
+.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-grid;
+  place-items: center;
+  transition: background .14s var(--ease), color .14s var(--ease);
+}
+.icon-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.icon-btn:disabled { opacity: .3; cursor: not-allowed; }
+.icon-btn.danger:hover { color: var(--red); background: rgba(248, 113, 113, .1); }
 
 /* ---------- 芯片 / 徽章 ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -232,16 +324,21 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .badge.cancelled { background: rgba(139, 148, 168, .14); color: var(--text-dim); }
 .badge.needs_attention { background: rgba(251, 146, 60, .16); color: #fdba74; }
 
-/* ---------- 引擎卡片 ---------- */
-.engine-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* ---------- 引擎卡片 ----------
+   用 flex 而非固定两列：通道分组里卡数是 2 和 3 不等，
+   固定两列会在 3 张那组右下角留一个空格子，看起来像渲染失败。 */
+.engine-cards { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 
 .engine-card {
+  flex: 1 1 420px;
+  min-width: 0;
   border: 1px solid var(--border);
   background: var(--bg-card);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  padding: 13px 15px;
   cursor: pointer;
-  transition: all .15s;
+  overflow-wrap: anywhere;
+  transition: border-color .15s var(--ease), background .15s var(--ease);
 }
 
 .engine-card:hover:not(.disabled) { border-color: var(--accent); }
@@ -255,7 +352,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   background: rgba(var(--accent-rgb), .18); color: var(--accent-soft);
 }
 .engine-card .ec-badge.fallback { background: rgba(139, 148, 168, .16); color: var(--text-dim); }
-.engine-card .ec-desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+.engine-card .ec-desc { font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.6; max-width: 66ch; }
 .engine-card .ec-note { font-size: 12px; color: var(--yellow); margin-top: 6px; line-height: 1.5; }
 
 /* 通道分组：ComfyUI 通道与本机进程内通道都开放给用户选，仅做视觉区分 */
@@ -318,27 +415,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .job-video { width: 100%; max-width: 480px; border-radius: 8px; margin-top: 10px; background: #000; }
 .job-actions { display: flex; flex-direction: column; gap: 8px; }
 
-/* ---------- 画廊 ---------- */
-.gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-
-.gallery-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.gallery-card video { width: 100%; display: block; background: #000; aspect-ratio: 1; object-fit: cover; }
-
-.gallery-info { padding: 12px 14px; }
-
-.gallery-info .g-prompt {
-  font-size: 12.5px;
-  color: var(--text-dim);
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 38px;
-}
-
-.gallery-info .g-params { font-size: 11.5px; color: var(--text-dim); margin: 8px 0 10px; font-family: ui-monospace, monospace; }
-.gallery-actions { display: flex; gap: 8px; }
+/* 画廊版式已收进 GalleryView.vue（媒体区固定 16:9，卡片等高） */
 
 /* ---------- 设置页 ----------
    版式参考常见桌面应用的设置弹窗：顶部等宽分段 tab → 分组小标签 → 圆角卡片，
@@ -552,7 +629,49 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .set-link:disabled { opacity: .45; cursor: not-allowed; text-decoration: none; }
 
 /* ---------- 其他 ---------- */
-.empty { text-align: center; color: var(--text-dim); padding: 60px 0; }
+/* ---------- 页内分段导航 ----------
+   tab 用「槽 + 选中块」，比下划线更容易看出可选范围（参照 FreeVideo 顶部那排）。 */
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--sp-5);
+}
+.tabs button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  padding: 7px 15px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background .14s var(--ease), color .14s var(--ease);
+}
+.tabs button:hover { color: var(--text); }
+.tabs button.active {
+  background: var(--bg-hover);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-1);
+}
+
+.empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 56px 20px;
+  font-size: var(--fs-base);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, .012);
+}
 .empty a { color: var(--accent); }
 
 .form-msg { font-size: 13px; color: var(--red); }
