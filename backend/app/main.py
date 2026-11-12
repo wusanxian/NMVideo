@@ -14,6 +14,7 @@ from .queue_manager import job_queue
 from .quality import list_presets
 from .routers import assets as assets_router
 from .routers import asset_versions as asset_versions_router
+from .routers import capability as capability_router
 from .routers import white_model as white_model_router
 from .routers import engines as engines_router
 from .routers import jobs as jobs_router
@@ -81,6 +82,7 @@ app.add_middleware(
 )
 
 app.include_router(engines_router.router)
+app.include_router(capability_router.router)
 app.include_router(jobs_router.router)
 app.include_router(launch_router.router)
 app.include_router(models_router.router)

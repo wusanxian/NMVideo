@@ -252,6 +252,15 @@ _CANVAS_BY_PIXELS = {
 }
 
 
+def calibrated_canvas(pixels: int) -> Tuple[int, int]:
+    """该像素上限对应的标定画幅；没有标定值返回 ``(0, 0)``。
+
+    给能力分配（``capability``）用：它要回答「你这台机器画布能到多少」，
+    必须给官方标过的那一组，而不是按 16:9 现推一个。
+    """
+    return _CANVAS_BY_PIXELS.get(int(pixels or 0), (0, 0))
+
+
 def _canvas_options(pixels: int) -> list:
     """按上限反推常见画幅，边长取 32 的整数倍。
 

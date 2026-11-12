@@ -40,7 +40,9 @@ READY_TIMEOUT_S = 120.0
 READY_POLL_S = 2.0
 
 #: 自动发现的候选目录。settings 的 comfy_dir / 环境变量优先于此列表；
-#: 盘符枚举覆盖 FreeVideo 标准安装布局（X:\AI\FreeVideo\ComfyUI）。
+#: 盘符枚举是**兼容探测**，不是产品路径：只为「机器上已经装过整合包」的用户
+#: 省一次手填，绝不代表本产品依赖那个安装。干净机器应当走
+#: ``<runtime>/comfyui``（自有底座，见 docs/reports/20261112-comfy-only-boundary-and-capacity.md G1）。
 #: 注意 ``Path("G:") / "AI"`` 生成的是盘符相对路径（G:AI\...），
 #: G: 的当前目录不在根时全错——必须带根斜杠。
 AUTO_CANDIDATES = tuple(
